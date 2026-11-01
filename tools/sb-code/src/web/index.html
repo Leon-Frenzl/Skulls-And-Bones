@@ -1,0 +1,784 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Repository · sb-code</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas: #ffffff;
+      --canvas-subtle: #f6f8fa;
+      --canvas-inset: #f6f8fa;
+      --border: #d1d9e0;
+      --border-muted: #e5e9ed;
+      --fg: #1f2328;
+      --fg-muted: #59636e;
+      --accent: #0969da;
+      --accent-subtle: #ddf4ff;
+      --success: #1a7f37;
+      --success-subtle: #dafbe1;
+      --danger: #cf222e;
+      --danger-subtle: #ffebe9;
+      --neutral-subtle: #eaeef2;
+      --code-bg: #f6f8fa;
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--canvas);
+      color: var(--fg);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --canvas: #0d1117;
+        --canvas-subtle: #151b23;
+        --canvas-inset: #010409;
+        --border: #3d444d;
+        --border-muted: #292e36;
+        --fg: #e6edf3;
+        --fg-muted: #9198a1;
+        --accent: #4493f8;
+        --accent-subtle: #0c2d6b;
+        --success: #3fb950;
+        --success-subtle: #0f2d1b;
+        --danger: #f85149;
+        --danger-subtle: #3d1214;
+        --neutral-subtle: #212830;
+        --code-bg: #151b23;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 360px; background: var(--canvas); }
+    button, select, input { font: inherit; }
+    button, select, input {
+      color: var(--fg);
+      background: var(--canvas);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .5; }
+    button:focus-visible, select:focus-visible, input:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px;
+    }
+    .topbar {
+      height: 64px; padding: 0 30px; display: flex; align-items: center; gap: 16px;
+      background: var(--canvas-subtle); border-bottom: 1px solid var(--border);
+    }
+    .mark { width: 34px; height: 34px; display: grid; place-items: center; color: var(--canvas); background: var(--fg); border-radius: 50%; font-weight: 800; }
+    .top-brand { font-size: 16px; font-weight: 650; }
+    .top-context { color: var(--fg-muted); border-left: 1px solid var(--border); padding-left: 16px; }
+    main { max-width: 1320px; margin: 0 auto; padding: 30px 32px 64px; }
+    .repo-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; padding-bottom: 24px; }
+    .repo-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .repo-name h1 { margin: 0; font-size: 23px; line-height: 1.3; font-weight: 600; overflow-wrap: anywhere; }
+    .repo-name .owner { color: var(--accent); font-weight: 400; }
+    .visibility { border: 1px solid var(--border); border-radius: 2em; padding: 1px 8px; font-size: 12px; color: var(--fg-muted); }
+    .repo-description { margin: 8px 0 0; color: var(--fg-muted); }
+    .repo-stats { color: var(--fg-muted); white-space: nowrap; padding-top: 4px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .btn { min-height: 32px; padding: 5px 12px; font-weight: 550; }
+    .btn-subtle { background: var(--canvas-subtle); }
+    .btn-primary { color: #fff; background: #1f883d; border-color: #1f883d; }
+    .btn-primary:hover { background: #1a7f37; }
+    .btn-quiet { color: var(--fg-muted); }
+    .repo-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 0 0 16px; }
+    .branch-control { display: flex; align-items: center; gap: 8px; }
+    .branch-control label { color: var(--fg-muted); }
+    select { min-height: 34px; padding: 5px 30px 5px 10px; max-width: min(340px, 55vw); }
+    .repo-tabs { display: flex; align-items: center; gap: 4px; height: 51px; border-bottom: 1px solid var(--border); }
+    .tab {
+      position: relative; height: 50px; padding: 0 14px; border: 0; border-radius: 0;
+      color: var(--fg-muted); background: transparent; font-weight: 550;
+    }
+    .tab.active { color: var(--fg); }
+    .tab.active::after { content: ""; height: 2px; position: absolute; right: 8px; bottom: -1px; left: 8px; background: #fd8c73; }
+    .count { margin-left: 6px; padding: 1px 7px; border-radius: 2em; background: var(--neutral-subtle); color: var(--fg-muted); font-size: 12px; }
+    .panel { display: none; padding-top: 18px; }
+    .panel.active { display: block; }
+    .commit-layout { display: grid; grid-template-columns: minmax(270px, .72fr) minmax(0, 1.8fr); gap: 20px; align-items: start; }
+    .box { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--canvas); }
+    .box-heading {
+      min-height: 48px; display: flex; justify-content: space-between; align-items: center; gap: 12px;
+      padding: 10px 16px; background: var(--canvas-subtle); border-bottom: 1px solid var(--border);
+    }
+    .box-heading strong { font-weight: 600; }
+    .subheading { color: var(--fg-muted); font-size: 12px; }
+    .history-list { max-height: 72vh; overflow: auto; }
+    .history-item {
+      display: block; width: 100%; padding: 12px 14px; text-align: left; border: 0;
+      border-bottom: 1px solid var(--border-muted); border-radius: 0; background: transparent;
+    }
+    .history-item:hover, .history-item.selected { background: var(--canvas-subtle); }
+    .history-item.selected { box-shadow: inset 3px 0 var(--accent); }
+    .history-message { font-weight: 600; overflow-wrap: anywhere; line-height: 1.4; }
+    .history-meta { margin-top: 5px; color: var(--fg-muted); font-size: 12px; }
+    .mono { font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .commit-id { color: var(--accent); }
+    .commit-summary { padding: 18px 20px 15px; border-bottom: 1px solid var(--border); }
+    .commit-summary h2 { margin: 0 0 7px; font-size: 20px; line-height: 1.3; font-weight: 600; overflow-wrap: anywhere; }
+    .commit-summary p { margin: 0; color: var(--fg-muted); }
+    .commit-summary .commit-id { display: inline-block; margin-top: 7px; }
+    .diff-toolbar { padding: 8px 12px; background: var(--canvas-subtle); border-bottom: 1px solid var(--border); color: var(--fg-muted); font-size: 12px; }
+    .change-file { border-bottom: 1px solid var(--border); }
+    .change-file:last-child { border-bottom: 0; }
+    .change-file-head {
+      width: 100%; display: flex; align-items: center; gap: 9px; padding: 9px 13px;
+      text-align: left; border: 0; border-radius: 0; background: var(--canvas-subtle);
+    }
+    .change-file-head:hover { color: var(--accent); }
+    .chevron { width: 13px; color: var(--fg-muted); transition: transform .12s; }
+    .change-file.open .chevron { transform: rotate(90deg); }
+    .file-path { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .file-stats { display: flex; gap: 5px; font: 12px ui-monospace, monospace; }
+    .add-text { color: var(--success); }
+    .del-text { color: var(--danger); }
+    .badge { padding: 1px 6px; border-radius: 2em; font-size: 11px; font-weight: 600; }
+    .badge-added { color: var(--success); background: var(--success-subtle); }
+    .badge-modified { color: #9a6700; background: #fff8c5; }
+    .badge-deleted { color: var(--danger); background: var(--danger-subtle); }
+    @media (prefers-color-scheme: dark) { .badge-modified { color: #d29922; background: #3b2300; } }
+    .diff-content { overflow: auto; max-height: 66vh; background: var(--canvas); }
+    .diff-row {
+      display: grid; grid-template-columns: 52px 52px minmax(max-content, 1fr);
+      min-height: 23px; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .diff-row .line-no { padding: 0 8px; text-align: right; user-select: none; color: var(--fg-muted); background: var(--canvas-subtle); border-right: 1px solid var(--border-muted); }
+    .diff-row code { padding: 0 10px; white-space: pre; color: var(--fg); }
+    .diff-row.added { background: var(--success-subtle); }
+    .diff-row.added code { color: var(--success); }
+    .diff-row.deleted { background: var(--danger-subtle); }
+    .diff-row.deleted code { color: var(--danger); }
+    .file-view { padding: 15px; overflow: auto; max-height: 70vh; background: var(--code-bg); }
+    .file-view pre { margin: 0; white-space: pre; font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; tab-size: 4; }
+    .tree-list, .local-changes { max-height: 68vh; overflow: auto; }
+    .tree-row, .local-change-row {
+      width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 13px;
+      text-align: left; border: 0; border-bottom: 1px solid var(--border-muted); border-radius: 0; background: var(--canvas);
+    }
+    .tree-row:hover, .local-change-row:hover { color: var(--accent); background: var(--canvas-subtle); }
+    .file-icon { color: var(--fg-muted); width: 16px; text-align: center; }
+    .tree-row .file-path, .local-change-row .file-path { font: 13px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .files-layout { display: grid; grid-template-columns: minmax(260px, .8fr) minmax(0, 1.8fr); }
+    .files-layout .tree-box { border-radius: 6px 0 0 6px; }
+    .files-layout .content-box { border-radius: 0 6px 6px 0; border-left: 0; }
+    .search { width: min(360px, 100%); min-height: 32px; padding: 5px 10px; }
+    .notice { margin: 14px 0 0; padding: 10px 13px; border: 1px solid var(--border); border-radius: 6px; color: var(--fg-muted); background: var(--canvas-subtle); }
+    .notice.error { color: var(--danger); border-color: var(--danger); }
+    .notice.success { color: var(--success); border-color: var(--success); }
+    .working-header { display: flex; justify-content: space-between; align-items: center; gap: 14px; }
+    .working-header h2 { margin: 0; font-size: 19px; font-weight: 600; }
+    .commit-form { display: none; padding: 14px; border-bottom: 1px solid var(--border); background: var(--canvas-subtle); }
+    .commit-form.open { display: block; }
+    .commit-form input { width: 100%; padding: 8px 10px; margin-bottom: 9px; }
+    .commit-form-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .status-dot { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--success); }
+    .status-dot.dirty { background: #d29922; }
+    .empty, .error { padding: 24px 16px; color: var(--fg-muted); text-align: center; }
+    .error { color: var(--danger); }
+    .right-actions { margin-left: auto; }
+    @media (max-width: 850px) {
+      main { padding: 22px 16px 44px; }
+      .topbar { padding: 0 16px; }
+      .commit-layout, .files-layout { grid-template-columns: 1fr; }
+      .files-layout .tree-box, .files-layout .content-box { border-radius: 6px; border: 1px solid var(--border); }
+      .files-layout .content-box { margin-top: 12px; }
+      .history-list { max-height: 35vh; }
+    }
+    @media (max-width: 560px) {
+      .topbar { height: 54px; }
+      .top-context, .repo-stats { display: none; }
+      .repo-heading, .repo-toolbar { align-items: flex-start; flex-direction: column; }
+      .repo-heading { gap: 8px; }
+      .actions { width: 100%; }
+      .actions .btn { flex: 1; }
+      .repo-tabs { overflow-x: auto; }
+      .tab { padding: 0 10px; white-space: nowrap; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="mark" aria-hidden="true">sb</div>
+    <div class="top-brand">Skulls &amp; Bones</div>
+    <div class="top-context">Sovereign Code</div>
+  </header>
+  <main>
+    <section class="repo-heading">
+      <div>
+        <div class="repo-name">
+          <h1><span id="repo-owner" class="owner">dev-mesh</span> / <span id="repo-name">Repository</span></h1>
+          <span class="visibility">Private Mesh</span>
+        </div>
+        <p class="repo-description">Versionierte Codebasis · Sovereign Merkle VCS</p>
+      </div>
+      <div class="repo-stats" id="repo-stats">Repository wird geladen</div>
+    </section>
+
+    <div class="repo-toolbar">
+      <div class="branch-control">
+        <label for="branch">Branch</label>
+        <select id="branch" aria-label="Branch"></select>
+        <span id="head-id" class="mono commit-id"></span>
+      </div>
+      <div class="actions">
+        <button id="commit-open" class="btn btn-subtle" type="button">Commit changes</button>
+        <button id="pull" class="btn btn-subtle" type="button" title="Remote-Branch in das lokale Repository ziehen">↓ Pull</button>
+        <button id="push" class="btn btn-primary" type="button" title="Lokalen Branch zum Mesh pushen">↑ Push</button>
+        <button id="refresh" class="btn btn-quiet" type="button" aria-label="Aktualisieren" title="Aktualisieren">↻</button>
+      </div>
+    </div>
+
+    <nav class="repo-tabs" aria-label="Repository">
+      <button class="tab" data-tab="code" type="button">Code</button>
+      <button class="tab" data-tab="changes" type="button">Changes <span id="changes-count" class="count">0</span></button>
+      <button class="tab active" data-tab="commits" type="button">Commits <span id="commits-count" class="count">0</span></button>
+    </nav>
+
+    <section id="panel-code" class="panel">
+      <div class="files-layout">
+        <div class="box tree-box">
+          <div class="box-heading">
+            <strong>Files</strong>
+            <input id="tree-search" class="search" type="search" placeholder="Find a file…" aria-label="Dateien filtern">
+          </div>
+          <div id="tree-list" class="tree-list"><div class="empty">Dateien werden geladen …</div></div>
+        </div>
+        <div class="box content-box">
+          <div class="box-heading"><strong id="file-title">Datei auswählen</strong><span id="file-size" class="subheading"></span></div>
+          <div id="file-view" class="file-view"><div class="empty">Wähle links eine Datei aus.</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="panel-changes" class="panel">
+      <div class="box">
+        <div class="box-heading working-header">
+          <div>
+            <strong>Lokale Working-Tree-Änderungen</strong>
+            <div id="local-status" class="subheading">Lokaler Workspace wird geprüft …</div>
+          </div>
+          <button id="commit-open-2" class="btn btn-subtle" type="button">Änderungen committen</button>
+        </div>
+        <form id="commit-form" class="commit-form">
+          <label for="commit-message">Commit-Nachricht</label>
+          <input id="commit-message" maxlength="2000" required placeholder="Describe your changes">
+          <div class="commit-form-actions">
+            <button id="commit-cancel" class="btn btn-quiet" type="button">Abbrechen</button>
+            <button id="commit-submit" class="btn btn-primary" type="submit">Commit erstellen</button>
+          </div>
+        </form>
+        <div id="local-changes" class="local-changes"><div class="empty">Wird geladen …</div></div>
+        <div id="local-diff-panel" class="local-diff-panel"><div class="empty">Wähle eine lokale Änderung aus, um den Diff zu sehen.</div></div>
+      </div>
+      <div id="action-message" class="notice" hidden></div>
+    </section>
+
+    <section id="panel-commits" class="panel active">
+      <div class="commit-layout">
+        <div class="box">
+          <div class="box-heading"><strong>Commit history</strong><span id="history-count" class="subheading"></span></div>
+          <div id="history" class="history-list"><div class="empty">Repository wird geladen …</div></div>
+        </div>
+        <div class="box">
+          <div id="commit-summary" class="commit-summary"><div class="empty">Commit auswählen, um Änderungen zu prüfen.</div></div>
+          <div id="commit-diffs"><div class="empty">Noch kein Commit ausgewählt.</div></div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const branchSelect = document.querySelector("#branch");
+    const historyList = document.querySelector("#history");
+    const commitSummary = document.querySelector("#commit-summary");
+    const commitDiffs = document.querySelector("#commit-diffs");
+    const treeList = document.querySelector("#tree-list");
+    const fileView = document.querySelector("#file-view");
+    const fileTitle = document.querySelector("#file-title");
+    const localChanges = document.querySelector("#local-changes");
+    const localDiffPanel = document.querySelector("#local-diff-panel");
+    const localStatus = document.querySelector("#local-status");
+    const actionMessage = document.querySelector("#action-message");
+    const commitForm = document.querySelector("#commit-form");
+    const state = { remote: null, local: null, selectedCommit: null, changeEntries: [], treeOffset: 0, treeEntries: [], activeTab: "commits" };
+
+    async function api(url, options = {}) {
+      const response = await fetch(url, {
+        cache: "no-store",
+        headers: { "Accept": "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}) },
+        ...options
+      });
+      const contentType = response.headers.get("content-type") || "";
+      const data = contentType.includes("application/json") ? await response.json() : await response.text();
+      if (!response.ok) throw new Error(typeof data === "string" ? data : data.error || `HTTP ${response.status}`);
+      return data;
+    }
+
+    function text(node, value) { node.textContent = value == null ? "" : String(value); }
+    function message(value, kind = "") {
+      actionMessage.hidden = !value;
+      actionMessage.className = `notice${kind ? ` ${kind}` : ""}`;
+      text(actionMessage, value || "");
+    }
+    function errorBox(node, error) {
+      node.replaceChildren();
+      const div = document.createElement("div");
+      div.className = "error";
+      div.textContent = error.message || String(error);
+      node.append(div);
+    }
+    function shortId(id) { return id ? id.slice(0, 12) : "—"; }
+    function formatDate(value) {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? String(value || "") : date.toLocaleString();
+    }
+    function statusBadge(status) {
+      const badge = document.createElement("span");
+      badge.className = `badge badge-${status}`;
+      badge.textContent = status;
+      return badge;
+    }
+    function makeEmpty(label) {
+      const element = document.createElement("div");
+      element.className = "empty";
+      element.textContent = label;
+      return element;
+    }
+    function setTab(name) {
+      state.activeTab = name;
+      document.querySelectorAll(".tab").forEach(tab => tab.classList.toggle("active", tab.dataset.tab === name));
+      document.querySelectorAll(".panel").forEach(panel => panel.classList.toggle("active", panel.id === `panel-${name}`));
+    }
+    function selectedBranch() { return branchSelect.value; }
+    function findRemoteBranch(name) { return state.remote?.branches.find(branch => branch.name === name); }
+    function localHasBranch(name) { return !!state.local?.available && state.local.branches.includes(name); }
+
+    async function load() {
+      message("");
+      document.querySelector("#repo-stats").textContent = "Loading repository…";
+      try {
+        const [remote, local] = await Promise.all([
+          api("/api/branches"),
+          api("/__client").catch(async proxyError => {
+            try {
+              const worktree = await api("/api/worktree");
+              return {
+                ...worktree,
+                available: false,
+                readOnly: true,
+                reason: "Read-only viewer — commit, push and pull require an active mesh proxy."
+              };
+            } catch (worktreeError) {
+              return {
+                available: false,
+                reason: `${proxyError.message}; local status unavailable: ${worktreeError.message}`
+              };
+            }
+          })
+        ]);
+        state.remote = remote;
+        state.local = local;
+        const previous = selectedBranch();
+        const names = [...new Set([
+          ...remote.branches.map(branch => branch.name),
+          ...(local.available ? local.branches : [])
+        ])].sort();
+        branchSelect.replaceChildren();
+        names.forEach(name => {
+          const option = document.createElement("option");
+          option.value = name;
+          option.textContent = name;
+          branchSelect.append(option);
+        });
+        const preferred = names.includes(previous) ? previous :
+          names.includes(remote.current) ? remote.current :
+          names.includes(local.branch) ? local.branch : names[0];
+        if (preferred) branchSelect.value = preferred;
+        const branch = findRemoteBranch(branchSelect.value);
+        text(document.querySelector("#head-id"), branch ? shortId(branch.head) : "No remote head");
+        text(document.querySelector("#repo-stats"),
+          `${remote.branches.length} remote branch${remote.branches.length === 1 ? "" : "es"} · ${local.available ? `${local.changes.length} local change${local.changes.length === 1 ? "" : "s"}` : "local actions not configured"}`);
+        text(document.querySelector("#changes-count"), local.available ? local.changes.length : "—");
+        text(document.querySelector("#repo-owner"), remote.mesh || "dev-mesh");
+        text(document.querySelector("#repo-name"), remote.repository || "Repository");
+        renderLocalChanges();
+        updateActions();
+        await Promise.all([loadHistory(), loadTree()]);
+      } catch (error) {
+        errorBox(historyList, error);
+        document.querySelector("#repo-stats").textContent = "Could not load repository";
+      }
+    }
+
+    function updateActions() {
+      const branch = selectedBranch();
+      const hasWorkspace = !!state.local?.available;
+      const dirty = !!state.local?.changes?.length;
+      document.querySelector("#commit-open").disabled = !hasWorkspace || !dirty || branch !== state.local?.branch;
+      document.querySelector("#commit-open-2").disabled = !hasWorkspace || !dirty;
+      document.querySelector("#push").disabled = !hasWorkspace || !localHasBranch(branch);
+      document.querySelector("#pull").disabled = !hasWorkspace || !findRemoteBranch(branch);
+      if (state.local?.reason) text(localStatus, state.local.reason);
+    }
+
+    async function loadHistory() {
+      const branch = selectedBranch();
+      historyList.replaceChildren();
+      commitDiffs.replaceChildren(makeEmpty("Noch kein Commit ausgewählt."));
+      commitSummary.replaceChildren(makeEmpty("Commit auswählen, um Änderungen zu prüfen."));
+      state.selectedCommit = null;
+      if (!findRemoteBranch(branch)) {
+        historyList.append(makeEmpty("Dieser Branch ist lokal vorhanden, aber noch nicht zum Remote gepusht."));
+        text(document.querySelector("#commits-count"), "0");
+        text(document.querySelector("#history-count"), "No remote commits");
+        return;
+      }
+      try {
+        const result = await api(`/api/history?branch=${encodeURIComponent(branch)}&limit=100`);
+        text(document.querySelector("#commits-count"), result.commits.length);
+        text(document.querySelector("#history-count"), `${result.commits.length} commits`);
+        if (!result.commits.length) {
+          historyList.append(makeEmpty("This branch has no commits yet."));
+          return;
+        }
+        result.commits.forEach((commit, index) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = `history-item${index === 0 ? " selected" : ""}`;
+          const summary = document.createElement("div");
+          summary.className = "history-message";
+          summary.textContent = commit.message;
+          const meta = document.createElement("div");
+          meta.className = "history-meta";
+          meta.textContent = `${commit.author_callsign} committed ${formatDate(commit.timestamp)}`;
+          const id = document.createElement("div");
+          id.className = "mono commit-id";
+          id.textContent = shortId(commit.commit_id);
+          button.append(summary, meta, id);
+          button.addEventListener("click", () => {
+            document.querySelectorAll(".history-item").forEach(item => item.classList.remove("selected"));
+            button.classList.add("selected");
+            showCommit(commit);
+          });
+          historyList.append(button);
+          if (index === 0) showCommit(commit);
+        });
+      } catch (error) {
+        errorBox(historyList, error);
+      }
+    }
+
+    async function showCommit(commit) {
+      state.selectedCommit = commit.commit_id;
+      commitSummary.replaceChildren();
+      const title = document.createElement("h2");
+      title.textContent = commit.message;
+      const meta = document.createElement("p");
+      meta.textContent = `${commit.author_callsign} committed ${formatDate(commit.timestamp)}`;
+      const id = document.createElement("span");
+      id.className = "mono commit-id";
+      id.textContent = `${commit.commit_id} · parent ${shortId(commit.parent_ids?.[0])}`;
+      commitSummary.append(title, meta, id);
+      commitDiffs.replaceChildren(makeEmpty("Loading changed files…"));
+      try {
+        const result = await api(`/api/changes?commit=${encodeURIComponent(commit.commit_id)}&limit=100`);
+        if (state.selectedCommit !== commit.commit_id) return;
+        state.changeEntries = result.changes;
+        renderCommitChanges(result);
+      } catch (error) {
+        errorBox(commitDiffs, error);
+      }
+    }
+
+    function renderCommitChanges(result) {
+      commitDiffs.replaceChildren();
+      const toolbar = document.createElement("div");
+      toolbar.className = "diff-toolbar";
+      toolbar.textContent = `${result.change_count} file${result.change_count === 1 ? "" : "s"} changed · ${result.added_count} added · ${result.modified_count} modified · ${result.deleted_count} deleted${result.changes.length < result.change_count ? ` · showing ${result.changes.length} of ${result.change_count}` : ""}`;
+      commitDiffs.append(toolbar);
+      if (!result.changes.length) {
+        commitDiffs.append(makeEmpty("This commit did not change any files."));
+        return;
+      }
+      result.changes.forEach((change, index) => {
+        const section = document.createElement("section");
+        section.className = "change-file";
+        const header = document.createElement("button");
+        header.type = "button";
+        header.className = "change-file-head";
+        const chevron = document.createElement("span");
+        chevron.className = "chevron";
+        chevron.textContent = "›";
+        const path = document.createElement("span");
+        path.className = "file-path mono";
+        path.textContent = change.path;
+        const badge = statusBadge(change.status);
+        header.append(chevron, path, badge);
+        const content = document.createElement("div");
+        content.className = "diff-content";
+        content.hidden = true;
+        header.addEventListener("click", async () => {
+          const opening = content.hidden;
+          content.hidden = !opening;
+          section.classList.toggle("open", opening);
+          if (opening && !content.dataset.loaded) {
+            await loadCommitDiff(content, change, result.commit);
+          }
+        });
+        section.append(header, content);
+        commitDiffs.append(section);
+        if (index === 0) header.click();
+      });
+      if (result.changes.length < result.change_count) {
+        const more = document.createElement("button");
+        more.type = "button";
+        more.className = "tree-row";
+        more.textContent = "Load more changed files…";
+        more.addEventListener("click", loadMoreChanges);
+        commitDiffs.append(more);
+      }
+    }
+
+    async function loadMoreChanges() {
+      const commit = state.selectedCommit;
+      if (!commit) return;
+      try {
+        const next = await api(`/api/changes?commit=${encodeURIComponent(commit)}&limit=100&offset=${state.changeEntries.length}`);
+        if (state.selectedCommit !== commit) return;
+        state.changeEntries.push(...next.changes);
+        renderCommitChanges({ ...next, changes: state.changeEntries });
+      } catch (error) {
+        message(error.message, "error");
+      }
+    }
+
+    async function loadCommitDiff(container, change, commitId) {
+      container.dataset.loaded = "1";
+      container.replaceChildren(makeEmpty("Loading diff…"));
+      try {
+        const diff = await api(`/api/diff?commit=${encodeURIComponent(commitId)}&path=${encodeURIComponent(change.path)}`);
+        renderDiff(container, diff.lines);
+      } catch (error) {
+        container.replaceChildren();
+        const errorNode = document.createElement("div");
+        errorNode.className = "empty";
+        errorNode.textContent = `${error.message}. Open the file in the Code tab to inspect it.`;
+        container.append(errorNode);
+      }
+    }
+
+    function renderDiff(container, lines) {
+      container.replaceChildren();
+      if (!lines.length) {
+        container.append(makeEmpty("No textual changes."));
+        return;
+      }
+      const fragment = document.createDocumentFragment();
+      for (const line of lines) {
+        const row = document.createElement("div");
+        row.className = `diff-row${line.change_type === "+" ? " added" : line.change_type === "-" ? " deleted" : ""}`;
+        const oldNo = document.createElement("span");
+        oldNo.className = "line-no";
+        oldNo.textContent = line.old_line_num || "";
+        const newNo = document.createElement("span");
+        newNo.className = "line-no";
+        newNo.textContent = line.new_line_num || "";
+        const code = document.createElement("code");
+        code.textContent = `${line.change_type === "+" ? "+" : line.change_type === "-" ? "−" : " "}${line.text}`;
+        row.append(oldNo, newNo, code);
+        fragment.append(row);
+      }
+      container.append(fragment);
+    }
+
+    async function loadTree() {
+      const branch = findRemoteBranch(selectedBranch());
+      state.treeOffset = 0;
+      state.treeEntries = [];
+      treeList.replaceChildren();
+      if (!branch) {
+        treeList.append(makeEmpty("Push this local branch to browse its files."));
+        return;
+      }
+      try {
+        const result = await api(`/api/tree?commit=${encodeURIComponent(branch.head)}&limit=300`);
+        state.treeEntries = result.entries;
+        renderTree();
+      } catch (error) {
+        errorBox(treeList, error);
+      }
+    }
+
+    function renderTree() {
+      const query = document.querySelector("#tree-search").value.trim().toLowerCase();
+      treeList.replaceChildren();
+      const filtered = state.treeEntries.filter(item => item.path.toLowerCase().includes(query));
+      if (!filtered.length) {
+        treeList.append(makeEmpty("No files match this filter."));
+        return;
+      }
+      filtered.forEach(item => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "tree-row";
+        const icon = document.createElement("span");
+        icon.className = "file-icon";
+        icon.textContent = "▤";
+        const path = document.createElement("span");
+        path.className = "file-path";
+        path.textContent = item.path;
+        button.append(icon, path);
+        button.addEventListener("click", () => showBlob(item.entry.blake3_hash, item.path, item.entry.size_bytes));
+        treeList.append(button);
+      });
+      if (state.treeEntries.length > filtered.length) {
+        const more = document.createElement("button");
+        more.type = "button";
+        more.className = "tree-row";
+        more.textContent = "Load more files…";
+        more.addEventListener("click", loadMoreTree);
+        treeList.append(more);
+      }
+    }
+
+    async function loadMoreTree() {
+      const branch = findRemoteBranch(selectedBranch());
+      if (!branch) return;
+      state.treeOffset += 300;
+      try {
+        const result = await api(`/api/tree?commit=${encodeURIComponent(branch.head)}&limit=300&offset=${state.treeOffset}`);
+        state.treeEntries.push(...result.entries);
+        renderTree();
+      } catch (error) {
+        message(error.message, "error");
+      }
+    }
+
+    async function showBlob(hash, path, size) {
+      text(fileTitle, path);
+      text(document.querySelector("#file-size"), `${size.toLocaleString()} bytes`);
+      fileView.replaceChildren(makeEmpty("Loading file…"));
+      try {
+        const body = await api(`/api/blob?id=${encodeURIComponent(hash)}`, { headers: { "Accept": "text/plain" } });
+        const pre = document.createElement("pre");
+        pre.textContent = body;
+        fileView.replaceChildren(pre);
+      } catch (error) {
+        errorBox(fileView, error);
+      }
+    }
+
+    function renderLocalChanges() {
+      localChanges.replaceChildren();
+      localDiffPanel.replaceChildren(makeEmpty("Wähle eine lokale Änderung aus, um den Diff zu sehen."));
+      if (!state.local?.available && !state.local?.readOnly) {
+        text(localStatus, state.local?.reason || "Start the local proxy with --workspace to enable commit, push, and pull.");
+        localChanges.append(makeEmpty("Local repository actions are not configured."));
+        return;
+      }
+      const changes = state.local.changes || [];
+      const total = changes.length;
+      const isClean = !!state.local.clean;
+      const dot = document.createElement("span");
+      dot.className = `status-dot${isClean ? "" : " dirty"}`;
+      const statusText = document.createElement("span");
+      statusText.textContent = state.local.readOnly
+        ? `${state.local.reason} · ${isClean ? "working tree clean" : `${total} uncommitted change${total === 1 ? "" : "s"}`} · ${state.local.branch}`
+        : isClean
+          ? `Working tree clean · ${state.local.branch}`
+          : `${total} uncommitted change${total === 1 ? "" : "s"} · ${state.local.branch}`;
+      localStatus.replaceChildren(dot, statusText);
+      if (!total) {
+        localChanges.append(makeEmpty("Your local working tree is clean."));
+        return;
+      }
+      changes.forEach(change => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "local-change-row";
+        const path = document.createElement("span");
+        path.className = "file-path";
+        path.textContent = change.rel_path;
+        const badge = statusBadge(change.status);
+        button.append(path, badge);
+        button.addEventListener("click", () => showLocalDiff(change.rel_path));
+        localChanges.append(button);
+      });
+    }
+
+    async function showLocalDiff(path) {
+      localDiffPanel.replaceChildren();
+      const heading = document.createElement("div");
+      heading.className = "box-heading";
+      heading.textContent = path;
+      const content = document.createElement("div");
+      content.className = "diff-content";
+      content.append(makeEmpty("Loading local diff…"));
+      localDiffPanel.append(heading, content);
+      try {
+        const endpoint = state.local?.readOnly ? "/api/worktree-diff" : "/__client/diff";
+        const diff = await api(`${endpoint}?path=${encodeURIComponent(path)}`);
+        renderDiff(content, diff.lines);
+      } catch (error) {
+        errorBox(content, error);
+      }
+    }
+
+    async function runAction(action, payload, confirmText) {
+      if (confirmText && !window.confirm(confirmText)) return;
+      message(`${action} in progress…`);
+      document.querySelectorAll(".actions button, #commit-submit").forEach(button => button.disabled = true);
+      try {
+        const result = await api(`/__actions/${action}`, {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        const detail = result.report
+          ? `${result.report.message} (${shortId(result.report.new_head)})`
+          : `${result.commit.message} (${shortId(result.commit.commit_id)})`;
+        commitForm.classList.remove("open");
+        await load();
+        message(detail, "success");
+      } catch (error) {
+        message(error.message, "error");
+      } finally {
+        updateActions();
+      }
+    }
+
+    document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => setTab(tab.dataset.tab)));
+    branchSelect.addEventListener("change", async () => {
+      updateActions();
+      state.treeOffset = 0;
+      await Promise.all([loadHistory(), loadTree()]);
+    });
+    document.querySelector("#tree-search").addEventListener("input", renderTree);
+    document.querySelector("#refresh").addEventListener("click", load);
+    document.querySelector("#commit-open").addEventListener("click", () => {
+      setTab("changes");
+      commitForm.classList.add("open");
+      document.querySelector("#commit-message").focus();
+    });
+    document.querySelector("#commit-open-2").addEventListener("click", () => {
+      commitForm.classList.add("open");
+      document.querySelector("#commit-message").focus();
+    });
+    document.querySelector("#commit-cancel").addEventListener("click", () => commitForm.classList.remove("open"));
+    commitForm.addEventListener("submit", event => {
+      event.preventDefault();
+      const messageText = document.querySelector("#commit-message").value.trim();
+      if (!messageText) return;
+      runAction("commit", { message: messageText }, `Create a commit on ${state.local?.branch} with all current working-tree changes?`);
+    });
+    document.querySelector("#push").addEventListener("click", () => {
+      const branch = selectedBranch();
+      runAction("push", { branch }, `Push local branch '${branch}' to ${document.querySelector("#repo-owner").textContent}?`);
+    });
+    document.querySelector("#pull").addEventListener("click", () => {
+      const branch = selectedBranch();
+      runAction("pull", { branch }, `Pull remote branch '${branch}' into your local repository?`);
+    });
+    load();
+  </script>
+</body>
+</html>

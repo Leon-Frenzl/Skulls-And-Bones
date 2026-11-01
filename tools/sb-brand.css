@@ -1,0 +1,161 @@
+:root {
+  color-scheme: dark;
+  --sb-ink: var(--sb-ui-ink);
+  --sb-panel: var(--sb-ui-panel);
+  --sb-panel-raised: var(--sb-ui-panel-raised);
+  --sb-panel-hover: var(--sb-ui-panel-hover);
+  --sb-border: var(--sb-ui-border);
+  --sb-text: var(--sb-ui-text);
+  --sb-text-soft: var(--sb-ui-text-soft);
+  --sb-muted: var(--sb-ui-muted);
+  --sb-subtle: var(--sb-ui-muted);
+  --sb-accent: var(--sb-ui-accent);
+  --sb-accent-hover: var(--sb-ui-accent-hover);
+  --sb-brass: var(--sb-ui-brass);
+}
+
+@theme inline {
+  --color-gray-50: #f7f4ec;
+  --color-gray-100: #e9e4d9;
+  --color-gray-200: #d4d6cf;
+  --color-gray-300: #bac3be;
+  --color-gray-400: #94a29f;
+  --color-gray-500: #788783;
+  --color-gray-600: #5a6967;
+  --color-gray-700: #3c4a49;
+  --color-gray-800: #293536;
+  --color-gray-900: #192427;
+  --color-gray-950: #0b1113;
+  --color-slate-50: #f7f4ec;
+  --color-slate-100: #e9e4d9;
+  --color-slate-200: #d4d6cf;
+  --color-slate-300: #bac3be;
+  --color-slate-400: #94a29f;
+  --color-slate-500: #788783;
+  --color-slate-600: #5a6967;
+  --color-slate-700: #3c4a49;
+  --color-slate-800: #293536;
+  --color-slate-900: #192427;
+  --color-slate-950: #0b1113;
+  --color-zinc-50: #f7f4ec;
+  --color-zinc-100: #e9e4d9;
+  --color-zinc-200: #d4d6cf;
+  --color-zinc-300: #bac3be;
+  --color-zinc-400: #94a29f;
+  --color-zinc-500: #788783;
+  --color-zinc-600: #5a6967;
+  --color-zinc-700: #3c4a49;
+  --color-zinc-800: #293536;
+  --color-zinc-900: #192427;
+  --color-zinc-950: #0b1113;
+  --color-neutral-50: #f7f4ec;
+  --color-neutral-100: #e9e4d9;
+  --color-neutral-200: #d4d6cf;
+  --color-neutral-300: #bac3be;
+  --color-neutral-400: #94a29f;
+  --color-neutral-500: #788783;
+  --color-neutral-600: #5a6967;
+  --color-neutral-700: #3c4a49;
+  --color-neutral-800: #293536;
+  --color-neutral-900: #192427;
+  --color-neutral-950: #0b1113;
+  --color-stone-50: #f7f4ec;
+  --color-stone-100: #e9e4d9;
+  --color-stone-200: #d4d6cf;
+  --color-stone-300: #bac3be;
+  --color-stone-400: #94a29f;
+  --color-stone-500: #788783;
+  --color-stone-600: #5a6967;
+  --color-stone-700: #3c4a49;
+  --color-stone-800: #293536;
+  --color-stone-900: #192427;
+  --color-stone-950: #0b1113;
+  --color-cyan-50: #effbf8;
+  --color-cyan-100: #d7f4ed;
+  --color-cyan-200: #b8e9df;
+  --color-cyan-300: #91ddcf;
+  --color-cyan-400: #77d8cc;
+  --color-cyan-500: #52c7bd;
+  --color-cyan-600: #36a99f;
+  --color-cyan-700: #27857f;
+  --color-cyan-800: #206762;
+  --color-cyan-900: #1d5350;
+  --color-cyan-950: #102f2e;
+  --color-sky-50: #effbf8;
+  --color-sky-100: #d7f4ed;
+  --color-sky-200: #b8e9df;
+  --color-sky-300: #91ddcf;
+  --color-sky-400: #77d8cc;
+  --color-sky-500: #52c7bd;
+  --color-sky-600: #36a99f;
+  --color-sky-700: #27857f;
+  --color-sky-800: #206762;
+  --color-sky-900: #1d5350;
+  --color-sky-950: #102f2e;
+  --color-blue-50: #effbf8;
+  --color-blue-100: #d7f4ed;
+  --color-blue-200: #b8e9df;
+  --color-blue-300: #91ddcf;
+  --color-blue-400: #77d8cc;
+  --color-blue-500: #52c7bd;
+  --color-blue-600: #36a99f;
+  --color-blue-700: #27857f;
+  --color-blue-800: #206762;
+  --color-blue-900: #1d5350;
+  --color-blue-950: #102f2e;
+}
+
+html,
+body {
+  min-height: 100%;
+  background: var(--sb-ink);
+}
+
+body {
+  margin: 0;
+  color: var(--sb-text);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-border) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--sb-border);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--sb-accent);
+}
+
+::selection {
+  color: var(--sb-text);
+  background: color-mix(in srgb, var(--sb-accent) 28%, transparent);
+}
+
+[class~="text-[#4B5563]"],
+[class~="text-[#475569]"],
+[class~="text-[#64748B]"],
+[class~="text-[#5E606A]"],
+[class~="placeholder-[#4B5563]"] {
+  color: #aeb8b2 !important;
+}
+
+:focus-visible {
+  outline: 2px solid var(--sb-accent);
+  outline-offset: 2px;
+}

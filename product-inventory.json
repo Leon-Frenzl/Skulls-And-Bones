@@ -1,0 +1,483 @@
+{
+  "schema_version": 1,
+  "desktop_app_catalog": {
+    "optional_native_clients": [],
+    "excluded_products": []
+  },
+  "support_directories": [],
+  "separate_surfaces": [
+    {
+      "id": "website",
+      "source_directory": "website",
+      "delivery_model": "public_web",
+      "reason": "The public website is web-delivered and is not a Mesh application or desktop client."
+    }
+  ],
+  "products": [
+    {
+      "id": "sb",
+      "title": "S&B Suite CLI",
+      "source_directory": "tools/sb",
+      "package_name": "sb-cli",
+      "package_version": "0.2.1",
+      "binary_name": "sb",
+      "product_kind": "cli_tool",
+      "maturity": "releasevalidated",
+      "category": "Suite Launcher",
+      "description": "Modularer Launcher, Installer und API-Client der Suite.",
+      "installable": true,
+      "release_targets": [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "dependencies": [
+        "core",
+        "code",
+        "drive",
+        "mesh"
+      ],
+      "verification": "cargo test -p sb-cli; cargo check -p sb-cli",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "core",
+      "title": "S&B Core",
+      "source_directory": "tools/sb-core",
+      "package_name": "sb-core",
+      "package_version": "0.2.0",
+      "binary_name": null,
+      "product_kind": "library",
+      "maturity": "releasevalidated",
+      "category": "Shared Contracts",
+      "description": "Gemeinsame Domain-Typen, Service-Verträge, IPC und Runtime-Helfer.",
+      "installable": false,
+      "release_targets": [],
+      "dependencies": [],
+      "verification": "cargo test -p sb-core",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "app-contract",
+      "title": "S&B Mesh App Contract",
+      "source_directory": "tools/sb-app-contract",
+      "package_name": "sb-app-contract",
+      "package_version": "0.2.0",
+      "binary_name": null,
+      "product_kind": "library",
+      "maturity": "releasevalidated",
+      "category": "Mesh Application Platform",
+      "description": "SB-MAP manifest verification and service-, app-, resource-, and policy-bound operation grants.",
+      "installable": false,
+      "release_targets": [],
+      "dependencies": [],
+      "verification": "cargo test -p sb-app-contract",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "app-protocol",
+      "title": "S&B Mesh App Protocol",
+      "source_directory": "tools/sb-app-protocol",
+      "package_name": "sb-app-protocol",
+      "package_version": "0.2.0",
+      "binary_name": null,
+      "product_kind": "library",
+      "maturity": "releasevalidated",
+      "category": "Mesh Application Platform",
+      "description": "Versioned SB-MAP control framing and bounded, digest-verified object-transfer primitives.",
+      "installable": false,
+      "release_targets": [],
+      "dependencies": [],
+      "verification": "cargo test -p sb-app-protocol",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "auth",
+      "title": "S&B Auth Kit",
+      "source_directory": "tools/sb-auth",
+      "package_name": "sb-auth",
+      "package_version": "0.2.0",
+      "binary_name": "sb-auth",
+      "product_kind": "cli_tool",
+      "maturity": "releasevalidated",
+      "category": "Authentication & Identity",
+      "description": "Sovereign Authentication Kit mit Ed25519-Tokens, Multi-Tier Revocation und Argon2id.",
+      "installable": true,
+      "release_targets": [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "dependencies": [
+        "core"
+      ],
+      "verification": "cargo test -p sb-auth; cargo check -p sb-auth",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "code",
+      "title": "S&B Code",
+      "source_directory": "tools/sb-code",
+      "package_name": "sb-code",
+      "package_version": "0.1.0",
+      "binary_name": "sb-code",
+      "product_kind": "cli_tool",
+      "maturity": "releasevalidated",
+      "category": "Code Engine & VCS",
+      "description": "Lokale Code-Engine, AST-Scopes und Mesh-Synchronisierung.",
+      "installable": true,
+      "release_targets": [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "dependencies": [
+        "mesh"
+      ],
+      "verification": "cargo test -p sb-code",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "db",
+      "title": "S&B Sovereign DB",
+      "source_directory": "tools/sb-db",
+      "package_name": "sb-db",
+      "package_version": "0.2.0",
+      "binary_name": "sb-db",
+      "product_kind": "cli_tool",
+      "maturity": "releasevalidated",
+      "category": "Database & State",
+      "description": "Embedded Document-KV Store mit MVCC, TTL, Indizes und Watch.",
+      "installable": true,
+      "release_targets": [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "dependencies": [
+        "mesh"
+      ],
+      "verification": "cargo test -p sb-db",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "dns",
+      "title": "S&B Sovereign DNS",
+      "source_directory": "tools/sb-dns",
+      "package_name": "sb-dns",
+      "package_version": "0.2.0",
+      "binary_name": "sb-dns",
+      "product_kind": "cli_tool",
+      "maturity": "releasevalidated",
+      "category": "DNS & Resolution",
+      "description": "Sovereign DNS-Resolver und Mesh-Router.",
+      "installable": true,
+      "release_targets": [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "dependencies": [
+        "core"
+      ],
+      "verification": "cargo test -p sb-dns",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "drive",
+      "title": "S&B Drive",
+      "source_directory": "tools/sb-drive",
+      "package_name": "sb-drive",
+      "package_version": "0.2.0",
+      "binary_name": "sb-drive",
+      "product_kind": "cli_tool",
+      "maturity": "releasevalidated",
+      "category": "Mesh Storage",
+      "description": "Peer-Filesystem, Dateiübertragung und Mesh-Drive-CLI.",
+      "installable": true,
+      "release_targets": [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "dependencies": [
+        "app-protocol",
+        "code",
+        "core",
+        "mesh"
+      ],
+      "verification": "cargo test -p sb-drive",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "forge",
+      "title": "S&B Forge",
+      "source_directory": "tools/sb-forge",
+      "package_name": "sb-forge",
+      "package_version": "0.1.1",
+      "binary_name": "sb-forge",
+      "product_kind": "cli_tool",
+      "maturity": "releasevalidated",
+      "category": "DevOps & Secrets",
+      "description": "CI/CD-Pipeline-Runner und Secret-Engine.",
+      "installable": true,
+      "release_targets": [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "dependencies": [
+        "core"
+      ],
+      "verification": "cargo test -p sb-forge",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "key",
+      "title": "S&B Key",
+      "source_directory": "tools/sb-key",
+      "package_name": "sb-key",
+      "package_version": "0.1.0",
+      "binary_name": "sb-key",
+      "product_kind": "cli_tool",
+      "maturity": "releasevalidated",
+      "category": "Cryptography & Identity",
+      "description": "Sovereign Root Identity und Ephemeral Lease Engine.",
+      "installable": true,
+      "release_targets": [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "dependencies": [],
+      "verification": "cargo test -p sb-key",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "mesh",
+      "title": "S&B Sovereign Mesh",
+      "source_directory": "tools/sb-mesh",
+      "package_name": "sb-mesh",
+      "package_version": "0.3.0",
+      "binary_name": "sb-mesh",
+      "product_kind": "cli_tool",
+      "maturity": "releasevalidated",
+      "category": "Overlay Network",
+      "description": "P2P-Overlay-Netzwerk und Mesh-Management.",
+      "installable": true,
+      "release_targets": [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "dependencies": [
+        "core",
+        "dns"
+      ],
+      "verification": "cargo test -p sb-mesh",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "node",
+      "title": "S&B Server Agent",
+      "source_directory": "tools/sb-node",
+      "package_name": "sb-node",
+      "package_version": "0.1.0",
+      "binary_name": "sb-node",
+      "product_kind": "cli_tool",
+      "maturity": "releasevalidated",
+      "category": "Fleet & Server",
+      "description": "Headless Mesh-Anchor und explizite Service-Routen.",
+      "installable": true,
+      "release_targets": [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "dependencies": [
+        "code",
+        "core",
+        "db",
+        "mesh"
+      ],
+      "verification": "cargo test -p sb-node",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "proxy",
+      "title": "S&B Proxy",
+      "source_directory": "tools/sb-proxy",
+      "package_name": "sb-proxy",
+      "package_version": "0.1.0",
+      "binary_name": "sb-proxy",
+      "product_kind": "cli_tool",
+      "maturity": "releasevalidated",
+      "category": "Edge & Egress",
+      "description": "Reverse Proxy, Auto-TLS und Edge Gateway.",
+      "installable": true,
+      "release_targets": [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "dependencies": [
+        "code",
+        "core"
+      ],
+      "verification": "cargo test -p sb-proxy",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-26T18:24:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    },
+    {
+      "id": "ca",
+      "title": "S&B Sovereign PKI & CA Engine",
+      "source_directory": "tools/sb-ca",
+      "package_name": "sb-ca",
+      "package_version": "0.1.0",
+      "binary_name": "sb-ca",
+      "product_kind": "cli_tool",
+      "maturity": "releasevalidated",
+      "category": "PKI & Certificate Authority",
+      "description": "Unified PKI Engine providing OpenSSH CA (RFC 4251) and X.509 mTLS CA (RFC 5280 / TLS 1.3).",
+      "installable": true,
+      "release_targets": [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "dependencies": [
+        "core"
+      ],
+      "verification": "cargo test -p sb-ca; cargo check -p sb-ca",
+      "release_evidence": [
+        "Artifact: sb-0.2.0-x86_64-pc-windows-msvc.zip",
+        "SHA-256: 80da4e91cb5b0ff2b7b4f441cdea1a24855557c2e0ca2a75204f40175ef07a51",
+        "Target: x86_64-pc-windows-msvc",
+        "Signature: release-manifest.json.ed25519",
+        "Timestamp: 2026-10-28T21:30:00Z",
+        "Method: local_staging_install_and_binary_execution"
+      ]
+    }
+  ]
+}

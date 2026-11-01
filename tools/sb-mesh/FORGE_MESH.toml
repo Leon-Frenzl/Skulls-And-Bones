@@ -1,0 +1,21 @@
+[mesh]
+name = "sb-mesh"
+version = "0.1.0"
+topic = "sbm:code:sb-mesh"
+channel = "main"
+description = "S&B Mesh — Sovereign P2P Overlay Network & Swarm Eventbus"
+
+[swarm]
+replication_factor = 1
+preferred_anchors = ["hostinger-node"]
+
+[lifecycle]
+pre_publish = "sb-forge run check"
+post_subscribe = "cargo check"
+
+[ignore]
+exclude = [
+  "target/",
+  "*.tar.gz"
+]
+

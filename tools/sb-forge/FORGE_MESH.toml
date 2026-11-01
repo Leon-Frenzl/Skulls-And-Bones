@@ -1,0 +1,21 @@
+[mesh]
+name = "sb-forge"
+version = "0.1.1"
+topic = "sbm:code:sb-forge"
+channel = "main"
+description = "S&B Forge — Sovereign Pipeline Runner, Secret Manager & Deployment Tool"
+
+[swarm]
+replication_factor = 1
+preferred_anchors = ["hostinger-node"]
+
+[lifecycle]
+pre_publish = "sb-forge run check"
+post_subscribe = "cargo check"
+
+[ignore]
+exclude = [
+  "target/",
+  "*.tar.gz"
+]
+

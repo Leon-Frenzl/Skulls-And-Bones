@@ -1,0 +1,17 @@
+[package]
+name = "sb-app-protocol"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+description = "Versioned SB-MAP control framing and bounded object-transfer primitives"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tokio = { version = "1", features = ["io-util"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

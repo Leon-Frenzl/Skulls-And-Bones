@@ -1,0 +1,59 @@
+# Build artifacts
+target/
+**/target/
+Cargo.lock
+
+# Rust binaries
+*.pdb
+*.exe
+*.dll
+*.so
+*.dylib
+
+# IDE
+.idea/
+.vscode/settings.json
+*.swp
+*.swo
+
+# SB / Vault
+.sb/
+.sb-mesh/
+.sb-node/
+.sb-code/
+
+# Forge
+Forge.toml
+forge-sealed*
+
+# Website build
+website/dist/
+
+# Staging
+staging/
+
+# Node modules
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets (always ignore)
+*.key
+*.pem
+*.p12
+*.pfx
+*.env
+.env.*
+
+# Test artifacts
+test_stdin.txt
+test_stdout.txt
+
+# Dummy
+dummy.txt
+
+# Scripts output
+scripts/*.log
+scripts/output.*
