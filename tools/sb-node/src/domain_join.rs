@@ -2773,15 +2773,10 @@ async fn read_http_body(
     ))
 }
 
-async fn send_http_request(dc_addr: SocketAddr, http_req: &str) -> Result<Vec<u8>, String> {
-    let mut stream = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        TcpStream::connect(dc_addr),
-    )
-    .await
-    .map_err(|_| format!("Timed out connecting to Domain Controller {dc_addr}"))?
-    .map_err(|e| format!("Failed to connect to Domain Controller {dc_addr}: {e}"))?;
-
+async fn read_http_response_from_stream<S>(mut stream: S, http_req: &str) -> Result<Vec<u8>, String>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     stream
         .write_all(http_req.as_bytes())
         .await
@@ -2819,29 +2814,120 @@ async fn send_http_request(dc_addr: SocketAddr, http_req: &str) -> Result<Vec<u8
     Ok(resp_body.to_vec())
 }
 
-/// Sends a `DomainJoinRequest` to a remote Domain Controller (`host:port`) over HTTP/1.1.
+async fn send_http_request(dc_addr: SocketAddr, http_req: &str) -> Result<Vec<u8>, String> {
+    let stream = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        TcpStream::connect(dc_addr),
+    )
+    .await
+    .map_err(|_| format!("Timed out connecting to Domain Controller {dc_addr}"))?
+    .map_err(|e| format!("Failed to connect to Domain Controller {dc_addr}: {e}"))?;
+    read_http_response_from_stream(stream, http_req).await
+}
+
+/// Sends an HTTP/1.1 or HTTPS (TLS 1.2/1.3) request to `endpoint` (`https://host`, `http://host:port`, or `host:port`).
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** MITM interception of domain-join tokens or signed policy bundles
+///   over the public internet.
+/// - **CVE / CWE Mapping:** CWE-295 (Improper Certificate Validation), CWE-319 (Cleartext
+///   Transmission of Sensitive Information).
+/// - **Likelihood & Exploitability:** High (8/10) for remote Mobile/Homeoffice joins.
+/// - **Applied Mitigation:** Uses `tokio-rustls` with `webpki-roots` for full X.509 PKI
+///   certificate verification and SNI on `https://` endpoints.
+pub async fn send_endpoint_request(
+    endpoint: &str,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let trimmed = endpoint.trim().trim_end_matches('/');
+    let (use_tls, authority) = if let Some(rest) = trimmed.strip_prefix("https://") {
+        (true, rest.split('/').next().unwrap_or(rest))
+    } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        (false, rest.split('/').next().unwrap_or(rest))
+    } else {
+        (false, trimmed)
+    };
+
+    let (host, port) = if authority.starts_with('[') {
+        // IPv6 [::1]:port
+        if let Some((h, p)) = authority.rsplit_once("]:") {
+            (
+                format!("{h}]"),
+                p.parse::<u16>().map_err(|_| "Invalid port".to_string())?,
+            )
+        } else {
+            (authority.to_string(), if use_tls { 443 } else { 8443 })
+        }
+    } else if let Some((h, p)) = authority.rsplit_once(':') {
+        (
+            h.to_string(),
+            p.parse::<u16>().map_err(|_| "Invalid port".to_string())?,
+        )
+    } else {
+        (authority.to_string(), if use_tls { 443 } else { 8443 })
+    };
+
+    let mut http_req =
+        format!("{method} {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n");
+    if let Some(b) = body {
+        http_req.push_str(&format!(
+            "Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            b.len(),
+            b
+        ));
+    } else {
+        http_req.push_str("\r\n");
+    }
+
+    let addr_str = format!("{host}:{port}");
+    let tcp = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        TcpStream::connect(&addr_str),
+    )
+    .await
+    .map_err(|_| format!("Timed out connecting to Domain Controller {addr_str}"))?
+    .map_err(|e| format!("Failed to connect to Domain Controller {addr_str}: {e}"))?;
+
+    if use_tls {
+        let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let tls_cfg = Arc::new(
+            tokio_rustls::rustls::ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth(),
+        );
+        let connector = tokio_rustls::TlsConnector::from(tls_cfg);
+        let server_name = rustls_pki_types::ServerName::try_from(host.clone())
+            .map_err(|e| format!("Invalid TLS server name '{host}': {e}"))?;
+        let tls_stream = connector
+            .connect(server_name, tcp)
+            .await
+            .map_err(|e| format!("TLS handshake with '{host}' failed: {e}"))?;
+        read_http_response_from_stream(tls_stream, &http_req).await
+    } else {
+        read_http_response_from_stream(tcp, &http_req).await
+    }
+}
+
+/// Sends a `DomainJoinRequest` to a remote Domain Controller (`https://host` or `host:port`).
 pub async fn send_remote_join_request(
-    dc_addr: SocketAddr,
+    dc_endpoint: &str,
     req: &DomainJoinRequest,
 ) -> Result<DomainJoinResponse, String> {
     let body = serde_json::to_string(req).map_err(|e| format!("Serialize error: {e}"))?;
-    let http_req = format!(
-        "POST /v1/machines/join HTTP/1.1\r\nHost: {dc_addr}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
-    let resp_body = send_http_request(dc_addr, &http_req).await?;
+    let resp_body =
+        send_endpoint_request(dc_endpoint, "POST", "/v1/machines/join", Some(&body)).await?;
     serde_json::from_slice(&resp_body)
         .map_err(|e| format!("Failed to parse DomainJoinResponse: {e}"))
 }
 
 /// Fetches the latest signed GPO bundle from a remote Domain Controller (`GET /v1/policies/bundle`).
 pub async fn fetch_remote_policy_bundle(
-    dc_addr: SocketAddr,
+    dc_endpoint: &str,
 ) -> Result<sb_core::policy::SignedPolicyBundle, String> {
-    let http_req =
-        format!("GET /v1/policies/bundle HTTP/1.1\r\nHost: {dc_addr}\r\nConnection: close\r\n\r\n");
-    let resp_body = send_http_request(dc_addr, &http_req).await?;
+    let resp_body = send_endpoint_request(dc_endpoint, "GET", "/v1/policies/bundle", None).await?;
     serde_json::from_slice(&resp_body)
         .map_err(|e| format!("Failed to parse SignedPolicyBundle: {e}"))
 }
@@ -2996,7 +3082,9 @@ mod tests {
             mesh_ip: None,
             join_token: "sbt.invalid.token".into(),
         };
-        assert!(send_remote_join_request(dc_addr, &bad_req).await.is_err());
+        assert!(send_remote_join_request(&dc_addr.to_string(), &bad_req)
+            .await
+            .is_err());
 
         let admin_tokens = engine
             .issue_session("admin", vec!["admin".into()], vec![], serde_json::json!({}))
@@ -3010,7 +3098,9 @@ mod tests {
             mesh_ip: None,
             join_token: admin_tokens.access_token,
         };
-        let resp = send_remote_join_request(dc_addr, &good_req).await.unwrap();
+        let resp = send_remote_join_request(&dc_addr.to_string(), &good_req)
+            .await
+            .unwrap();
         assert_eq!(resp.fqdn, "db-01.corp.eu");
         assert_eq!(resp.mesh_ip, "10.42.0.10");
 
@@ -3106,7 +3196,9 @@ mod tests {
         );
         send_http_request(dc_addr, &real_req).await.unwrap();
 
-        let bundle = fetch_remote_policy_bundle(dc_addr).await.unwrap();
+        let bundle = fetch_remote_policy_bundle(&dc_addr.to_string())
+            .await
+            .unwrap();
         assert_eq!(bundle.domain, "corp.eu");
         assert_eq!(bundle.policies.len(), 1);
         let pub_b64 = fs::read_to_string(domain_dir.join("policy_authority.pub")).unwrap();
@@ -3124,7 +3216,9 @@ mod tests {
             admin_tokens.access_token
         );
         send_http_request(dc_addr, &del_req).await.unwrap();
-        let bundle_after = fetch_remote_policy_bundle(dc_addr).await.unwrap();
+        let bundle_after = fetch_remote_policy_bundle(&dc_addr.to_string())
+            .await
+            .unwrap();
         assert!(bundle_after.policies.is_empty());
 
         let _ = fs::remove_dir_all(&temp);

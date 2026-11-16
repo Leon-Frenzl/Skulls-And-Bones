@@ -142,7 +142,7 @@ export default function App() {
   const [apiOutput, setApiOutput] = useState<string>("");
 
   // Enrollment state
-  const [enrollDomain, setEnrollDomain] = useState<string>("corp.eu");
+  const [enrollDomain, setEnrollDomain] = useState<string>("skulls-and-bones.sb");
   const [enrollResult, setEnrollResult] = useState<string>("");
 
   const authHeaders = (): Record<string, string> =>

@@ -163,9 +163,9 @@ enum Commands {
 
     /// Linux Client-Agent: Sync von GPOs, Software-Paketen, LAPS-Rotation & Heartbeat
     Agent {
-        /// Adresse des Domain Controllers (z. B. 127.0.0.1:8443)
-        #[arg(long, default_value = "127.0.0.1:8443")]
-        dc: SocketAddr,
+        /// Adresse des Domain Controllers (z. B. https://console.skulls-and-bones.org oder 127.0.0.1:8443)
+        #[arg(long, default_value = "https://console.skulls-and-bones.org")]
+        dc: String,
         /// Intervall in Sekunden (Standard: 60s)
         #[arg(long, default_value_t = 60)]
         interval_secs: u64,
@@ -207,9 +207,9 @@ enum DomainCommands {
         /// Optionale feste Mesh-IP (Standard: automatische Zuweisung)
         #[arg(long)]
         ip: Option<String>,
-        /// Optionale Adresse eines Remote-Domain-Controllers (z. B. 10.42.0.1:8443)
+        /// Optionale Adresse eines Remote-Domain-Controllers (z. B. https://console.skulls-and-bones.org)
         #[arg(long)]
-        dc: Option<SocketAddr>,
+        dc: Option<String>,
     },
     /// Startet den Domain-Controller HTTP/JSON Join-Dienst (POST /v1/domain/join)
     Serve {
@@ -287,9 +287,9 @@ enum PolicyCommands {
         /// Domänenname (z. B. corp.eu)
         #[arg(long)]
         domain: String,
-        /// Optionaler Remote-DC (z. B. 127.0.0.1:8443)
+        /// Optionaler Remote-DC (z. B. https://console.skulls-and-bones.org)
         #[arg(long)]
-        dc: Option<SocketAddr>,
+        dc: Option<String>,
         /// Zeigt nur geplante Änderungen ohne Dateisystem-Schreibvorgänge
         #[arg(long)]
         dry_run: bool,
@@ -4345,11 +4345,7 @@ async fn handle_domain_commands(sub: DomainCommands) -> Result<(), String> {
                     .map_err(|e| format!("Cannot read {}: {e}", ef_path.display()))?;
                 let pkg: sb_core::domain::EnrollmentPackage = serde_json::from_str(&raw)
                     .map_err(|e| format!("Invalid .sb-enroll JSON: {e}"))?;
-                let parsed_dc: SocketAddr = pkg
-                    .dc_addr
-                    .parse()
-                    .map_err(|e| format!("Invalid dc_addr in .sb-enroll: {e}"))?;
-                (pkg.domain, pkg.join_token, dc.or(Some(parsed_dc)))
+                (pkg.domain, pkg.join_token, dc.or(Some(pkg.dc_addr)))
             } else {
                 let d = domain
                     .ok_or_else(|| "Domänenname oder --enroll-file erforderlich".to_string())?;
@@ -4383,8 +4379,8 @@ async fn handle_domain_commands(sub: DomainCommands) -> Result<(), String> {
                 join_token: resolved_token,
             };
 
-            let resp = if let Some(dc_addr) = resolved_dc {
-                domain_join::send_remote_join_request(dc_addr, &req).await?
+            let resp = if let Some(ref dc_endpoint) = resolved_dc {
+                domain_join::send_remote_join_request(dc_endpoint, &req).await?
             } else {
                 let verifier = load_local_auth_verifier()?;
                 domain_join::process_join_request(&req, &verifier, None, true)?
@@ -4617,8 +4613,8 @@ async fn handle_policy_commands(sub: PolicyCommands) -> Result<(), String> {
             root,
         } => {
             let cache_path = policy_engine::default_cached_bundle_path();
-            let bundle = if let Some(dc_addr) = dc {
-                match domain_join::fetch_remote_policy_bundle(dc_addr).await {
+            let bundle = if let Some(ref dc_endpoint) = dc {
+                match domain_join::fetch_remote_policy_bundle(dc_endpoint).await {
                     Ok(b) => b,
                     Err(remote_err) => {
                         if cache_path.exists() {
@@ -4976,7 +4972,7 @@ fn handle_laps_commands(sub: LapsCommands) -> Result<(), String> {
 }
 
 async fn run_linux_agent_loop(
-    dc: SocketAddr,
+    dc: String,
     interval_secs: u64,
     once: bool,
     dry_run: bool,
@@ -5000,7 +4996,7 @@ async fn run_linux_agent_loop(
             dc,
             dry_run
         );
-        match domain_join::fetch_remote_policy_bundle(dc).await {
+        match domain_join::fetch_remote_policy_bundle(&dc).await {
             Ok(bundle) => {
                 if let Ok(pub_b64) =
                     fs::read_to_string(policy_engine::default_policy_authority_pub_path())

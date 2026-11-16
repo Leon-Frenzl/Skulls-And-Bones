@@ -99,6 +99,11 @@ async fn handle_graph_request(
         .get(hyper::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
+    let req_host = req
+        .headers()
+        .get(hyper::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
 
     if method == Method::OPTIONS {
         return Ok(json_response(StatusCode::NO_CONTENT, ""));
@@ -281,15 +286,21 @@ async fn handle_graph_request(
         };
         let payload: serde_json::Value =
             serde_json::from_slice(&body_bytes).unwrap_or_else(|_| serde_json::json!({}));
-        let domain = payload["domain"].as_str().unwrap_or("corp.eu");
-        let command = format!(
-            "sb-node domain join {domain} --dc {} --token <YOUR_TOKEN>",
-            config.dc_addr
-        );
+        let domain = payload["domain"].as_str().unwrap_or("skulls-and-bones.sb");
+        let public_dc = match req_host.as_deref() {
+            Some(h) if h.contains("skulls-and-bones.org") => {
+                "https://console.skulls-and-bones.org".to_string()
+            }
+            Some(h) if !h.starts_with("127.0.0.1") && !h.starts_with("localhost") => {
+                format!("https://{h}")
+            }
+            _ => config.dc_addr.to_string(),
+        };
+        let command = format!("sb-node domain join {domain} --dc {public_dc} --token <YOUR_TOKEN>");
         let enrollment_package = sb_core::domain::EnrollmentPackage {
             version: 1,
             domain: domain.to_string(),
-            dc_addr: config.dc_addr.to_string(),
+            dc_addr: public_dc.clone(),
             issued_for: claims.subject.clone(),
             join_token: token.to_string(),
             issued_at: chrono::Utc::now().to_rfc3339(),
