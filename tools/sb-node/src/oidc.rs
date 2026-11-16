@@ -177,6 +177,69 @@ pub fn exchange_login_code_for_session(
         .map_err(|e| format!("Failed to issue session tokens: {e}"))
 }
 
+/// Persistent Argon2id password credential store (`~/.sb/domain/credentials.json`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CredentialStore {
+    pub hashes: BTreeMap<String, String>,
+}
+
+pub fn default_credentials_path() -> PathBuf {
+    sb_core::domain::local_domain_dir().join("credentials.json")
+}
+
+impl CredentialStore {
+    pub fn load(path: &Path) -> Result<Self, String> {
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let raw = fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read credentials {}: {e}", path.display()))?;
+        serde_json::from_str(&raw)
+            .map_err(|e| format!("Invalid credentials JSON {}: {e}", path.display()))
+    }
+
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create credentials dir: {e}"))?;
+        }
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize credentials: {e}"))?;
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, json).map_err(|e| format!("Failed to write temp credentials: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
+        }
+        fs::rename(&tmp, path).map_err(|e| format!("Failed to commit credentials: {e}"))?;
+        Ok(())
+    }
+
+    /// Sets an Argon2id password hash for `username` (min 8 chars).
+    pub fn set_password(&mut self, username: &str, password: &str) -> Result<(), String> {
+        let clean = sb_core::identity::validate_username(username)?;
+        if password.len() < 8 || password.len() > 256 {
+            return Err("Password must be 8..=256 characters".into());
+        }
+        let hash = sb_auth::crypto::hash_password(password)
+            .map_err(|e| format!("Password hashing failed: {e}"))?;
+        self.hashes.insert(clean, hash);
+        Ok(())
+    }
+
+    /// Verifies `password` against the stored Argon2id hash for `username`.
+    pub fn verify(&self, username: &str, password: &str) -> bool {
+        let Ok(clean) = sb_core::identity::validate_username(username) else {
+            return false;
+        };
+        let Some(hash) = self.hashes.get(&clean) else {
+            return false;
+        };
+        sb_auth::crypto::verify_password(password, hash).is_ok()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +271,11 @@ mod tests {
             exchange_login_code_for_session(&code, &mut store, &engine, vec!["admin".into()])
                 .is_err()
         );
+
+        // Argon2id CredentialStore verification
+        let mut creds = CredentialStore::default();
+        creds.set_password("leon.admin", "StrongPass!2026").unwrap();
+        assert!(creds.verify("leon.admin", "StrongPass!2026"));
+        assert!(!creds.verify("leon.admin", "wrong"));
     }
 }

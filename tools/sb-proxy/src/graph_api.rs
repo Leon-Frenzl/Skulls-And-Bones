@@ -532,6 +532,18 @@ pub fn build_openapi_spec() -> serde_json::Value {
             serde_json::json!({ "post": { "summary": "Exchange single-use login code for session token" } }),
         ),
         (
+            "/v1/auth/login",
+            serde_json::json!({ "post": { "summary": "Authenticate with username and password (Argon2id)" } }),
+        ),
+        (
+            "/v1/auth/refresh",
+            serde_json::json!({ "post": { "summary": "Refresh session tokens without re-login" } }),
+        ),
+        (
+            "/v1/me/password",
+            serde_json::json!({ "post": { "summary": "Set or change own browser login password" } }),
+        ),
+        (
             "/v1/auth/userinfo",
             serde_json::json!({ "get": { "summary": "OIDC UserInfo endpoint" } }),
         ),

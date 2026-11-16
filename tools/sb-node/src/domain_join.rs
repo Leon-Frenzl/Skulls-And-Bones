@@ -596,12 +596,7 @@ async fn handle_join_http_connection(
                     "ok",
                     serde_json::json!({}),
                 );
-                let json = serde_json::json!({
-                    "access_token": tokens.access_token,
-                    "refresh_token": tokens.refresh_token,
-                    "expires_at": tokens.expires_at,
-                })
-                .to_string();
+                let json = session_tokens_json(&tokens);
                 write_http_json(stream, 200, "OK", &json).await
             }
             Err(e) => {
@@ -609,6 +604,171 @@ async fn handle_join_http_connection(
                 write_http_json(stream, 401, "Unauthorized", &msg).await
             }
         };
+    }
+
+    if method == "POST" && path == "/v1/auth/login" {
+        let body =
+            match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines).await? {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        let username = payload["username"].as_str().unwrap_or("").trim();
+        let password = payload["password"].as_str().unwrap_or("");
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let creds = crate::oidc::CredentialStore::load(&base_dir.join("credentials.json"))
+            .unwrap_or_default();
+        if !creds.verify(username, password) {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"invalid username or password"}"#,
+            )
+            .await;
+        }
+        let dir = crate::directory_users::IdentityDirectory::load_or_create(
+            &base_dir.join("users.json"),
+            "skulls-and-bones.sb",
+        )
+        .unwrap_or_default();
+        let Some(user) = dir.users.get(username) else {
+            return write_http_json(stream, 401, "Unauthorized", r#"{"error":"user not found"}"#)
+                .await;
+        };
+        if !user.enabled {
+            return write_http_json(
+                stream,
+                403,
+                "Forbidden",
+                r#"{"error":"user account is disabled"}"#,
+            )
+            .await;
+        }
+        let engine = match load_local_auth_engine() {
+            Ok(e) => e,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": e }).to_string();
+                return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+            }
+        };
+        let mut caps = vec!["domain:read".to_string(), "directory:read".to_string()];
+        if user.groups.iter().any(|g| g == "admins") {
+            caps.extend([
+                "domain:admin".into(),
+                "domain:join".into(),
+                "directory:write".into(),
+                "policy:write".into(),
+                "audit:read".into(),
+                "dns:write".into(),
+                "vault:write".into(),
+            ]);
+        }
+        return match engine.issue_session(
+            &user.username,
+            user.groups.clone(),
+            caps,
+            serde_json::json!({}),
+        ) {
+            Ok(tokens) => {
+                let _ = crate::audit_log::append_audit_event(
+                    &base_dir.join("audit.jsonl"),
+                    &user.username,
+                    "auth.login",
+                    "password",
+                    "ok",
+                    serde_json::json!({}),
+                );
+                let json = session_tokens_json(&tokens);
+                write_http_json(stream, 200, "OK", &json).await
+            }
+            Err(e) => {
+                let msg =
+                    serde_json::json!({ "error": format!("Token issue failed: {e}") }).to_string();
+                write_http_json(stream, 500, "Internal Server Error", &msg).await
+            }
+        };
+    }
+
+    if method == "POST" && path == "/v1/auth/refresh" {
+        let body =
+            match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines).await? {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        let refresh_token = payload["refresh_token"].as_str().unwrap_or("");
+        let engine = match load_local_auth_engine() {
+            Ok(e) => e,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": e }).to_string();
+                return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+            }
+        };
+        return match engine.refresh_session(refresh_token) {
+            Ok(tokens) => {
+                let json = session_tokens_json(&tokens);
+                write_http_json(stream, 200, "OK", &json).await
+            }
+            Err(e) => {
+                let msg =
+                    serde_json::json!({ "error": format!("Refresh failed: {e}") }).to_string();
+                write_http_json(stream, 401, "Unauthorized", &msg).await
+            }
+        };
+    }
+
+    if method == "POST" && path == "/v1/me/password" {
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        let body =
+            match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines).await? {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        let new_pw = payload["password"].as_str().unwrap_or("");
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let creds_path = base_dir.join("credentials.json");
+        let mut creds = crate::oidc::CredentialStore::load(&creds_path).unwrap_or_default();
+        if let Err(e) = creds.set_password(&claims.subject, new_pw) {
+            let msg = serde_json::json!({ "error": e }).to_string();
+            return write_http_json(stream, 400, "Bad Request", &msg).await;
+        }
+        if let Err(e) = creds.save(&creds_path) {
+            let msg = serde_json::json!({ "error": e }).to_string();
+            return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+        }
+        let _ = crate::audit_log::append_audit_event(
+            &base_dir.join("audit.jsonl"),
+            &claims.subject,
+            "user.password_update",
+            &claims.subject,
+            "ok",
+            serde_json::json!({}),
+        );
+        return write_http_json(stream, 200, "OK", r#"{"status":"password_updated"}"#).await;
     }
 
     if method == "GET" && path == "/v1/auth/userinfo" {
@@ -2454,6 +2614,26 @@ pub fn offboard_user(
         revoked_machines,
         timestamp: Utc::now().to_rfc3339(),
     })
+}
+
+fn session_tokens_json(tokens: &sb_auth::SessionTokens) -> String {
+    serde_json::json!({
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
+        "expires_at": tokens.expires_at,
+    })
+    .to_string()
+}
+
+fn load_local_auth_engine() -> Result<sb_auth::AuthEngine, String> {
+    let auth_dir = sb_core::paths::sb_home().join("auth");
+    let key_b64 = fs::read_to_string(auth_dir.join("auth.key"))
+        .map_err(|e| format!("Missing auth.key: {e}"))?;
+    let keypair = sb_auth::crypto::Keypair::from_secret_base64(key_b64.trim())
+        .map_err(|e| format!("Invalid auth.key: {e}"))?;
+    let rev_store = sb_auth::FileRevocationStore::open(auth_dir.join("revocations.json"))
+        .map_err(|e| format!("Revocation store error: {e}"))?;
+    Ok(sb_auth::AuthEngine::new(keypair, Arc::new(rev_store)))
 }
 
 async fn write_http_json(

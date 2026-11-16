@@ -81,6 +81,10 @@ interface PolicyDocument {
 export default function App() {
   const [tab, setTab] = useState<TabId>("overview");
   const [token, setToken] = useState<string>(() => localStorage.getItem("sb_token") || "");
+  const [refreshToken, setRefreshToken] = useState<string>(() => localStorage.getItem("sb_refresh_token") || "");
+  const [loginUser, setLoginUser] = useState<string>("leon.admin");
+  const [loginPass, setLoginPass] = useState<string>("");
+  const [meNewPass, setMeNewPass] = useState<string>("");
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [machines, setMachines] = useState<MachineRecord[]>([]);
   const [users, setUsers] = useState<DomainUser[]>([]);
@@ -142,9 +146,33 @@ export default function App() {
   const authHeaders = (): Record<string, string> =>
     token.trim() ? { Authorization: `Bearer ${token.trim()}` } : {};
 
+  const saveSession = (access: string, refresh?: string) => {
+    setToken(access);
+    localStorage.setItem("sb_token", access);
+    if (refresh !== undefined) {
+      setRefreshToken(refresh);
+      localStorage.setItem("sb_refresh_token", refresh);
+    }
+  };
+
   const saveToken = (val: string) => {
-    setToken(val);
-    localStorage.setItem("sb_token", val);
+    saveSession(val, val ? refreshToken : "");
+  };
+
+  const tryRefreshSession = async (): Promise<string | null> => {
+    if (!refreshToken) return null;
+    const res = await fetch("/v1/auth/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.access_token) {
+      saveSession(data.access_token, data.refresh_token || refreshToken);
+      return data.access_token;
+    }
+    return null;
   };
 
   const refreshAll = async () => {
@@ -166,7 +194,7 @@ export default function App() {
       setIpamData(ipm);
 
       if (token.trim()) {
-        const [mRes, uRes, aRes, meRes, vRes, tvRes, appRes, fhRes] = await Promise.all([
+        let [mRes, uRes, aRes, meRes, vRes, tvRes, appRes, fhRes] = await Promise.all([
           fetch("/v1/machines", { headers: authHeaders() }),
           fetch("/v1/users", { headers: authHeaders() }),
           fetch("/v1/audit/events?limit=50", { headers: authHeaders() }),
@@ -176,6 +204,22 @@ export default function App() {
           fetch("/v1/apps", { headers: authHeaders() }),
           fetch("/v1/fleet/health", { headers: authHeaders() }),
         ]);
+        if (mRes.status === 401 && refreshToken) {
+          const newTok = await tryRefreshSession();
+          if (newTok) {
+            const h2 = { Authorization: `Bearer ${newTok}` };
+            [mRes, uRes, aRes, meRes, vRes, tvRes, appRes, fhRes] = await Promise.all([
+              fetch("/v1/machines", { headers: h2 }),
+              fetch("/v1/users", { headers: h2 }),
+              fetch("/v1/audit/events?limit=50", { headers: h2 }),
+              fetch("/v1/me", { headers: h2 }),
+              fetch("/v1/me/vault", { headers: h2 }),
+              fetch(`/v1/vault/team?group=${encodeURIComponent(teamGroup)}`, { headers: h2 }),
+              fetch("/v1/apps", { headers: h2 }),
+              fetch("/v1/fleet/health", { headers: h2 }),
+            ]);
+          }
+        }
         if (mRes.ok) {
           const mJson = await mRes.json();
           setMachines(Array.isArray(mJson.machines) ? mJson.machines : []);
@@ -356,18 +400,53 @@ export default function App() {
             {tab === "explorer" && "Open Graph API Explorer (/v1/*)"}
           </h1>
 
-          <div className="token-box">
+          <div className="token-box" style={{ flexWrap: "wrap" }}>
             {!token.trim() ? (
               <>
                 <input
                   className="input"
-                  placeholder="Login-Code (sbc_...)"
-                  value={loginCode}
-                  onChange={(e) => setLoginCode(e.target.value)}
-                  style={{ width: 170 }}
+                  placeholder="Benutzer (leon.admin)"
+                  value={loginUser}
+                  onChange={(e) => setLoginUser(e.target.value)}
+                  style={{ width: 140 }}
+                />
+                <input
+                  className="input"
+                  type="password"
+                  placeholder="Passwort"
+                  value={loginPass}
+                  onChange={(e) => setLoginPass(e.target.value)}
+                  style={{ width: 130 }}
                 />
                 <button
                   className="btn btn-primary"
+                  onClick={async () => {
+                    const res = await fetch("/v1/auth/login", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ username: loginUser, password: loginPass }),
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      saveSession(data.access_token, data.refresh_token || "");
+                      setLoginPass("");
+                      await refreshAll();
+                    } else {
+                      setStatusMsg(`Login fehlgeschlagen (${res.status}): ${await res.text()}`);
+                    }
+                  }}
+                >
+                  Login
+                </button>
+                <input
+                  className="input"
+                  placeholder="oder Code (sbc_...)"
+                  value={loginCode}
+                  onChange={(e) => setLoginCode(e.target.value)}
+                  style={{ width: 140 }}
+                />
+                <button
+                  className="btn"
                   onClick={async () => {
                     const res = await fetch("/v1/auth/exchange", {
                       method: "POST",
@@ -377,31 +456,23 @@ export default function App() {
                     if (res.ok) {
                       const data = await res.json();
                       if (data.access_token) {
-                        saveToken(data.access_token);
+                        saveSession(data.access_token, data.refresh_token || "");
                         setLoginCode("");
                         await refreshAll();
                       }
                     } else {
-                      setStatusMsg(`Login fehlgeschlagen (${res.status}): ${await res.text()}`);
+                      setStatusMsg(`Code-Login fehlgeschlagen (${res.status}): ${await res.text()}`);
                     }
                   }}
                 >
-                  Anmelden
+                  Code
                 </button>
               </>
             ) : (
-              <button className="btn" onClick={() => saveToken("")}>
+              <button className="btn" onClick={() => saveSession("", "")}>
                 Abmelden
               </button>
             )}
-            <input
-              className="input"
-              type="password"
-              placeholder="oder Bearer Token..."
-              value={token}
-              onChange={(e) => saveToken(e.target.value)}
-              style={{ width: 170 }}
-            />
             <button className="btn" onClick={() => void refreshAll()}>
               <RefreshCw size={14} /> Refresh
             </button>
@@ -584,6 +655,38 @@ export default function App() {
                 </button>
               </div>
               {meSshCert && <pre className="code-block">{meSshCert}</pre>}
+            </div>
+
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">Browser-Passwort setzen / ändern (Argon2id)</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <input
+                  className="input"
+                  type="password"
+                  placeholder="Neues Passwort (min. 8 Zeichen)"
+                  value={meNewPass}
+                  onChange={(e) => setMeNewPass(e.target.value)}
+                  style={{ width: 260 }}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    const res = await fetch("/v1/me/password", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
+                      body: JSON.stringify({ password: meNewPass }),
+                    });
+                    if (res.ok) {
+                      setMeNewPass("");
+                      setStatusMsg("Passwort erfolgreich aktualisiert!");
+                    } else {
+                      setStatusMsg(`Passwort-Fehler (${res.status}): ${await res.text()}`);
+                    }
+                  }}
+                >
+                  Passwort speichern
+                </button>
+              </div>
             </div>
 
             <div className="card" style={{ marginBottom: 16 }}>

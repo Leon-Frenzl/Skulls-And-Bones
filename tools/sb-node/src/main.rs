@@ -358,6 +358,12 @@ enum UserCommands {
         #[arg(long, default_value_t = 300)]
         ttl_seconds: i64,
     },
+    /// Setzt ein Argon2id-Passwort für den Browser-Login eines Benutzers
+    SetPassword {
+        username: String,
+        #[arg(long)]
+        password: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -4881,6 +4887,18 @@ fn handle_user_commands(sub: UserCommands) -> Result<(), String> {
                 ttl_seconds
             );
             println!("  {code}");
+            Ok(())
+        }
+        UserCommands::SetPassword { username, password } => {
+            let creds_path = oidc::default_credentials_path();
+            let mut creds = oidc::CredentialStore::load(&creds_path)?;
+            creds.set_password(&username, &password)?;
+            creds.save(&creds_path)?;
+            println!(
+                "{} Passwort für '{}' (Argon2id) gesetzt.",
+                "✓".green().bold(),
+                username.cyan().bold()
+            );
             Ok(())
         }
     }
