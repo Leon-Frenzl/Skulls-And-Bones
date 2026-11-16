@@ -1,0 +1,15 @@
+[Unit]
+Description=Skulls & Bones Sovereign Domain Controller (No Docker)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sb-node dc up --domain corp.eu --admin anna.admin --dc-bind 127.0.0.1:8443 --graph-bind 0.0.0.0:8090 --console-dir /opt/skulls-and-bones/console/dist
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

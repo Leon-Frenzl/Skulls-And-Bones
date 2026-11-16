@@ -4,6 +4,7 @@
 pub mod audit_log;
 pub mod catalog_membership;
 pub mod catalog_sync;
+pub mod dc_orchestrator;
 pub mod directory_users;
 pub mod domain_join;
 pub mod oidc;
@@ -144,6 +145,12 @@ enum Commands {
     User {
         #[command(subcommand)]
         sub: UserCommands,
+    },
+
+    /// One-Command Domain Controller (bootstraps Auth, CA, DNS, GPOs, Graph API & Console ohne Docker)
+    Dc {
+        #[command(subcommand)]
+        sub: DcCommands,
     },
 }
 
@@ -326,6 +333,28 @@ enum UserCommands {
         username: String,
         #[arg(long, default_value_t = 300)]
         ttl_seconds: i64,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DcCommands {
+    /// Startet den kompletten Domain Controller mit einem Befehl (ohne Docker)
+    Up {
+        /// Domänenname (z. B. corp.eu)
+        #[arg(long, default_value = "corp.eu")]
+        domain: String,
+        /// Initialer Admin-Benutzername (z. B. anna.admin)
+        #[arg(long, default_value = "anna.admin")]
+        admin: String,
+        /// Bind-Adresse für die DC-API (Standard: 127.0.0.1:8443)
+        #[arg(long, default_value = "127.0.0.1:8443")]
+        dc_bind: SocketAddr,
+        /// Bind-Adresse für Open Graph API & Web-Console (Standard: 127.0.0.1:8090)
+        #[arg(long, default_value = "127.0.0.1:8090")]
+        graph_bind: SocketAddr,
+        /// Pfad zu console/dist (Standard: console/dist)
+        #[arg(long, default_value = "console/dist")]
+        console_dir: PathBuf,
     },
 }
 
@@ -2213,6 +2242,30 @@ async fn main() {
                 std::process::exit(1);
             }
         }
+        Some(Commands::Dc { sub }) => match sub {
+            DcCommands::Up {
+                domain,
+                admin,
+                dc_bind,
+                graph_bind,
+                console_dir,
+            } => {
+                let cfg = dc_orchestrator::DcBootstrapConfig {
+                    domain,
+                    admin_username: admin,
+                    dc_bind,
+                    graph_bind,
+                    console_dir,
+                };
+                if let Err(error) = dc_orchestrator::run_one_command_dc(cfg).await {
+                    eprintln!(
+                        "  {} Domain Controller failed: {error}",
+                        "✗".bright_red().bold()
+                    );
+                    std::process::exit(1);
+                }
+            }
+        },
         Some(Commands::Status) | None => {
             handle_status();
         }
