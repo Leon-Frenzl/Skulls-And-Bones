@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import {
   Activity,
+  Download,
+  FileText,
   Globe,
   KeyRound,
   Laptop,
@@ -8,9 +10,28 @@ import {
   ShieldCheck,
   Terminal,
   Trash2,
+  UserX,
+  Users,
 } from "lucide-react";
 
-type TabId = "overview" | "machines" | "policies" | "dns" | "ca" | "explorer";
+type TabId = "overview" | "users" | "machines" | "policies" | "dns" | "ca" | "audit" | "explorer";
+
+interface AuditEvent {
+  seq: number;
+  timestamp: string;
+  actor: string;
+  action: string;
+  target: string;
+  outcome: string;
+}
+
+interface DomainUser {
+  username: string;
+  display_name: string;
+  email: string;
+  groups: string[];
+  enabled: boolean;
+}
 
 interface HealthInfo {
   status: string;
@@ -44,10 +65,17 @@ export default function App() {
   const [token, setToken] = useState<string>(() => localStorage.getItem("sb_token") || "");
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [machines, setMachines] = useState<MachineRecord[]>([]);
+  const [users, setUsers] = useState<DomainUser[]>([]);
+  const [newUsername, setNewUsername] = useState<string>("");
+  const [newEmail, setNewEmail] = useState<string>("");
+  const [newGroups, setNewGroups] = useState<string>("engineering");
   const [policies, setPolicies] = useState<PolicyDocument[]>([]);
   const [dnsRecords, setDnsRecords] = useState<Record<string, unknown> | null>(null);
   const [caStatus, setCaStatus] = useState<Record<string, unknown> | null>(null);
   const [routes, setRoutes] = useState<unknown[]>([]);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [auditValid, setAuditValid] = useState<boolean | null>(null);
+  const [enrollPkg, setEnrollPkg] = useState<Record<string, unknown> | null>(null);
   const [statusMsg, setStatusMsg] = useState<string>("");
 
   // API Explorer state
@@ -85,10 +113,23 @@ export default function App() {
       setRoutes(Array.isArray(r.routes) ? r.routes : []);
 
       if (token.trim()) {
-        const mRes = await fetch("/v1/machines", { headers: authHeaders() });
+        const [mRes, uRes, aRes] = await Promise.all([
+          fetch("/v1/machines", { headers: authHeaders() }),
+          fetch("/v1/users", { headers: authHeaders() }),
+          fetch("/v1/audit/events?limit=50", { headers: authHeaders() }),
+        ]);
         if (mRes.ok) {
           const mJson = await mRes.json();
           setMachines(Array.isArray(mJson.machines) ? mJson.machines : []);
+        }
+        if (uRes.ok) {
+          const uJson = await uRes.json();
+          setUsers(Array.isArray(uJson.users) ? uJson.users : []);
+        }
+        if (aRes.ok) {
+          const aJson = await aRes.json();
+          setAuditEvents(Array.isArray(aJson.events) ? aJson.events : []);
+          setAuditValid(typeof aJson.chain_valid === "boolean" ? aJson.chain_valid : null);
         }
       }
     } catch (err) {
@@ -127,13 +168,40 @@ export default function App() {
 
   const createEnrollment = async () => {
     setEnrollResult("");
+    setEnrollPkg(null);
     const res = await fetch("/v1/enrollments", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ domain: enrollDomain }),
     });
     const data = await res.json();
+    if (data.enrollment_package) {
+      setEnrollPkg(data.enrollment_package);
+    }
     setEnrollResult(JSON.stringify(data, null, 2));
+  };
+
+  const downloadEnrollFile = () => {
+    if (!enrollPkg) return;
+    const blob = new Blob([JSON.stringify(enrollPkg, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${enrollDomain}.sb-enroll`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const offboardUser = async (username: string) => {
+    const res = await fetch(`/v1/users/${encodeURIComponent(username)}/offboard`, {
+      method: "POST",
+      headers: authHeaders(),
+    });
+    if (res.ok) {
+      await refreshAll();
+    } else {
+      setStatusMsg(`Offboarding fehlgeschlagen (${res.status}): ${await res.text()}`);
+    }
   };
 
   const deletePolicy = async (id: string) => {
@@ -163,6 +231,9 @@ export default function App() {
         <button className={`nav-btn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>
           <Activity size={16} /> Übersicht
         </button>
+        <button className={`nav-btn ${tab === "users" ? "active" : ""}`} onClick={() => setTab("users")}>
+          <Users size={16} /> Users &amp; Gruppen
+        </button>
         <button className={`nav-btn ${tab === "machines" ? "active" : ""}`} onClick={() => setTab("machines")}>
           <Laptop size={16} /> Maschinen &amp; Join
         </button>
@@ -175,6 +246,9 @@ export default function App() {
         <button className={`nav-btn ${tab === "ca" ? "active" : ""}`} onClick={() => setTab("ca")}>
           <KeyRound size={16} /> CA &amp; Proxy
         </button>
+        <button className={`nav-btn ${tab === "audit" ? "active" : ""}`} onClick={() => setTab("audit")}>
+          <FileText size={16} /> Audit Log
+        </button>
         <button className={`nav-btn ${tab === "explorer" ? "active" : ""}`} onClick={() => setTab("explorer")}>
           <Terminal size={16} /> Graph API Explorer
         </button>
@@ -184,10 +258,12 @@ export default function App() {
         <div className="topbar">
           <h1 style={{ margin: 0, fontSize: 22 }}>
             {tab === "overview" && "Infrastruktur-Übersicht"}
+            {tab === "users" && "Domänen-Benutzer & Gruppen"}
             {tab === "machines" && "Domänen-Maschinen & Mobile Enrollment"}
             {tab === "policies" && "Signierte Cross-Platform GPOs"}
             {tab === "dns" && "Souveräner DNS-Manager"}
             {tab === "ca" && "Certificate Authority & Proxy"}
+            {tab === "audit" && "Hash-Verkettetes Audit Log (NIS2 / DSGVO)"}
             {tab === "explorer" && "Open Graph API Explorer (/v1/*)"}
           </h1>
 
@@ -257,6 +333,104 @@ export default function App() {
           </>
         )}
 
+        {tab === "users" && (
+          <>
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">Benutzer anlegen / aktualisieren</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <input
+                  className="input"
+                  placeholder="username (z. B. anna.admin)"
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                />
+                <input
+                  className="input"
+                  placeholder="email (z. B. anna@corp.eu)"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                />
+                <input
+                  className="input"
+                  placeholder="groups (kommagetrennt)"
+                  value={newGroups}
+                  onChange={(e) => setNewGroups(e.target.value)}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    const res = await fetch(`/v1/users/${encodeURIComponent(newUsername)}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
+                      body: JSON.stringify({
+                        username: newUsername,
+                        display_name: newUsername,
+                        email: newEmail,
+                        groups: newGroups.split(",").map((s) => s.trim()).filter(Boolean),
+                        enabled: true,
+                        created_at: "",
+                        updated_at: "",
+                      }),
+                    });
+                    if (res.ok) {
+                      setNewUsername("");
+                      setNewEmail("");
+                      await refreshAll();
+                    } else {
+                      setStatusMsg(`Fehler (${res.status}): ${await res.text()}`);
+                    }
+                  }}
+                >
+                  Speichern
+                </button>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-title">Benutzer ({users.length})</div>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Username</th>
+                    <th>E-Mail</th>
+                    <th>Gruppen</th>
+                    <th>Status</th>
+                    <th>Aktion</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((u) => (
+                    <tr key={u.username}>
+                      <td><code>{u.username}</code></td>
+                      <td>{u.email}</td>
+                      <td>{u.groups.join(", ")}</td>
+                      <td>
+                        <span className={`badge ${u.enabled ? "badge-ok" : "badge-err"}`}>
+                          {u.enabled ? "ACTIVE" : "DISABLED"}
+                        </span>
+                      </td>
+                      <td>
+                        {u.enabled && (
+                          <button className="btn btn-danger" onClick={() => void offboardUser(u.username)}>
+                            <UserX size={14} /> Offboard
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {users.length === 0 && (
+                    <tr>
+                      <td colSpan={5} style={{ color: "var(--muted)" }}>
+                        Keine Benutzer geladen (Bearer Token mit <code>directory:read</code> oder <code>domain:admin</code> erforderlich).
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
         {tab === "machines" && (
           <>
             <div className="card" style={{ marginBottom: 16 }}>
@@ -269,8 +443,13 @@ export default function App() {
                   placeholder="corp.eu"
                 />
                 <button className="btn btn-primary" onClick={() => void createEnrollment()}>
-                  Join-Kommando erzeugen
+                  Enrollment-Paket erzeugen
                 </button>
+                {enrollPkg && (
+                  <button className="btn" onClick={downloadEnrollFile}>
+                    <Download size={14} /> .sb-enroll herunterladen
+                  </button>
+                )}
               </div>
               {enrollResult && <pre className="code-block">{enrollResult}</pre>}
             </div>
@@ -370,6 +549,50 @@ export default function App() {
               <div className="card-title">Reverse-Proxy Routen</div>
               <pre className="code-block">{JSON.stringify(routes, null, 2)}</pre>
             </div>
+          </div>
+        )}
+
+        {tab === "audit" && (
+          <div className="card">
+            <div className="card-title">
+              Audit Events ({auditEvents.length}){" "}
+              {auditValid !== null && (
+                <span className={`badge ${auditValid ? "badge-ok" : "badge-err"}`}>
+                  {auditValid ? "HASH-KETTE INTACT" : "MANIPULATION ERKANNT"}
+                </span>
+              )}
+            </div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Zeitpunkt</th>
+                  <th>Akteur</th>
+                  <th>Aktion</th>
+                  <th>Ziel</th>
+                  <th>Ergebnis</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditEvents.map((ev) => (
+                  <tr key={ev.seq}>
+                    <td>{ev.seq}</td>
+                    <td>{ev.timestamp}</td>
+                    <td><code>{ev.actor}</code></td>
+                    <td><code>{ev.action}</code></td>
+                    <td>{ev.target}</td>
+                    <td><span className="badge badge-ok">{ev.outcome}</span></td>
+                  </tr>
+                ))}
+                {auditEvents.length === 0 && (
+                  <tr>
+                    <td colSpan={6} style={{ color: "var(--muted)" }}>
+                      Keine Audit-Events geladen (Bearer Token mit <code>audit:read</code> oder <code>domain:admin</code> erforderlich).
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         )}
 

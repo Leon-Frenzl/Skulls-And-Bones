@@ -194,19 +194,33 @@ async fn handle_graph_request(
             "sb-node domain join {domain} --dc {} --token <YOUR_TOKEN>",
             config.dc_addr
         );
+        let enrollment_package = sb_core::domain::EnrollmentPackage {
+            version: 1,
+            domain: domain.to_string(),
+            dc_addr: config.dc_addr.to_string(),
+            issued_for: claims.subject.clone(),
+            join_token: token.to_string(),
+            issued_at: chrono::Utc::now().to_rfc3339(),
+        };
         let resp = serde_json::json!({
             "domain": domain,
             "dc": config.dc_addr.to_string(),
             "issued_for": claims.subject,
             "cli_command": command,
             "api_endpoint": "/v1/machines/join",
+            "enrollment_package": enrollment_package,
         })
         .to_string();
         return Ok(json_response(StatusCode::OK, &resp));
     }
 
-    // 4. Upstream DC Forwarding (/v1/machines*, /v1/policies*)
-    if uri_path.starts_with("/v1/machines") || uri_path.starts_with("/v1/policies") {
+    // 4. Upstream DC Forwarding (/v1/machines*, /v1/policies*, /v1/users*, /v1/groups*, /v1/audit*)
+    if uri_path.starts_with("/v1/machines")
+        || uri_path.starts_with("/v1/policies")
+        || uri_path.starts_with("/v1/users")
+        || uri_path.starts_with("/v1/groups")
+        || uri_path.starts_with("/v1/audit")
+    {
         let body_bytes = match collect_bounded_body(req.into_body()).await {
             Ok(b) => b,
             Err(resp) => return Ok(resp),
@@ -415,6 +429,15 @@ pub fn build_openapi_spec() -> serde_json::Value {
             "/v1/openapi.json": { "get": { "summary": "OpenAPI 3.1.0 specification" } },
             "/v1/machines": { "get": { "summary": "List domain-joined machines" } },
             "/v1/machines/join": { "post": { "summary": "Join a machine to the domain" } },
+            "/v1/users": { "get": { "summary": "List domain users" } },
+            "/v1/users/{username}": {
+                "put": { "summary": "Create or update a domain user" },
+                "delete": { "summary": "Delete a domain user" }
+            },
+            "/v1/users/{username}/ssh-cert": { "post": { "summary": "Issue short-lived OpenSSH user certificate" } },
+            "/v1/users/{username}/offboard": { "post": { "summary": "1-click offboard user and revoke machines" } },
+            "/v1/groups": { "get": { "summary": "List domain groups and memberships" } },
+            "/v1/audit/events": { "get": { "summary": "Read tamper-evident hash-chained audit log" } },
             "/v1/policies": { "get": { "summary": "List cross-platform GPO policies" } },
             "/v1/policies/{id}": {
                 "get": { "summary": "Get a GPO policy by ID" },

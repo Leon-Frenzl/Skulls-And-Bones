@@ -735,7 +735,372 @@ async fn handle_join_http_connection(
             "policy": saved
         })
         .to_string();
+        if !dry_run {
+            let _ = crate::audit_log::append_audit_event(
+                &base_dir.join("audit.jsonl"),
+                &saved.updated_by,
+                "policy.put",
+                &saved.id,
+                "ok",
+                serde_json::json!({ "revision": store.revision }),
+            );
+        }
         return write_http_json(stream, 200, "OK", &json).await;
+    }
+
+    if method == "GET" && path == "/v1/audit/events" {
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        if !claims
+            .capabilities
+            .iter()
+            .any(|c| c == "audit:read" || c == "domain:admin")
+        {
+            return write_http_json(
+                stream,
+                403,
+                "Forbidden",
+                r#"{"error":"token lacks audit:read or domain:admin capability"}"#,
+            )
+            .await;
+        }
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let audit_path = base_dir.join("audit.jsonl");
+        let limit = query_param(query, "limit")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(50)
+            .clamp(1, 500);
+        let events = crate::audit_log::read_recent_events(&audit_path, limit).unwrap_or_default();
+        let chain_valid = crate::audit_log::verify_audit_chain(&audit_path).is_ok();
+        let json = serde_json::json!({
+            "chain_valid": chain_valid,
+            "events": events,
+        })
+        .to_string();
+        return write_http_json(stream, 200, "OK", &json).await;
+    }
+
+    if method == "POST" && path.starts_with("/v1/users/") && path.ends_with("/offboard") {
+        let username = path
+            .trim_start_matches("/v1/users/")
+            .trim_end_matches("/offboard");
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        if !claims
+            .capabilities
+            .iter()
+            .any(|c| c == "directory:write" || c == "domain:admin")
+        {
+            return write_http_json(
+                stream,
+                403,
+                "Forbidden",
+                r#"{"error":"token lacks directory:write or domain:admin capability"}"#,
+            )
+            .await;
+        }
+        let revoke_machines = query_param(query, "revoke_machines") != Some("false");
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        return match offboard_user(
+            username,
+            &claims.subject,
+            revoke_machines,
+            Some(&base_dir),
+            registry_path,
+        ) {
+            Ok(report) => {
+                let json = serde_json::to_string(&report).map_err(|e| e.to_string())?;
+                write_http_json(stream, 200, "OK", &json).await
+            }
+            Err(e) => {
+                let msg = serde_json::json!({ "error": e }).to_string();
+                write_http_json(stream, 404, "Not Found", &msg).await
+            }
+        };
+    }
+
+    if method == "GET" && (path == "/v1/users" || path == "/v1/groups") {
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        if !claims
+            .capabilities
+            .iter()
+            .any(|c| c == "directory:read" || c == "domain:admin")
+        {
+            return write_http_json(
+                stream,
+                403,
+                "Forbidden",
+                r#"{"error":"token lacks directory:read or domain:admin capability"}"#,
+            )
+            .await;
+        }
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let users_path = base_dir.join("users.json");
+        let dir = crate::directory_users::IdentityDirectory::load_or_create(&users_path, "corp.eu")
+            .unwrap_or_default();
+        let json = if path == "/v1/users" {
+            let users: Vec<&sb_core::identity::DomainUser> = dir.users.values().collect();
+            serde_json::json!({ "domain": dir.domain, "users": users }).to_string()
+        } else {
+            let groups: Vec<&sb_core::identity::DomainGroup> = dir.groups.values().collect();
+            serde_json::json!({ "domain": dir.domain, "groups": groups }).to_string()
+        };
+        return write_http_json(stream, 200, "OK", &json).await;
+    }
+
+    if method == "POST" && path.starts_with("/v1/users/") && path.ends_with("/ssh-cert") {
+        let username = path
+            .trim_start_matches("/v1/users/")
+            .trim_end_matches("/ssh-cert");
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        let is_admin = claims
+            .capabilities
+            .iter()
+            .any(|c| c == "directory:admin" || c == "domain:admin");
+        if !is_admin && claims.subject != username {
+            return write_http_json(
+                stream,
+                403,
+                "Forbidden",
+                r#"{"error":"forbidden: only the user or directory:admin may issue user SSH certificates"}"#,
+            )
+            .await;
+        }
+        let body =
+            match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines).await? {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+        let req: sb_core::identity::SshUserCertRequest = match serde_json::from_slice(&body) {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("Invalid JSON: {e}") }).to_string();
+                return write_http_json(stream, 400, "Bad Request", &msg).await;
+            }
+        };
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let users_path = base_dir.join("users.json");
+        let dir =
+            match crate::directory_users::IdentityDirectory::load_or_create(&users_path, "corp.eu")
+            {
+                Ok(d) => d,
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+                }
+            };
+        return match dir.issue_user_ssh_cert(
+            username,
+            req.ssh_public_key.as_deref(),
+            req.ttl_seconds,
+        ) {
+            Ok(resp) => {
+                let json = serde_json::to_string(&resp).map_err(|e| e.to_string())?;
+                write_http_json(stream, 200, "OK", &json).await
+            }
+            Err(e) => {
+                let msg = serde_json::json!({ "error": e }).to_string();
+                write_http_json(stream, 400, "Bad Request", &msg).await
+            }
+        };
+    }
+
+    if (method == "PUT" || method == "DELETE") && path.starts_with("/v1/users/") {
+        let username = path.trim_start_matches("/v1/users/");
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        if !claims
+            .capabilities
+            .iter()
+            .any(|c| c == "directory:write" || c == "domain:admin")
+        {
+            return write_http_json(
+                stream,
+                403,
+                "Forbidden",
+                r#"{"error":"token lacks directory:write or domain:admin capability"}"#,
+            )
+            .await;
+        }
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let reg_file = registry_path
+            .map(PathBuf::from)
+            .unwrap_or_else(|| local_domain_dir().join("machines.json"));
+        let domain = fs::read_to_string(&reg_file)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<DomainRegistry>(&raw).ok())
+            .map(|r| r.domain)
+            .filter(|d| !d.is_empty())
+            .unwrap_or_else(|| "corp.eu".to_string());
+        let users_path = base_dir.join("users.json");
+        let mut dir =
+            match crate::directory_users::IdentityDirectory::load_or_create(&users_path, &domain) {
+                Ok(d) => d,
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+                }
+            };
+
+        if method == "DELETE" {
+            match dir.delete_user(username) {
+                Ok(true) => {
+                    let _ = dir.save(&users_path);
+                    let json = serde_json::json!({ "deleted": username }).to_string();
+                    return write_http_json(stream, 200, "OK", &json).await;
+                }
+                Ok(false) => {
+                    return write_http_json(
+                        stream,
+                        404,
+                        "Not Found",
+                        r#"{"error":"user not found"}"#,
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    return write_http_json(stream, 400, "Bad Request", &msg).await;
+                }
+            }
+        }
+
+        let body =
+            match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines).await? {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+        let user: sb_core::identity::DomainUser = match serde_json::from_slice(&body) {
+            Ok(u) => u,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("Invalid DomainUser JSON: {e}") })
+                    .to_string();
+                return write_http_json(stream, 400, "Bad Request", &msg).await;
+            }
+        };
+        if user.username != username {
+            return write_http_json(
+                stream,
+                400,
+                "Bad Request",
+                r#"{"error":"body username does not match URL path"}"#,
+            )
+            .await;
+        }
+        match dir.upsert_user(user) {
+            Ok(saved) => {
+                if let Err(e) = dir.save(&users_path) {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+                }
+                let _ = crate::audit_log::append_audit_event(
+                    &base_dir.join("audit.jsonl"),
+                    &claims.subject,
+                    "user.upsert",
+                    &saved.username,
+                    "ok",
+                    serde_json::json!({ "groups": saved.groups }),
+                );
+                let json = serde_json::to_string(&saved).map_err(|e| e.to_string())?;
+                return write_http_json(stream, 200, "OK", &json).await;
+            }
+            Err(e) => {
+                let msg = serde_json::json!({ "error": e }).to_string();
+                return write_http_json(stream, 400, "Bad Request", &msg).await;
+            }
+        }
     }
 
     if method != "POST" || (path != "/v1/machines/join" && path != "/v1/domain/join") {
@@ -772,6 +1137,74 @@ async fn handle_join_http_connection(
             write_http_json(stream, status.0, status.1, &msg).await
         }
     }
+}
+
+/// Summary returned by 1-click user offboarding (`POST /v1/users/{username}/offboard`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OffboardReport {
+    pub username: String,
+    pub user_disabled: bool,
+    pub revoked_machines: Vec<String>,
+    pub timestamp: String,
+}
+
+/// Atomically offboards a domain user: disables their account, revokes their joined machines,
+/// and records a hash-chained `user.offboard` audit event.
+pub fn offboard_user(
+    username: &str,
+    actor: &str,
+    revoke_machines: bool,
+    base_dir: Option<&Path>,
+    registry_path: Option<&Path>,
+) -> Result<OffboardReport, String> {
+    let dir_root = base_dir.map(PathBuf::from).unwrap_or_else(local_domain_dir);
+    let users_path = dir_root.join("users.json");
+    let mut users_dir =
+        crate::directory_users::IdentityDirectory::load_or_create(&users_path, "corp.eu")?;
+    let disabled_user = users_dir.disable_user(username)?;
+    users_dir.save(&users_path)?;
+
+    let mut revoked_machines = Vec::new();
+    if revoke_machines {
+        let reg_file = registry_path
+            .map(PathBuf::from)
+            .unwrap_or_else(|| dir_root.join("machines.json"));
+        if reg_file.exists() {
+            if let Ok(raw) = fs::read_to_string(&reg_file) {
+                if let Ok(mut reg) = serde_json::from_str::<DomainRegistry>(&raw) {
+                    for m in &mut reg.machines {
+                        if !m.revoked && m.joined_by == disabled_user.username {
+                            m.revoked = true;
+                            m.revoked_reason =
+                                Some(format!("User {} offboarded", disabled_user.username));
+                            revoked_machines.push(m.fqdn.clone());
+                        }
+                    }
+                    let _ = reg.save_to_path(&reg_file);
+                }
+            }
+        }
+    }
+
+    let audit_path = dir_root.join("audit.jsonl");
+    let _ = crate::audit_log::append_audit_event(
+        &audit_path,
+        actor,
+        "user.offboard",
+        &disabled_user.username,
+        "ok",
+        serde_json::json!({
+            "revoke_machines": revoke_machines,
+            "revoked_machines": revoked_machines,
+        }),
+    );
+
+    Ok(OffboardReport {
+        username: disabled_user.username,
+        user_disabled: true,
+        revoked_machines,
+        timestamp: Utc::now().to_rfc3339(),
+    })
 }
 
 async fn write_http_json(

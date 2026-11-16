@@ -156,6 +156,17 @@ pub struct JoinedMachineState {
     pub joined_at: String,
 }
 
+/// Self-contained `.sb-enroll` provisioning package for zero-CLI machine onboarding.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EnrollmentPackage {
+    pub version: u32,
+    pub domain: String,
+    pub dc_addr: String,
+    pub issued_for: String,
+    pub join_token: String,
+    pub issued_at: String,
+}
+
 /// Returns the local domain state directory (`~/.sb/domain`).
 pub fn local_domain_dir() -> PathBuf {
     crate::paths::sb_home().join("domain")

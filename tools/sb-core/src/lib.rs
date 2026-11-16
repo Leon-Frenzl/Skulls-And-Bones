@@ -7,6 +7,7 @@ pub mod daemon_auth;
 pub mod daemon_client;
 pub mod domain;
 pub mod dto;
+pub mod identity;
 pub mod ipam;
 pub mod mesh_ipc;
 pub mod paths;

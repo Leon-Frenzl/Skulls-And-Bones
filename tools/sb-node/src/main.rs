@@ -1,8 +1,10 @@
 //! S&B Server Agent (`sb-node`)
 //! Headless Server Daemon, Multi-Tenant Relay Anchor & Port Watchdog für Flottenknoten
 
+pub mod audit_log;
 pub mod catalog_membership;
 pub mod catalog_sync;
+pub mod directory_users;
 pub mod domain_join;
 pub mod policy_engine;
 
@@ -134,6 +136,12 @@ enum Commands {
         #[command(subcommand)]
         sub: PolicyCommands,
     },
+
+    /// Domänen-Benutzer, Gruppen & kurzlebige OpenSSH-User-Zertifikate
+    User {
+        #[command(subcommand)]
+        sub: UserCommands,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -146,13 +154,16 @@ enum DomainCommands {
         #[arg(long)]
         force: bool,
     },
-    /// Tritt einer Domäne mit einem autorisierten sb-auth Benutzer-Token bei
+    /// Tritt einer Domäne mit einem autorisierten sb-auth Benutzer-Token oder einer .sb-enroll Datei bei
     Join {
-        /// Domänenname (z. B. corp.sbm)
-        domain: String,
-        /// Benutzer-Token (sbt.*) mit 'domain:join'-Capability oder 'admin'-Rolle
+        /// Domänenname (z. B. corp.sbm) — optional bei --enroll-file
+        domain: Option<String>,
+        /// Benutzer-Token (sbt.*) mit 'domain:join'-Capability oder 'admin'-Rolle — optional bei --enroll-file
         #[arg(long)]
-        token: String,
+        token: Option<String>,
+        /// Pfad zu einem .sb-enroll Provisioning-Paket (Zero-CLI Onboarding)
+        #[arg(long)]
+        enroll_file: Option<PathBuf>,
         /// Optionaler Hostname (Standard: lokaler System-Hostname)
         #[arg(long)]
         hostname: Option<String>,
@@ -259,6 +270,54 @@ enum PolicyCommands {
     },
     /// Zeigt den lokalen GPO-Compliance-Status und Cache-Ablauf an
     Status,
+}
+
+#[derive(Subcommand, Debug)]
+enum UserCommands {
+    /// Legt einen Domänen-Benutzer an oder aktualisiert ihn
+    Add {
+        /// Benutzername (z. B. anna.admin)
+        #[arg(long)]
+        username: String,
+        /// Anzeigename
+        #[arg(long)]
+        name: String,
+        /// E-Mail-Adresse
+        #[arg(long)]
+        email: String,
+        /// Domäne (Standard: corp.eu)
+        #[arg(long, default_value = "corp.eu")]
+        domain: String,
+        /// Gruppen (kommagetrennt, z. B. engineering,admins)
+        #[arg(long)]
+        groups: Option<String>,
+        /// Optionaler OpenSSH Public Key
+        #[arg(long)]
+        ssh_pubkey: Option<String>,
+    },
+    /// Listet alle Domänen-Benutzer und Gruppen auf
+    List,
+    /// Sperrt einen Benutzer sofort (kein SSH-Cert/Login mehr)
+    Disable { username: String },
+    /// Löscht einen Benutzer
+    Delete { username: String },
+    /// Stellt ein kurzlebiges OpenSSH-User-Zertifikat aus
+    SshCert {
+        username: String,
+        /// Optionaler OpenSSH Public Key (falls nicht im Verzeichnis hinterlegt)
+        #[arg(long)]
+        ssh_pubkey: Option<String>,
+        /// Gültigkeit in Sekunden (Standard: 28800 = 8h)
+        #[arg(long, default_value_t = 28800)]
+        ttl_seconds: u64,
+    },
+    /// 1-Klick-Offboarding: Sperrt Benutzer + alle seine gejointen Maschinen + Audit-Event
+    Offboard {
+        username: String,
+        /// Maschinen des Benutzers NICHT automatisch widerrufen
+        #[arg(long)]
+        keep_machines: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -2131,6 +2190,15 @@ async fn main() {
             if let Err(error) = handle_policy_commands(sub).await {
                 eprintln!(
                     "  {} Policy operation failed: {error}",
+                    "✗".bright_red().bold()
+                );
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::User { sub }) => {
+            if let Err(error) = handle_user_commands(sub) {
+                eprintln!(
+                    "  {} User operation failed: {error}",
                     "✗".bright_red().bold()
                 );
                 std::process::exit(1);
@@ -4076,11 +4144,31 @@ async fn handle_domain_commands(sub: DomainCommands) -> Result<(), String> {
         DomainCommands::Join {
             domain,
             token,
+            enroll_file,
             hostname,
             ssh_host_pubkey,
             ip,
             dc,
         } => {
+            let (resolved_domain, resolved_token, resolved_dc) = if let Some(ef_path) = enroll_file
+            {
+                let raw = fs::read_to_string(&ef_path)
+                    .map_err(|e| format!("Cannot read {}: {e}", ef_path.display()))?;
+                let pkg: sb_core::domain::EnrollmentPackage = serde_json::from_str(&raw)
+                    .map_err(|e| format!("Invalid .sb-enroll JSON: {e}"))?;
+                let parsed_dc: SocketAddr = pkg
+                    .dc_addr
+                    .parse()
+                    .map_err(|e| format!("Invalid dc_addr in .sb-enroll: {e}"))?;
+                (pkg.domain, pkg.join_token, dc.or(Some(parsed_dc)))
+            } else {
+                let d = domain
+                    .ok_or_else(|| "Domänenname oder --enroll-file erforderlich".to_string())?;
+                let t =
+                    token.ok_or_else(|| "--token oder --enroll-file erforderlich".to_string())?;
+                (d, t, dc)
+            };
+
             let raw_host = hostname.unwrap_or_else(|| {
                 std::env::var("COMPUTERNAME")
                     .or_else(|_| std::env::var("HOSTNAME"))
@@ -4098,15 +4186,15 @@ async fn handle_domain_commands(sub: DomainCommands) -> Result<(), String> {
             let os = sb_core::domain::OsKind::current();
             let req = sb_core::domain::DomainJoinRequest {
                 hostname: raw_host,
-                domain,
+                domain: resolved_domain,
                 os,
                 machine_public_key_b64: machine_pub_b64,
                 ssh_host_public_key: ssh_pub,
                 mesh_ip: ip,
-                join_token: token,
+                join_token: resolved_token,
             };
 
-            let resp = if let Some(dc_addr) = dc {
+            let resp = if let Some(dc_addr) = resolved_dc {
                 domain_join::send_remote_join_request(dc_addr, &req).await?
             } else {
                 let verifier = load_local_auth_verifier()?;
@@ -4470,6 +4558,128 @@ async fn handle_policy_commands(sub: PolicyCommands) -> Result<(), String> {
                     }
                 }
             }
+            Ok(())
+        }
+    }
+}
+
+fn handle_user_commands(sub: UserCommands) -> Result<(), String> {
+    let path = directory_users::default_users_path();
+    match sub {
+        UserCommands::Add {
+            username,
+            name,
+            email,
+            domain,
+            groups,
+            ssh_pubkey,
+        } => {
+            let mut dir = directory_users::IdentityDirectory::load_or_create(&path, &domain)?;
+            let group_list = groups
+                .map(|g| {
+                    g.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let user = dir.upsert_user(sb_core::identity::DomainUser {
+                username,
+                display_name: name,
+                email,
+                groups: group_list,
+                ssh_public_key: ssh_pubkey,
+                enabled: true,
+                created_at: String::new(),
+                updated_at: String::new(),
+            })?;
+            dir.save(&path)?;
+            println!(
+                "{} Benutzer '{}' ({}) gespeichert [Gruppen: {}].",
+                "✓".green().bold(),
+                user.username.cyan().bold(),
+                user.email,
+                user.groups.join(", ")
+            );
+            Ok(())
+        }
+        UserCommands::List => {
+            let dir = directory_users::IdentityDirectory::load_or_create(&path, "corp.eu")?;
+            println!(
+                "=== DOMAIN USERS [{}] ({}) ===",
+                dir.domain.cyan().bold(),
+                dir.users.len()
+            );
+            for u in dir.users.values() {
+                let status = if u.enabled {
+                    "ACTIVE".green().bold()
+                } else {
+                    "DISABLED".red().bold()
+                };
+                println!(
+                    "  {:<20} {:<24} [{}] groups=[{}]",
+                    u.username.yellow(),
+                    u.email,
+                    status,
+                    u.groups.join(",")
+                );
+            }
+            println!("=== DOMAIN GROUPS ({}) ===", dir.groups.len());
+            for g in dir.groups.values() {
+                println!("  {:<20} members=[{}]", g.name.cyan(), g.members.join(","));
+            }
+            Ok(())
+        }
+        UserCommands::Disable { username } => {
+            let mut dir = directory_users::IdentityDirectory::load_or_create(&path, "corp.eu")?;
+            let user = dir.disable_user(&username)?;
+            dir.save(&path)?;
+            println!(
+                "{} Benutzer '{}' gesperrt.",
+                "✓".bright_red().bold(),
+                user.username
+            );
+            Ok(())
+        }
+        UserCommands::Delete { username } => {
+            let mut dir = directory_users::IdentityDirectory::load_or_create(&path, "corp.eu")?;
+            if dir.delete_user(&username)? {
+                dir.save(&path)?;
+                println!("{} Benutzer '{}' gelöscht.", "✓".green().bold(), username);
+                Ok(())
+            } else {
+                Err(format!("Benutzer '{username}' nicht gefunden"))
+            }
+        }
+        UserCommands::SshCert {
+            username,
+            ssh_pubkey,
+            ttl_seconds,
+        } => {
+            let dir = directory_users::IdentityDirectory::load_or_create(&path, "corp.eu")?;
+            let cert = dir.issue_user_ssh_cert(&username, ssh_pubkey.as_deref(), ttl_seconds)?;
+            println!(
+                "{} OpenSSH User-Zertifikat für '{}' ausgestellt (gültig bis {}, Principals: {}):",
+                "✓".green().bold(),
+                cert.username.cyan().bold(),
+                cert.expires_at,
+                cert.principals.join(",")
+            );
+            println!("{}", cert.certificate_openssh);
+            Ok(())
+        }
+        UserCommands::Offboard {
+            username,
+            keep_machines,
+        } => {
+            let report =
+                domain_join::offboard_user(&username, "cli-admin", !keep_machines, None, None)?;
+            println!(
+                "{} Benutzer '{}' offboarded ({} Maschinen widerrufen).",
+                "✓".bright_red().bold(),
+                report.username.yellow(),
+                report.revoked_machines.len()
+            );
             Ok(())
         }
     }
