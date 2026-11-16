@@ -294,13 +294,15 @@ async fn handle_graph_request(
         return Ok(json_response(StatusCode::OK, &resp));
     }
 
-    // 4. Upstream DC Forwarding (/.well-known/*, /v1/auth/*, /v1/me*, /v1/vault*, /v1/apps*, /v1/rbac*, /v1/machines*, /v1/policies*, /v1/users*, /v1/groups*, /v1/audit*)
+    // 4. Upstream DC Forwarding (/.well-known/*, /v1/auth/*, /v1/me*, /v1/vault*, /v1/apps*, /v1/rbac*, /v1/fleet*, /v1/packages*, /v1/machines*, /v1/policies*, /v1/users*, /v1/groups*, /v1/audit*)
     if uri_path.starts_with("/.well-known/")
         || uri_path.starts_with("/v1/auth")
         || uri_path.starts_with("/v1/me")
         || uri_path.starts_with("/v1/vault")
         || uri_path.starts_with("/v1/apps")
         || uri_path.starts_with("/v1/rbac")
+        || uri_path.starts_with("/v1/fleet")
+        || uri_path.starts_with("/v1/packages")
         || uri_path.starts_with("/v1/machines")
         || uri_path.starts_with("/v1/policies")
         || uri_path.starts_with("/v1/users")
@@ -616,6 +618,30 @@ pub fn build_openapi_spec() -> serde_json::Value {
         (
             "/v1/users/{username}/offboard",
             serde_json::json!({ "post": { "summary": "1-click offboard user and revoke machines" } }),
+        ),
+        (
+            "/v1/machines/{id}/laps",
+            serde_json::json!({ "get": { "summary": "Get machine LAPS metadata" }, "put": { "summary": "Store rotated Linux LAPS emergency password" } }),
+        ),
+        (
+            "/v1/machines/{id}/laps/reveal",
+            serde_json::json!({ "post": { "summary": "Reveal LAPS emergency password (audit + rotation)" } }),
+        ),
+        (
+            "/v1/machines/{id}/heartbeat",
+            serde_json::json!({ "post": { "summary": "Report Linux agent fleet heartbeat" } }),
+        ),
+        (
+            "/v1/fleet/health",
+            serde_json::json!({ "get": { "summary": "Live fleet heartbeats, LAPS & package summary" } }),
+        ),
+        (
+            "/v1/packages",
+            serde_json::json!({ "get": { "summary": "List Linux software rollout manifests" } }),
+        ),
+        (
+            "/v1/packages/{id}",
+            serde_json::json!({ "put": { "summary": "Create or update Linux package canary rollout" } }),
         ),
         (
             "/v1/groups",

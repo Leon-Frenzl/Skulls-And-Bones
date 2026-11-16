@@ -652,6 +652,337 @@ async fn handle_join_http_connection(
         return write_http_json(stream, 200, "OK", &json).await;
     }
 
+    if (method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/heartbeat"))
+        || (method == "GET" && path == "/v1/fleet/health")
+        || path.starts_with("/v1/packages")
+    {
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let fleet_path = base_dir.join("fleet.json");
+        let audit_path = base_dir.join("audit.jsonl");
+
+        if method == "GET" && path == "/v1/packages" {
+            let store = crate::fleet::FleetStore::load(&fleet_path).unwrap_or_default();
+            let list = if let Some(mid) = query_param(query, "machine_id") {
+                store.packages_for_machine(mid)
+            } else {
+                store.packages.values().cloned().collect()
+            };
+            let json = serde_json::json!({ "packages": list }).to_string();
+            return write_http_json(stream, 200, "OK", &json).await;
+        }
+
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+
+        if method == "GET" && path == "/v1/fleet/health" {
+            if !claims
+                .capabilities
+                .iter()
+                .any(|c| c == "domain:read" || c == "domain:admin")
+            {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"token lacks domain:read or domain:admin"}"#,
+                )
+                .await;
+            }
+            let store = crate::fleet::FleetStore::load(&fleet_path).unwrap_or_default();
+            let laps_meta = crate::laps::LapsMetaStore::load(&base_dir.join("laps_meta.json"))
+                .unwrap_or_default();
+            let laps_pending = laps_meta
+                .entries
+                .values()
+                .filter(|e| e.rotate_pending)
+                .count();
+            let heartbeats: Vec<&crate::fleet::MachineHeartbeat> =
+                store.heartbeats.values().collect();
+            let json = serde_json::json!({
+                "heartbeats": heartbeats,
+                "laps_rotate_pending": laps_pending,
+                "package_count": store.packages.len(),
+            })
+            .to_string();
+            return write_http_json(stream, 200, "OK", &json).await;
+        }
+
+        if method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/heartbeat") {
+            let machine_id = path
+                .trim_start_matches("/v1/machines/")
+                .trim_end_matches("/heartbeat");
+            if !claims
+                .capabilities
+                .iter()
+                .any(|c| c == "domain:join" || c == "domain:admin")
+            {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"token lacks domain:join or domain:admin"}"#,
+                )
+                .await;
+            }
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let mut hb: crate::fleet::MachineHeartbeat = match serde_json::from_slice(&body) {
+                Ok(h) => h,
+                Err(e) => {
+                    let msg =
+                        serde_json::json!({ "error": format!("Invalid JSON: {e}") }).to_string();
+                    return write_http_json(stream, 400, "Bad Request", &msg).await;
+                }
+            };
+            hb.machine_id = machine_id.to_string();
+            let mut store = crate::fleet::FleetStore::load(&fleet_path).unwrap_or_default();
+            store.record_heartbeat(hb);
+            let _ = store.save(&fleet_path);
+            return write_http_json(stream, 200, "OK", r#"{"status":"recorded"}"#).await;
+        }
+
+        if method == "PUT" && path.starts_with("/v1/packages/") {
+            if !claims
+                .capabilities
+                .iter()
+                .any(|c| c == "policy:write" || c == "domain:admin")
+            {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"token lacks policy:write or domain:admin"}"#,
+                )
+                .await;
+            }
+            let pkg_id = path.trim_start_matches("/v1/packages/");
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let mut pkg: crate::fleet::PackageManifest = match serde_json::from_slice(&body) {
+                Ok(p) => p,
+                Err(e) => {
+                    let msg =
+                        serde_json::json!({ "error": format!("Invalid JSON: {e}") }).to_string();
+                    return write_http_json(stream, 400, "Bad Request", &msg).await;
+                }
+            };
+            pkg.id = pkg_id.to_string();
+            let mut store = crate::fleet::FleetStore::load(&fleet_path).unwrap_or_default();
+            return match store.upsert_package(pkg) {
+                Ok(saved) => {
+                    let _ = store.save(&fleet_path);
+                    let _ = crate::audit_log::append_audit_event(
+                        &audit_path,
+                        &claims.subject,
+                        "package.upsert",
+                        &saved.id,
+                        "ok",
+                        serde_json::json!({ "rollout_percent": saved.rollout_percent, "version": saved.version }),
+                    );
+                    let json = serde_json::to_string(&saved).map_err(|e| e.to_string())?;
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    write_http_json(stream, 400, "Bad Request", &msg).await
+                }
+            };
+        }
+    }
+
+    if path.starts_with("/v1/machines/")
+        && (path.ends_with("/laps") || path.ends_with("/laps/reveal"))
+    {
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let vault_dir = base_dir.join("vaults").join("laps");
+        let meta_path = base_dir.join("laps_meta.json");
+        let audit_path = base_dir.join("audit.jsonl");
+
+        if method == "GET" && path.ends_with("/laps") {
+            let machine_id = path
+                .trim_start_matches("/v1/machines/")
+                .trim_end_matches("/laps");
+            if !claims
+                .capabilities
+                .iter()
+                .any(|c| c == "domain:read" || c == "domain:admin" || c == "laps:read")
+            {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"token lacks laps:read or domain:admin"}"#,
+                )
+                .await;
+            }
+            let meta_store = crate::laps::LapsMetaStore::load(&meta_path).unwrap_or_default();
+            return match meta_store.entries.get(machine_id) {
+                Some(m) => {
+                    let json = serde_json::to_string(m).map_err(|e| e.to_string())?;
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                None => {
+                    write_http_json(
+                        stream,
+                        404,
+                        "Not Found",
+                        r#"{"error":"no LAPS entry for machine"}"#,
+                    )
+                    .await
+                }
+            };
+        }
+
+        if method == "PUT" && path.ends_with("/laps") {
+            let machine_id = path
+                .trim_start_matches("/v1/machines/")
+                .trim_end_matches("/laps");
+            if !claims
+                .capabilities
+                .iter()
+                .any(|c| c == "domain:join" || c == "domain:admin" || c == "laps:write")
+            {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"token lacks laps:write or domain:admin"}"#,
+                )
+                .await;
+            }
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            let account = payload["local_account"].as_str().unwrap_or("sb-rescue");
+            let password = payload["password"].as_str().unwrap_or("");
+            let passphrase = payload["passphrase"].as_str().unwrap_or("");
+            let ttl_days = payload["ttl_days"].as_i64().unwrap_or(30);
+            return match crate::laps::store_laps_password(
+                machine_id, account, password, passphrase, ttl_days, &vault_dir, &meta_path,
+            ) {
+                Ok(meta) => {
+                    let _ = crate::audit_log::append_audit_event(
+                        &audit_path,
+                        &claims.subject,
+                        "laps.rotate",
+                        machine_id,
+                        "ok",
+                        serde_json::json!({ "account": meta.local_account, "version": meta.version }),
+                    );
+                    let json = serde_json::to_string(&meta).map_err(|e| e.to_string())?;
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    write_http_json(stream, 400, "Bad Request", &msg).await
+                }
+            };
+        }
+
+        if method == "POST" && path.ends_with("/laps/reveal") {
+            let machine_id = path
+                .trim_start_matches("/v1/machines/")
+                .trim_end_matches("/laps/reveal");
+            if !claims
+                .capabilities
+                .iter()
+                .any(|c| c == "laps:read" || c == "domain:admin")
+            {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"token lacks laps:read or domain:admin"}"#,
+                )
+                .await;
+            }
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            let passphrase = payload["passphrase"].as_str().unwrap_or("");
+            return match crate::laps::reveal_laps_password(
+                machine_id, passphrase, &vault_dir, &meta_path,
+            ) {
+                Ok((password, meta)) => {
+                    let _ = crate::audit_log::append_audit_event(
+                        &audit_path,
+                        &claims.subject,
+                        "laps.reveal",
+                        machine_id,
+                        "ok",
+                        serde_json::json!({ "account": meta.local_account }),
+                    );
+                    let json = serde_json::json!({
+                        "machine_id": meta.machine_id,
+                        "local_account": meta.local_account,
+                        "password": password,
+                        "rotate_pending": meta.rotate_pending,
+                    })
+                    .to_string();
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    write_http_json(stream, 403, "Forbidden", &msg).await
+                }
+            };
+        }
+    }
+
     if method == "GET" && path == "/v1/machines" {
         let Some(token) = extract_bearer_token(&header_lines) else {
             return write_http_json(

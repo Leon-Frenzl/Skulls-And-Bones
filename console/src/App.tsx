@@ -122,6 +122,11 @@ export default function App() {
   const [appName, setAppName] = useState<string>("");
   const [appUrl, setAppUrl] = useState<string>("");
   const [appGroups, setAppGroups] = useState<string>("all");
+  const [fleetHealth, setFleetHealth] = useState<{ heartbeats: unknown[]; laps_rotate_pending: number; package_count: number } | null>(null);
+  const [pkgId, setPkgId] = useState<string>("");
+  const [pkgName, setPkgName] = useState<string>("");
+  const [pkgApt, setPkgApt] = useState<string>("");
+  const [pkgRollout, setPkgRollout] = useState<number>(100);
   const [statusMsg, setStatusMsg] = useState<string>("");
 
   // API Explorer state
@@ -161,7 +166,7 @@ export default function App() {
       setIpamData(ipm);
 
       if (token.trim()) {
-        const [mRes, uRes, aRes, meRes, vRes, tvRes, appRes] = await Promise.all([
+        const [mRes, uRes, aRes, meRes, vRes, tvRes, appRes, fhRes] = await Promise.all([
           fetch("/v1/machines", { headers: authHeaders() }),
           fetch("/v1/users", { headers: authHeaders() }),
           fetch("/v1/audit/events?limit=50", { headers: authHeaders() }),
@@ -169,6 +174,7 @@ export default function App() {
           fetch("/v1/me/vault", { headers: authHeaders() }),
           fetch(`/v1/vault/team?group=${encodeURIComponent(teamGroup)}`, { headers: authHeaders() }),
           fetch("/v1/apps", { headers: authHeaders() }),
+          fetch("/v1/fleet/health", { headers: authHeaders() }),
         ]);
         if (mRes.ok) {
           const mJson = await mRes.json();
@@ -202,6 +208,9 @@ export default function App() {
         if (appRes.ok) {
           const appJson = await appRes.json();
           setApps(Array.isArray(appJson.apps) ? appJson.apps : []);
+        }
+        if (fhRes.ok) {
+          setFleetHealth(await fhRes.json());
         }
       }
     } catch (err) {
@@ -434,6 +443,12 @@ export default function App() {
                   ) : (
                     <span className="badge badge-warn">AUSSTEHEND</span>
                   )}
+                </div>
+              </div>
+              <div className="card">
+                <div className="card-title">Flotten-Heartbeats / LAPS Pending</div>
+                <div className="card-value">
+                  {fleetHealth ? `${fleetHealth.heartbeats.length} / ${fleetHealth.laps_rotate_pending}` : "–"}
                 </div>
               </div>
             </div>
@@ -878,6 +893,45 @@ export default function App() {
               {enrollResult && <pre className="code-block">{enrollResult}</pre>}
             </div>
 
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">Linux Software-Rollout (Canary %)</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <input className="input" placeholder="Paket-ID (z. B. dev-tools)" value={pkgId} onChange={(e) => setPkgId(e.target.value)} />
+                <input className="input" placeholder="Name" value={pkgName} onChange={(e) => setPkgName(e.target.value)} />
+                <input className="input" placeholder="apt-Pakete (git,htop)" value={pkgApt} onChange={(e) => setPkgApt(e.target.value)} />
+                <input className="input" type="number" min={1} max={100} value={pkgRollout} onChange={(e) => setPkgRollout(Number(e.target.value))} style={{ width: 90 }} />
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    const res = await fetch(`/v1/packages/${encodeURIComponent(pkgId)}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
+                      body: JSON.stringify({
+                        id: pkgId,
+                        name: pkgName,
+                        apt_packages: pkgApt.split(",").map((s) => s.trim()).filter(Boolean),
+                        flatpak_apps: [],
+                        target_groups: [],
+                        rollout_percent: pkgRollout,
+                        version: 1,
+                        updated_at: "",
+                      }),
+                    });
+                    if (res.ok) {
+                      setPkgId("");
+                      setPkgName("");
+                      setPkgApt("");
+                      await refreshAll();
+                    } else {
+                      setStatusMsg(`Paket-Fehler (${res.status}): ${await res.text()}`);
+                    }
+                  }}
+                >
+                  Rollout speichern
+                </button>
+              </div>
+            </div>
+
             <div className="card">
               <div className="card-title">Registrierte Maschinen ({machines.length})</div>
               <table className="table">
@@ -888,6 +942,7 @@ export default function App() {
                     <th>Mesh IP</th>
                     <th>Joined By</th>
                     <th>Status</th>
+                    <th>LAPS</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -902,11 +957,28 @@ export default function App() {
                           {m.revoked ? "REVOKED" : "ACTIVE"}
                         </span>
                       </td>
+                      <td>
+                        <button
+                          className="btn"
+                          onClick={async () => {
+                            const pass = window.prompt("LAPS Master-Passphrase eingeben:") || "";
+                            if (!pass) return;
+                            const r = await fetch(`/v1/machines/${encodeURIComponent(m.machine_id)}/laps/reveal`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json", ...authHeaders() },
+                              body: JSON.stringify({ passphrase: pass }),
+                            });
+                            setStatusMsg(await r.text());
+                          }}
+                        >
+                          Notfall-PW
+                        </button>
+                      </td>
                     </tr>
                   ))}
                   {machines.length === 0 && (
                     <tr>
-                      <td colSpan={5} style={{ color: "var(--muted)" }}>
+                      <td colSpan={6} style={{ color: "var(--muted)" }}>
                         Keine Maschinen geladen (Bearer Token mit <code>domain:read</code> oben eintragen &amp; Refresh).
                       </td>
                     </tr>

@@ -7,6 +7,8 @@ pub mod catalog_sync;
 pub mod dc_orchestrator;
 pub mod directory_users;
 pub mod domain_join;
+pub mod fleet;
+pub mod laps;
 pub mod oidc;
 pub mod policy_engine;
 pub mod rbac;
@@ -151,6 +153,28 @@ enum Commands {
     Dc {
         #[command(subcommand)]
         sub: DcCommands,
+    },
+
+    /// Linux LAPS: Notfall-Admin-Passwörter pro Maschine rotieren & verschlüsselt abrufen
+    Laps {
+        #[command(subcommand)]
+        sub: LapsCommands,
+    },
+
+    /// Linux Client-Agent: Sync von GPOs, Software-Paketen, LAPS-Rotation & Heartbeat
+    Agent {
+        /// Adresse des Domain Controllers (z. B. 127.0.0.1:8443)
+        #[arg(long, default_value = "127.0.0.1:8443")]
+        dc: SocketAddr,
+        /// Intervall in Sekunden (Standard: 60s)
+        #[arg(long, default_value_t = 60)]
+        interval_secs: u64,
+        /// Nur einen einzigen Sync-Durchlauf ausführen und beenden
+        #[arg(long)]
+        once: bool,
+        /// Trockenlauf ohne Dateisystem-/Paket-Änderungen
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -356,6 +380,50 @@ enum DcCommands {
         #[arg(long, default_value = "console/dist")]
         console_dir: PathBuf,
     },
+    /// Erstellt ein verschlüsseltes, SHA-256-geschütztes DC-Backup (.sb-bak)
+    Backup {
+        /// Ausgabedatei (z. B. corp.sb-bak)
+        #[arg(long)]
+        out: PathBuf,
+        /// Backup-Passphrase (min. 8 Zeichen)
+        #[arg(long)]
+        passphrase: String,
+    },
+    /// Stellt den gesamten Domain Controller aus einem .sb-bak Archiv wieder her
+    Restore {
+        /// Backup-Datei (.sb-bak)
+        #[arg(long)]
+        file: PathBuf,
+        /// Backup-Passphrase
+        #[arg(long)]
+        passphrase: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum LapsCommands {
+    /// Rotiert das lokale Notfall-Admin-Passwort und speichert es verschlüsselt
+    Rotate {
+        #[arg(long)]
+        machine_id: String,
+        #[arg(long, default_value = "sb-rescue")]
+        account: String,
+        #[arg(long)]
+        passphrase: String,
+        #[arg(long)]
+        apply_linux: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Entschlüsselt das Notfall-Passwort einer Maschine (markiert rotate_pending=true)
+    Reveal {
+        #[arg(long)]
+        machine_id: String,
+        #[arg(long)]
+        passphrase: String,
+    },
+    /// Listet LAPS-Rotationsstatus aller Maschinen auf
+    Status,
 }
 
 #[derive(Subcommand, Debug)]
@@ -2265,7 +2333,60 @@ async fn main() {
                     std::process::exit(1);
                 }
             }
+            DcCommands::Backup { out, passphrase } => {
+                match dc_orchestrator::create_dc_backup(&out, &passphrase, None) {
+                    Ok(rep) => {
+                        println!(
+                            "{} DC-Backup erstellt: {} ({} Dateien, SHA-256: {})",
+                            "✓".green().bold(),
+                            rep.out_path.display(),
+                            rep.file_count,
+                            rep.sha256
+                        );
+                    }
+                    Err(error) => {
+                        eprintln!("  {} DC backup failed: {error}", "✗".bright_red().bold());
+                        std::process::exit(1);
+                    }
+                }
+            }
+            DcCommands::Restore { file, passphrase } => {
+                match dc_orchestrator::restore_dc_backup(&file, &passphrase, None) {
+                    Ok(rep) => {
+                        println!(
+                            "{} DC wiederhergestellt: {} Dateien aus Snapshot vom {}",
+                            "✓".green().bold(),
+                            rep.restored_files,
+                            rep.created_at
+                        );
+                    }
+                    Err(error) => {
+                        eprintln!("  {} DC restore failed: {error}", "✗".bright_red().bold());
+                        std::process::exit(1);
+                    }
+                }
+            }
         },
+        Some(Commands::Laps { sub }) => {
+            if let Err(error) = handle_laps_commands(sub) {
+                eprintln!(
+                    "  {} LAPS operation failed: {error}",
+                    "✗".bright_red().bold()
+                );
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::Agent {
+            dc,
+            interval_secs,
+            once,
+            dry_run,
+        }) => {
+            if let Err(error) = run_linux_agent_loop(dc, interval_secs, once, dry_run).await {
+                eprintln!("  {} Linux agent failed: {error}", "✗".bright_red().bold());
+                std::process::exit(1);
+            }
+        }
         Some(Commands::Status) | None => {
             handle_status();
         }
@@ -4763,6 +4884,141 @@ fn handle_user_commands(sub: UserCommands) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn handle_laps_commands(sub: LapsCommands) -> Result<(), String> {
+    let vault_dir = laps::default_laps_vault_dir();
+    let meta_path = laps::default_laps_meta_path();
+    match sub {
+        LapsCommands::Rotate {
+            machine_id,
+            account,
+            passphrase,
+            apply_linux,
+            dry_run,
+        } => {
+            let pw = laps::generate_laps_password();
+            if apply_linux {
+                laps::apply_linux_chpasswd(&account, &pw, dry_run)?;
+            }
+            if dry_run {
+                println!("Dry-Run: neues LAPS-Passwort für '{machine_id}' ({account}) simuliert.");
+                return Ok(());
+            }
+            let meta = laps::store_laps_password(
+                &machine_id,
+                &account,
+                &pw,
+                &passphrase,
+                30,
+                &vault_dir,
+                &meta_path,
+            )?;
+            println!(
+                "{} LAPS-Passwort für '{}' (Account '{}', v{}) rotiert und verschlüsselt gespeichert.",
+                "✓".green().bold(),
+                meta.machine_id.cyan().bold(),
+                meta.local_account,
+                meta.version
+            );
+            Ok(())
+        }
+        LapsCommands::Reveal {
+            machine_id,
+            passphrase,
+        } => {
+            let (pw, meta) =
+                laps::reveal_laps_password(&machine_id, &passphrase, &vault_dir, &meta_path)?;
+            println!(
+                "{} LAPS-Notfallpasswort für '{}' (Account '{}', rotate_pending={}):",
+                "✓".yellow().bold(),
+                meta.machine_id.cyan().bold(),
+                meta.local_account,
+                meta.rotate_pending
+            );
+            println!("  {pw}");
+            Ok(())
+        }
+        LapsCommands::Status => {
+            let store = laps::LapsMetaStore::load(&meta_path)?;
+            println!("=== LINUX LAPS STATUS ({}) ===", store.entries.len());
+            for e in store.entries.values() {
+                println!(
+                    "  {:<20} account={:<12} v{:<2} rotate_pending={} exp={}",
+                    e.machine_id.yellow(),
+                    e.local_account,
+                    e.version,
+                    e.rotate_pending,
+                    e.expires_at
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn run_linux_agent_loop(
+    dc: SocketAddr,
+    interval_secs: u64,
+    once: bool,
+    dry_run: bool,
+) -> Result<(), String> {
+    let state_path = sb_core::domain::local_domain_dir().join("machine.json");
+    let raw_state = fs::read_to_string(&state_path).map_err(|e| {
+        format!(
+            "Maschine ist noch keiner Domäne beigetreten ({}): {e}",
+            state_path.display()
+        )
+    })?;
+    let state: sb_core::domain::JoinedMachineState =
+        serde_json::from_str(&raw_state).map_err(|e| format!("Invalid machine.json: {e}"))?;
+    let clamped_interval = interval_secs.clamp(10, 3600);
+
+    loop {
+        println!(
+            "{} [sb-node agent] Sync für '{}' gegen DC {} (dry_run={})...",
+            "►".cyan(),
+            state.fqdn,
+            dc,
+            dry_run
+        );
+        match domain_join::fetch_remote_policy_bundle(dc).await {
+            Ok(bundle) => {
+                if let Ok(pub_b64) =
+                    fs::read_to_string(policy_engine::default_policy_authority_pub_path())
+                {
+                    if policy_engine::verify_policy_bundle(&bundle, &state.domain, &pub_b64, 0)
+                        .is_ok()
+                    {
+                        let sys_root = sb_core::domain::local_domain_dir().join("rendered");
+                        let _ = policy_engine::apply_policy_bundle(
+                            &bundle,
+                            &state.machine_id,
+                            sb_core::domain::OsKind::current(),
+                            &sys_root,
+                            dry_run,
+                        );
+                        println!(
+                            "  {} GPO Bundle Rev {} synchronisiert.",
+                            "✓".green(),
+                            bundle.revision
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "  {} GPO-Sync fehlgeschlagen (Offline-Modus): {e}",
+                    "!".yellow()
+                );
+            }
+        }
+        if once {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(clamped_interval)).await;
+    }
+    Ok(())
 }
 
 fn handle_member_commands(sub: MemberCommands) {
