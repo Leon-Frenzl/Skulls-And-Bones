@@ -6,6 +6,7 @@ pub mod catalog_membership;
 pub mod catalog_sync;
 pub mod directory_users;
 pub mod domain_join;
+pub mod oidc;
 pub mod policy_engine;
 pub mod rbac;
 pub mod vault_manager;
@@ -319,6 +320,12 @@ enum UserCommands {
         /// Maschinen des Benutzers NICHT automatisch widerrufen
         #[arg(long)]
         keep_machines: bool,
+    },
+    /// Erzeugt einen einmaligen Browser-Login-Code (sbc_...) für die Web-Konsole
+    LoginCode {
+        username: String,
+        #[arg(long, default_value_t = 300)]
+        ttl_seconds: i64,
     },
 }
 
@@ -4682,6 +4689,24 @@ fn handle_user_commands(sub: UserCommands) -> Result<(), String> {
                 report.username.yellow(),
                 report.revoked_machines.len()
             );
+            Ok(())
+        }
+        UserCommands::LoginCode {
+            username,
+            ttl_seconds,
+        } => {
+            let clean = sb_core::identity::validate_username(&username)?;
+            let code_path = oidc::default_login_codes_path();
+            let mut store = oidc::LoginCodeStore::load(&code_path)?;
+            let code = store.issue_code(&clean, vec!["domain:admin".into()], ttl_seconds);
+            store.save(&code_path)?;
+            println!(
+                "{} Einmaliger Browser-Login-Code für '{}' ({}s gültig):",
+                "✓".green().bold(),
+                clean.cyan().bold(),
+                ttl_seconds
+            );
+            println!("  {code}");
             Ok(())
         }
     }

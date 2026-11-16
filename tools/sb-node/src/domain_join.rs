@@ -439,6 +439,219 @@ async fn handle_join_http_connection(
         .await;
     }
 
+    if method == "GET" && path == "/.well-known/openid-configuration" {
+        let host = header_lines
+            .iter()
+            .find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.trim().eq_ignore_ascii_case("host").then(|| v.trim())
+            })
+            .unwrap_or("127.0.0.1:8090");
+        let spec = crate::oidc::openid_configuration(&format!("http://{host}")).to_string();
+        return write_http_json(stream, 200, "OK", &spec).await;
+    }
+
+    if method == "GET" && path == "/.well-known/jwks.json" {
+        let pub_path = sb_core::paths::sb_home().join("auth").join("auth.pub");
+        let pub_b64 = match fs::read_to_string(&pub_path) {
+            Ok(s) => s,
+            Err(e) => {
+                let msg =
+                    serde_json::json!({ "error": format!("auth.pub not found: {e}") }).to_string();
+                return write_http_json(stream, 404, "Not Found", &msg).await;
+            }
+        };
+        return match crate::oidc::jwks_document(&pub_b64) {
+            Ok(jwks) => write_http_json(stream, 200, "OK", &jwks.to_string()).await,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": e }).to_string();
+                write_http_json(stream, 500, "Internal Server Error", &msg).await
+            }
+        };
+    }
+
+    if method == "POST" && path == "/v1/auth/code" {
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        if !claims
+            .capabilities
+            .iter()
+            .any(|c| c == "directory:write" || c == "domain:admin")
+        {
+            return write_http_json(
+                stream,
+                403,
+                "Forbidden",
+                r#"{"error":"token lacks directory:write or domain:admin"}"#,
+            )
+            .await;
+        }
+        let body =
+            match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines).await? {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        let target_user = payload["username"].as_str().unwrap_or("");
+        let clean_user = match sb_core::identity::validate_username(target_user) {
+            Ok(u) => u,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": e }).to_string();
+                return write_http_json(stream, 400, "Bad Request", &msg).await;
+            }
+        };
+        let caps: Vec<String> = payload["capabilities"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let ttl = payload["ttl_seconds"].as_i64().unwrap_or(300);
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let code_path = base_dir.join("login_codes.json");
+        let mut store = crate::oidc::LoginCodeStore::load(&code_path).unwrap_or_default();
+        let code = store.issue_code(&clean_user, caps, ttl);
+        if let Err(e) = store.save(&code_path) {
+            let msg = serde_json::json!({ "error": e }).to_string();
+            return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+        }
+        let json = serde_json::json!({ "username": clean_user, "code": code, "ttl_seconds": ttl.clamp(60, 900) }).to_string();
+        return write_http_json(stream, 200, "OK", &json).await;
+    }
+
+    if method == "POST" && path == "/v1/auth/exchange" {
+        let body =
+            match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines).await? {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        let code = payload["code"].as_str().unwrap_or("");
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let code_path = base_dir.join("login_codes.json");
+        let mut store = crate::oidc::LoginCodeStore::load(&code_path).unwrap_or_default();
+        let auth_dir = sb_core::paths::sb_home().join("auth");
+        let key_b64 = match fs::read_to_string(auth_dir.join("auth.key")) {
+            Ok(s) => s,
+            Err(e) => {
+                let msg =
+                    serde_json::json!({ "error": format!("Missing auth.key: {e}") }).to_string();
+                return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+            }
+        };
+        let keypair = match sb_auth::crypto::Keypair::from_secret_base64(key_b64.trim()) {
+            Ok(k) => k,
+            Err(e) => {
+                let msg =
+                    serde_json::json!({ "error": format!("Invalid auth.key: {e}") }).to_string();
+                return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+            }
+        };
+        let rev_store = match sb_auth::FileRevocationStore::open(auth_dir.join("revocations.json"))
+        {
+            Ok(r) => Arc::new(r),
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("Revocation store error: {e}") })
+                    .to_string();
+                return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+            }
+        };
+        let engine = sb_auth::AuthEngine::new(keypair, rev_store);
+        return match crate::oidc::exchange_login_code_for_session(
+            code,
+            &mut store,
+            &engine,
+            vec!["user".into()],
+        ) {
+            Ok(tokens) => {
+                let _ = store.save(&code_path);
+                let _ = crate::audit_log::append_audit_event(
+                    &base_dir.join("audit.jsonl"),
+                    "oidc",
+                    "auth.login",
+                    "browser-session",
+                    "ok",
+                    serde_json::json!({}),
+                );
+                let json = serde_json::json!({
+                    "access_token": tokens.access_token,
+                    "refresh_token": tokens.refresh_token,
+                    "expires_at": tokens.expires_at,
+                })
+                .to_string();
+                write_http_json(stream, 200, "OK", &json).await
+            }
+            Err(e) => {
+                let msg = serde_json::json!({ "error": e }).to_string();
+                write_http_json(stream, 401, "Unauthorized", &msg).await
+            }
+        };
+    }
+
+    if method == "GET" && path == "/v1/auth/userinfo" {
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let dir = crate::directory_users::IdentityDirectory::load_or_create(
+            &base_dir.join("users.json"),
+            "corp.eu",
+        )
+        .unwrap_or_default();
+        let json = if let Some(u) = dir.users.get(&claims.subject) {
+            serde_json::json!({
+                "sub": u.username,
+                "name": u.display_name,
+                "email": u.email,
+                "groups": u.groups,
+            })
+            .to_string()
+        } else {
+            serde_json::json!({ "sub": claims.subject, "groups": claims.roles }).to_string()
+        };
+        return write_http_json(stream, 200, "OK", &json).await;
+    }
+
     if method == "GET" && path == "/v1/machines" {
         let Some(token) = extract_bearer_token(&header_lines) else {
             return write_http_json(

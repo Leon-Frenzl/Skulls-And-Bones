@@ -110,6 +110,18 @@ export default function App() {
   const [elevRuleId, setElevRuleId] = useState<string>("jit-domain-admin");
   const [elevReason, setElevReason] = useState<string>("");
   const [elevOut, setElevOut] = useState<string>("");
+  const [loginCode, setLoginCode] = useState<string>("");
+  const [ipamData, setIpamData] = useState<Record<string, unknown> | null>(null);
+  const [dnsNewDomain, setDnsNewDomain] = useState<string>("");
+  const [dnsNewIp, setDnsNewIp] = useState<string>("");
+  const [gpoId, setGpoId] = useState<string>("baseline-ssh");
+  const [gpoName, setGpoName] = useState<string>("SSH Hardening");
+  const [gpoSsh, setGpoSsh] = useState<boolean>(true);
+  const [gpoOut, setGpoOut] = useState<string>("");
+  const [appId, setAppId] = useState<string>("");
+  const [appName, setAppName] = useState<string>("");
+  const [appUrl, setAppUrl] = useState<string>("");
+  const [appGroups, setAppGroups] = useState<string>("all");
   const [statusMsg, setStatusMsg] = useState<string>("");
 
   // API Explorer state
@@ -133,18 +145,20 @@ export default function App() {
   const refreshAll = async () => {
     setStatusMsg("");
     try {
-      const [h, p, d, c, r] = await Promise.all([
+      const [h, p, d, c, r, ipm] = await Promise.all([
         fetch("/v1/health").then((x) => x.json()),
         fetch("/v1/policies").then((x) => x.json()).catch(() => ({ policies: [] })),
         fetch("/v1/dns/records").then((x) => x.json()),
         fetch("/v1/ca/status").then((x) => x.json()),
         fetch("/v1/proxy/routes").then((x) => x.json()),
+        fetch("/v1/ipam/subnets").then((x) => x.json()),
       ]);
       setHealth(h);
       setPolicies(Array.isArray(p.policies) ? p.policies : []);
       setDnsRecords(d);
       setCaStatus(c);
       setRoutes(Array.isArray(r.routes) ? r.routes : []);
+      setIpamData(ipm);
 
       if (token.trim()) {
         const [mRes, uRes, aRes, meRes, vRes, tvRes, appRes] = await Promise.all([
@@ -334,13 +348,50 @@ export default function App() {
           </h1>
 
           <div className="token-box">
+            {!token.trim() ? (
+              <>
+                <input
+                  className="input"
+                  placeholder="Login-Code (sbc_...)"
+                  value={loginCode}
+                  onChange={(e) => setLoginCode(e.target.value)}
+                  style={{ width: 170 }}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    const res = await fetch("/v1/auth/exchange", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ code: loginCode }),
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      if (data.access_token) {
+                        saveToken(data.access_token);
+                        setLoginCode("");
+                        await refreshAll();
+                      }
+                    } else {
+                      setStatusMsg(`Login fehlgeschlagen (${res.status}): ${await res.text()}`);
+                    }
+                  }}
+                >
+                  Anmelden
+                </button>
+              </>
+            ) : (
+              <button className="btn" onClick={() => saveToken("")}>
+                Abmelden
+              </button>
+            )}
             <input
               className="input"
               type="password"
-              placeholder="sb-auth Bearer Token..."
+              placeholder="oder Bearer Token..."
               value={token}
               onChange={(e) => saveToken(e.target.value)}
-              style={{ width: 240 }}
+              style={{ width: 170 }}
             />
             <button className="btn" onClick={() => void refreshAll()}>
               <RefreshCw size={14} /> Refresh
@@ -406,9 +457,41 @@ export default function App() {
                 </div>
               ) : (
                 <p style={{ color: "var(--muted)", margin: 0 }}>
-                  Noch keine Firmen-Apps sichtbar (über <code>PUT /v1/apps/{"{id}"}</code> anlegen).
+                  Noch keine Firmen-Apps sichtbar.
                 </p>
               )}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                <input className="input" placeholder="app-id (z. B. grafana)" value={appId} onChange={(e) => setAppId(e.target.value)} />
+                <input className="input" placeholder="Name" value={appName} onChange={(e) => setAppName(e.target.value)} />
+                <input className="input" placeholder="https://..." value={appUrl} onChange={(e) => setAppUrl(e.target.value)} />
+                <input className="input" placeholder="Gruppen (z. B. all)" value={appGroups} onChange={(e) => setAppGroups(e.target.value)} />
+                <button
+                  className="btn"
+                  onClick={async () => {
+                    const res = await fetch(`/v1/apps/${encodeURIComponent(appId)}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
+                      body: JSON.stringify({
+                        id: appId,
+                        name: appName,
+                        url: appUrl,
+                        description: "",
+                        allowed_groups: appGroups.split(",").map((s) => s.trim()).filter(Boolean),
+                      }),
+                    });
+                    if (res.ok) {
+                      setAppId("");
+                      setAppName("");
+                      setAppUrl("");
+                      await refreshAll();
+                    } else {
+                      setStatusMsg(`App-Fehler (${res.status}): ${await res.text()}`);
+                    }
+                  }}
+                >
+                  App hinzufügen
+                </button>
+              </div>
             </div>
             <div className="card">
               <div className="card-title">Unified API Endpunkte</div>
@@ -835,8 +918,68 @@ export default function App() {
         )}
 
         {tab === "policies" && (
-          <div className="card">
-            <div className="card-title">GPO Policies ({policies.length})</div>
+          <>
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">GPO-Editor (inkl. Dry-Run Vorschau)</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+                <input className="input" placeholder="Policy ID" value={gpoId} onChange={(e) => setGpoId(e.target.value)} />
+                <input className="input" placeholder="Name" value={gpoName} onChange={(e) => setGpoName(e.target.value)} />
+                <label style={{ fontSize: 13 }}>
+                  <input type="checkbox" checked={gpoSsh} onChange={(e) => setGpoSsh(e.target.checked)} /> SSH Hardening
+                </label>
+                <button
+                  className="btn"
+                  onClick={async () => {
+                    const res = await fetch(`/v1/policies/${encodeURIComponent(gpoId)}?dry_run=true`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
+                      body: JSON.stringify({
+                        id: gpoId,
+                        name: gpoName,
+                        description: "",
+                        version: 1,
+                        scope: { type: "domain" },
+                        target_os: [],
+                        rules: gpoSsh ? [{ kind: "ssh_hardening", password_auth: false, permit_root_login: false, trusted_user_ca_keys: true }] : [],
+                        updated_at: "",
+                        updated_by: "",
+                      }),
+                    });
+                    setGpoOut(await res.text());
+                  }}
+                >
+                  Dry-Run Vorschau
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    const res = await fetch(`/v1/policies/${encodeURIComponent(gpoId)}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
+                      body: JSON.stringify({
+                        id: gpoId,
+                        name: gpoName,
+                        description: "",
+                        version: 1,
+                        scope: { type: "domain" },
+                        target_os: [],
+                        rules: gpoSsh ? [{ kind: "ssh_hardening", password_auth: false, permit_root_login: false, trusted_user_ca_keys: true }] : [],
+                        updated_at: "",
+                        updated_by: "",
+                      }),
+                    });
+                    setGpoOut(await res.text());
+                    if (res.ok) await refreshAll();
+                  }}
+                >
+                  Speichern
+                </button>
+              </div>
+              {gpoOut && <pre className="code-block">{gpoOut}</pre>}
+            </div>
+
+            <div className="card">
+              <div className="card-title">GPO Policies ({policies.length})</div>
             <table className="table">
               <thead>
                 <tr>
@@ -871,13 +1014,48 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          </>
         )}
 
         {tab === "dns" && (
-          <div className="card">
-            <div className="card-title">Souveräne DNS-Zonen (A / AAAA / CNAME / TXT / SRV)</div>
-            <pre className="code-block">{JSON.stringify(dnsRecords, null, 2)}</pre>
-          </div>
+          <>
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">DNS A-Record hinzufügen</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <input className="input" placeholder="app.corp.eu" value={dnsNewDomain} onChange={(e) => setDnsNewDomain(e.target.value)} />
+                <input className="input" placeholder="10.42.0.50" value={dnsNewIp} onChange={(e) => setDnsNewIp(e.target.value)} />
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    const res = await fetch("/v1/dns/records", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
+                      body: JSON.stringify({ domain: dnsNewDomain, ip: dnsNewIp }),
+                    });
+                    if (res.ok) {
+                      setDnsNewDomain("");
+                      setDnsNewIp("");
+                      await refreshAll();
+                    } else {
+                      setStatusMsg(`DNS-Fehler (${res.status}): ${await res.text()}`);
+                    }
+                  }}
+                >
+                  A-Record speichern
+                </button>
+              </div>
+            </div>
+            <div className="grid">
+              <div className="card">
+                <div className="card-title">Souveräne DNS-Zonen (A / AAAA / CNAME / TXT / SRV)</div>
+                <pre className="code-block">{JSON.stringify(dnsRecords, null, 2)}</pre>
+              </div>
+              <div className="card">
+                <div className="card-title">DHCP &amp; IPAM Subnets / Leases</div>
+                <pre className="code-block">{JSON.stringify(ipamData, null, 2)}</pre>
+              </div>
+            </div>
+          </>
         )}
 
         {tab === "ca" && (

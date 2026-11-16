@@ -131,6 +131,82 @@ async fn handle_graph_request(
         return Ok(json_response(StatusCode::OK, &body));
     }
 
+    if method == Method::POST && uri_path == "/v1/dns/records" {
+        let Some(ref ver) = verifier else {
+            return Ok(json_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                r#"{"error":"sb-auth verifier not configured"}"#,
+            ));
+        };
+        let Some(token) = auth_header
+            .as_deref()
+            .and_then(|h| {
+                h.strip_prefix("Bearer ")
+                    .or_else(|| h.strip_prefix("bearer "))
+            })
+            .map(str::trim)
+        else {
+            return Ok(json_response(
+                StatusCode::UNAUTHORIZED,
+                r#"{"error":"missing bearer token"}"#,
+            ));
+        };
+        let claims = match ver.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return Ok(json_response(StatusCode::UNAUTHORIZED, &msg));
+            }
+        };
+        if !claims
+            .capabilities
+            .iter()
+            .any(|c| c == "dns:write" || c == "domain:admin")
+        {
+            return Ok(json_response(
+                StatusCode::FORBIDDEN,
+                r#"{"error":"token lacks dns:write or domain:admin"}"#,
+            ));
+        }
+        let body_bytes = match collect_bounded_body(req.into_body()).await {
+            Ok(b) => b,
+            Err(resp) => return Ok(resp),
+        };
+        let payload: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or_default();
+        let domain = payload["domain"].as_str().unwrap_or("");
+        let ip_str = payload["ip"].as_str().unwrap_or("");
+        let Ok(clean_domain) = sb_core::domain::validate_domain_name(domain) else {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                r#"{"error":"invalid domain name"}"#,
+            ));
+        };
+        let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() else {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                r#"{"error":"invalid IPv4 address"}"#,
+            ));
+        };
+        let dns_path = sb_core::paths::sb_home().join("dns").join("records.json");
+        let mut rec = read_dns_records_json();
+        if let Some(a_map) = rec["a"].as_object_mut() {
+            a_map.insert(
+                clean_domain.clone(),
+                serde_json::Value::String(ip.to_string()),
+            );
+        }
+        if let Some(parent) = dns_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(
+            &dns_path,
+            serde_json::to_string_pretty(&rec).unwrap_or_default(),
+        );
+        let out = serde_json::json!({ "added": { "domain": clean_domain, "type": "A", "ip": ip.to_string() } }).to_string();
+        return Ok(json_response(StatusCode::OK, &out));
+    }
+
     if method == Method::GET && uri_path == "/v1/ca/status" {
         let body = read_ca_status_json().to_string();
         return Ok(json_response(StatusCode::OK, &body));
@@ -218,8 +294,10 @@ async fn handle_graph_request(
         return Ok(json_response(StatusCode::OK, &resp));
     }
 
-    // 4. Upstream DC Forwarding (/v1/me*, /v1/vault*, /v1/apps*, /v1/rbac*, /v1/machines*, /v1/policies*, /v1/users*, /v1/groups*, /v1/audit*)
-    if uri_path.starts_with("/v1/me")
+    // 4. Upstream DC Forwarding (/.well-known/*, /v1/auth/*, /v1/me*, /v1/vault*, /v1/apps*, /v1/rbac*, /v1/machines*, /v1/policies*, /v1/users*, /v1/groups*, /v1/audit*)
+    if uri_path.starts_with("/.well-known/")
+        || uri_path.starts_with("/v1/auth")
+        || uri_path.starts_with("/v1/me")
         || uri_path.starts_with("/v1/vault")
         || uri_path.starts_with("/v1/apps")
         || uri_path.starts_with("/v1/rbac")
@@ -425,6 +503,164 @@ fn read_ca_status_json() -> serde_json::Value {
 
 /// Builds the live OpenAPI 3.1.0 JSON specification for the Skulls & Bones Open Graph API.
 pub fn build_openapi_spec() -> serde_json::Value {
+    let mut paths = serde_json::Map::new();
+    let specs: &[(&str, serde_json::Value)] = &[
+        (
+            "/v1/health",
+            serde_json::json!({ "get": { "summary": "Gateway & DC upstream health" } }),
+        ),
+        (
+            "/v1/openapi.json",
+            serde_json::json!({ "get": { "summary": "OpenAPI 3.1.0 specification" } }),
+        ),
+        (
+            "/.well-known/openid-configuration",
+            serde_json::json!({ "get": { "summary": "OIDC Discovery 1.0 metadata" } }),
+        ),
+        (
+            "/.well-known/jwks.json",
+            serde_json::json!({ "get": { "summary": "Ed25519 OKP public JWK set" } }),
+        ),
+        (
+            "/v1/auth/code",
+            serde_json::json!({ "post": { "summary": "Issue single-use browser login code (admin)" } }),
+        ),
+        (
+            "/v1/auth/exchange",
+            serde_json::json!({ "post": { "summary": "Exchange single-use login code for session token" } }),
+        ),
+        (
+            "/v1/auth/userinfo",
+            serde_json::json!({ "get": { "summary": "OIDC UserInfo endpoint" } }),
+        ),
+        (
+            "/v1/me",
+            serde_json::json!({ "get": { "summary": "Self-service profile and joined machines" } }),
+        ),
+        (
+            "/v1/me/ssh-key",
+            serde_json::json!({ "put": { "summary": "Register or update own OpenSSH public key" } }),
+        ),
+        (
+            "/v1/me/ssh-cert",
+            serde_json::json!({ "post": { "summary": "Issue own short-lived OpenSSH user certificate" } }),
+        ),
+        (
+            "/v1/me/elevate",
+            serde_json::json!({ "post": { "summary": "Request bounded-TTL JIT privilege elevation (RBAC-enforced)" } }),
+        ),
+        (
+            "/v1/me/elevations",
+            serde_json::json!({ "get": { "summary": "List active JIT elevations for current user" } }),
+        ),
+        (
+            "/v1/me/vault",
+            serde_json::json!({ "get": { "summary": "List personal encrypted vault entries" } }),
+        ),
+        (
+            "/v1/me/vault/{key}",
+            serde_json::json!({ "put": { "summary": "Store encrypted personal secret" }, "delete": { "summary": "Delete personal secret" } }),
+        ),
+        (
+            "/v1/me/vault/{key}/reveal",
+            serde_json::json!({ "post": { "summary": "Decrypt personal secret" } }),
+        ),
+        (
+            "/v1/vault/team",
+            serde_json::json!({ "get": { "summary": "List group-scoped team vault entries" } }),
+        ),
+        (
+            "/v1/vault/team/{group}/{key}",
+            serde_json::json!({ "put": { "summary": "Store encrypted team secret (RBAC + audit)" } }),
+        ),
+        (
+            "/v1/vault/team/{group}/{key}/reveal",
+            serde_json::json!({ "post": { "summary": "Decrypt team secret (RBAC + audit)" } }),
+        ),
+        (
+            "/v1/rbac/rules",
+            serde_json::json!({ "get": { "summary": "List JIT elevation eligibility rules (admin)" } }),
+        ),
+        (
+            "/v1/rbac/rules/{id}",
+            serde_json::json!({ "put": { "summary": "Create or update JIT elevation rule (admin)" } }),
+        ),
+        (
+            "/v1/apps",
+            serde_json::json!({ "get": { "summary": "List company apps visible to current user" } }),
+        ),
+        (
+            "/v1/apps/{id}",
+            serde_json::json!({ "put": { "summary": "Create or update a company app (admin)" }, "delete": { "summary": "Delete a company app (admin)" } }),
+        ),
+        (
+            "/v1/machines",
+            serde_json::json!({ "get": { "summary": "List domain-joined machines" } }),
+        ),
+        (
+            "/v1/machines/join",
+            serde_json::json!({ "post": { "summary": "Join a machine to the domain" } }),
+        ),
+        (
+            "/v1/users",
+            serde_json::json!({ "get": { "summary": "List domain users" } }),
+        ),
+        (
+            "/v1/users/{username}",
+            serde_json::json!({ "put": { "summary": "Create or update a domain user" }, "delete": { "summary": "Delete a domain user" } }),
+        ),
+        (
+            "/v1/users/{username}/ssh-cert",
+            serde_json::json!({ "post": { "summary": "Issue short-lived OpenSSH user certificate" } }),
+        ),
+        (
+            "/v1/users/{username}/offboard",
+            serde_json::json!({ "post": { "summary": "1-click offboard user and revoke machines" } }),
+        ),
+        (
+            "/v1/groups",
+            serde_json::json!({ "get": { "summary": "List domain groups and memberships" } }),
+        ),
+        (
+            "/v1/audit/events",
+            serde_json::json!({ "get": { "summary": "Read tamper-evident hash-chained audit log" } }),
+        ),
+        (
+            "/v1/policies",
+            serde_json::json!({ "get": { "summary": "List cross-platform GPO policies" } }),
+        ),
+        (
+            "/v1/policies/{id}",
+            serde_json::json!({ "get": { "summary": "Get a GPO policy by ID" }, "put": { "summary": "Create or update a GPO policy (supports ?dry_run=true)" }, "delete": { "summary": "Delete a GPO policy (supports ?dry_run=true)" } }),
+        ),
+        (
+            "/v1/policies/bundle",
+            serde_json::json!({ "get": { "summary": "Download Ed25519-signed GPO bundle" } }),
+        ),
+        (
+            "/v1/dns/records",
+            serde_json::json!({ "get": { "summary": "List sovereign DNS zone records" }, "post": { "summary": "Add static DNS A record" } }),
+        ),
+        (
+            "/v1/ipam/subnets",
+            serde_json::json!({ "get": { "summary": "List IPAM subnets and DHCP leases" } }),
+        ),
+        (
+            "/v1/ca/status",
+            serde_json::json!({ "get": { "summary": "Inspect X.509 and SSH CA status" } }),
+        ),
+        (
+            "/v1/proxy/routes",
+            serde_json::json!({ "get": { "summary": "List active reverse-proxy routes" } }),
+        ),
+        (
+            "/v1/enrollments",
+            serde_json::json!({ "post": { "summary": "Generate a remote/mobile join command" } }),
+        ),
+    ];
+    for (k, v) in specs {
+        paths.insert((*k).to_string(), v.clone());
+    }
     serde_json::json!({
         "openapi": "3.1.0",
         "info": {
@@ -432,54 +668,7 @@ pub fn build_openapi_spec() -> serde_json::Value {
             "version": "1.0.0",
             "description": "Developer-friendly, sovereign domain, DNS, CA, GPO & mesh management API."
         },
-        "paths": {
-            "/v1/health": { "get": { "summary": "Gateway & DC upstream health" } },
-            "/v1/openapi.json": { "get": { "summary": "OpenAPI 3.1.0 specification" } },
-            "/v1/me": { "get": { "summary": "Self-service profile and joined machines" } },
-            "/v1/me/ssh-key": { "put": { "summary": "Register or update own OpenSSH public key" } },
-            "/v1/me/ssh-cert": { "post": { "summary": "Issue own short-lived OpenSSH user certificate" } },
-            "/v1/me/elevate": { "post": { "summary": "Request bounded-TTL JIT privilege elevation (RBAC-enforced)" } },
-            "/v1/me/elevations": { "get": { "summary": "List active JIT elevations for current user" } },
-            "/v1/rbac/rules": { "get": { "summary": "List JIT elevation eligibility rules (admin)" } },
-            "/v1/rbac/rules/{id}": { "put": { "summary": "Create or update JIT elevation rule (admin)" } },
-            "/v1/apps": { "get": { "summary": "List company apps visible to current user" } },
-            "/v1/apps/{id}": {
-                "put": { "summary": "Create or update a company app (admin)" },
-                "delete": { "summary": "Delete a company app (admin)" }
-            },
-            "/v1/me/vault": { "get": { "summary": "List personal encrypted vault entries" } },
-            "/v1/me/vault/{key}": {
-                "put": { "summary": "Store encrypted personal secret" },
-                "delete": { "summary": "Delete personal secret" }
-            },
-            "/v1/me/vault/{key}/reveal": { "post": { "summary": "Decrypt personal secret" } },
-            "/v1/vault/team": { "get": { "summary": "List group-scoped team vault entries" } },
-            "/v1/vault/team/{group}/{key}": { "put": { "summary": "Store encrypted team secret (RBAC + audit)" } },
-            "/v1/vault/team/{group}/{key}/reveal": { "post": { "summary": "Decrypt team secret (RBAC + audit)" } },
-            "/v1/machines": { "get": { "summary": "List domain-joined machines" } },
-            "/v1/machines/join": { "post": { "summary": "Join a machine to the domain" } },
-            "/v1/users": { "get": { "summary": "List domain users" } },
-            "/v1/users/{username}": {
-                "put": { "summary": "Create or update a domain user" },
-                "delete": { "summary": "Delete a domain user" }
-            },
-            "/v1/users/{username}/ssh-cert": { "post": { "summary": "Issue short-lived OpenSSH user certificate" } },
-            "/v1/users/{username}/offboard": { "post": { "summary": "1-click offboard user and revoke machines" } },
-            "/v1/groups": { "get": { "summary": "List domain groups and memberships" } },
-            "/v1/audit/events": { "get": { "summary": "Read tamper-evident hash-chained audit log" } },
-            "/v1/policies": { "get": { "summary": "List cross-platform GPO policies" } },
-            "/v1/policies/{id}": {
-                "get": { "summary": "Get a GPO policy by ID" },
-                "put": { "summary": "Create or update a GPO policy (supports ?dry_run=true)" },
-                "delete": { "summary": "Delete a GPO policy (supports ?dry_run=true)" }
-            },
-            "/v1/policies/bundle": { "get": { "summary": "Download Ed25519-signed GPO bundle" } },
-            "/v1/dns/records": { "get": { "summary": "List sovereign DNS zone records" } },
-            "/v1/ipam/subnets": { "get": { "summary": "List IPAM subnets and DHCP leases" } },
-            "/v1/ca/status": { "get": { "summary": "Inspect X.509 and SSH CA status" } },
-            "/v1/proxy/routes": { "get": { "summary": "List active reverse-proxy routes" } },
-            "/v1/enrollments": { "post": { "summary": "Generate a remote/mobile join command" } }
-        }
+        "paths": paths
     })
 }
 
