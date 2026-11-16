@@ -218,8 +218,11 @@ async fn handle_graph_request(
         return Ok(json_response(StatusCode::OK, &resp));
     }
 
-    // 4. Upstream DC Forwarding (/v1/me*, /v1/machines*, /v1/policies*, /v1/users*, /v1/groups*, /v1/audit*)
+    // 4. Upstream DC Forwarding (/v1/me*, /v1/vault*, /v1/apps*, /v1/rbac*, /v1/machines*, /v1/policies*, /v1/users*, /v1/groups*, /v1/audit*)
     if uri_path.starts_with("/v1/me")
+        || uri_path.starts_with("/v1/vault")
+        || uri_path.starts_with("/v1/apps")
+        || uri_path.starts_with("/v1/rbac")
         || uri_path.starts_with("/v1/machines")
         || uri_path.starts_with("/v1/policies")
         || uri_path.starts_with("/v1/users")
@@ -435,6 +438,24 @@ pub fn build_openapi_spec() -> serde_json::Value {
             "/v1/me": { "get": { "summary": "Self-service profile and joined machines" } },
             "/v1/me/ssh-key": { "put": { "summary": "Register or update own OpenSSH public key" } },
             "/v1/me/ssh-cert": { "post": { "summary": "Issue own short-lived OpenSSH user certificate" } },
+            "/v1/me/elevate": { "post": { "summary": "Request bounded-TTL JIT privilege elevation (RBAC-enforced)" } },
+            "/v1/me/elevations": { "get": { "summary": "List active JIT elevations for current user" } },
+            "/v1/rbac/rules": { "get": { "summary": "List JIT elevation eligibility rules (admin)" } },
+            "/v1/rbac/rules/{id}": { "put": { "summary": "Create or update JIT elevation rule (admin)" } },
+            "/v1/apps": { "get": { "summary": "List company apps visible to current user" } },
+            "/v1/apps/{id}": {
+                "put": { "summary": "Create or update a company app (admin)" },
+                "delete": { "summary": "Delete a company app (admin)" }
+            },
+            "/v1/me/vault": { "get": { "summary": "List personal encrypted vault entries" } },
+            "/v1/me/vault/{key}": {
+                "put": { "summary": "Store encrypted personal secret" },
+                "delete": { "summary": "Delete personal secret" }
+            },
+            "/v1/me/vault/{key}/reveal": { "post": { "summary": "Decrypt personal secret" } },
+            "/v1/vault/team": { "get": { "summary": "List group-scoped team vault entries" } },
+            "/v1/vault/team/{group}/{key}": { "put": { "summary": "Store encrypted team secret (RBAC + audit)" } },
+            "/v1/vault/team/{group}/{key}/reveal": { "post": { "summary": "Decrypt team secret (RBAC + audit)" } },
             "/v1/machines": { "get": { "summary": "List domain-joined machines" } },
             "/v1/machines/join": { "post": { "summary": "Join a machine to the domain" } },
             "/v1/users": { "get": { "summary": "List domain users" } },

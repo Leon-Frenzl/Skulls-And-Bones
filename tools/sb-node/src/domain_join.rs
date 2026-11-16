@@ -855,6 +855,534 @@ async fn handle_join_http_connection(
         };
     }
 
+    if path == "/v1/me/elevate"
+        || path == "/v1/me/elevations"
+        || path.starts_with("/v1/rbac/rules")
+        || path.starts_with("/v1/apps")
+    {
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let users_dir = crate::directory_users::IdentityDirectory::load_or_create(
+            &base_dir.join("users.json"),
+            "corp.eu",
+        )
+        .unwrap_or_default();
+        let Some(user) = users_dir.users.get(&claims.subject) else {
+            return write_http_json(
+                stream,
+                403,
+                "Forbidden",
+                r#"{"error":"user not found in directory"}"#,
+            )
+            .await;
+        };
+        if !user.enabled {
+            return write_http_json(
+                stream,
+                403,
+                "Forbidden",
+                r#"{"error":"user account is disabled"}"#,
+            )
+            .await;
+        }
+        let rbac_path = base_dir.join("rbac.json");
+        let audit_path = base_dir.join("audit.jsonl");
+        let mut store = crate::rbac::RbacStore::load(&rbac_path).unwrap_or_default();
+        let is_admin = claims.capabilities.iter().any(|c| c == "domain:admin");
+
+        if method == "GET" && path == "/v1/me/elevations" {
+            let active = store.active_elevations_for(&claims.subject);
+            let json = serde_json::json!({ "elevations": active }).to_string();
+            return write_http_json(stream, 200, "OK", &json).await;
+        }
+
+        if method == "POST" && path == "/v1/me/elevate" {
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            let rule_id = payload["rule_id"].as_str().unwrap_or("");
+            let reason = payload["reason"].as_str().unwrap_or("");
+            let ttl = payload["ttl_seconds"].as_u64().unwrap_or(1800);
+            return match store.request_elevation(user, rule_id, reason, ttl) {
+                Ok(elev) => {
+                    let _ = store.save(&rbac_path);
+                    let _ = crate::audit_log::append_audit_event(
+                        &audit_path,
+                        &claims.subject,
+                        "rbac.elevate",
+                        rule_id,
+                        "ok",
+                        serde_json::json!({ "reason": elev.reason, "expires_at": elev.expires_at }),
+                    );
+                    let json = serde_json::to_string(&elev).map_err(|e| e.to_string())?;
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    write_http_json(stream, 403, "Forbidden", &msg).await
+                }
+            };
+        }
+
+        if method == "GET" && path == "/v1/rbac/rules" {
+            if !is_admin {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"requires domain:admin capability"}"#,
+                )
+                .await;
+            }
+            let rules: Vec<&crate::rbac::ElevationRule> = store.rules.values().collect();
+            let json = serde_json::json!({ "rules": rules }).to_string();
+            return write_http_json(stream, 200, "OK", &json).await;
+        }
+
+        if method == "PUT" && path.starts_with("/v1/rbac/rules/") {
+            if !is_admin {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"requires domain:admin capability"}"#,
+                )
+                .await;
+            }
+            let rule_id = path.trim_start_matches("/v1/rbac/rules/");
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let mut rule: crate::rbac::ElevationRule = match serde_json::from_slice(&body) {
+                Ok(r) => r,
+                Err(e) => {
+                    let msg =
+                        serde_json::json!({ "error": format!("Invalid JSON: {e}") }).to_string();
+                    return write_http_json(stream, 400, "Bad Request", &msg).await;
+                }
+            };
+            rule.id = rule_id.to_string();
+            return match store.upsert_rule(rule) {
+                Ok(saved) => {
+                    let _ = store.save(&rbac_path);
+                    let _ = crate::audit_log::append_audit_event(
+                        &audit_path,
+                        &claims.subject,
+                        "rbac.rule_upsert",
+                        &saved.id,
+                        "ok",
+                        serde_json::json!({ "eligible_groups": saved.eligible_groups }),
+                    );
+                    let json = serde_json::to_string(&saved).map_err(|e| e.to_string())?;
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    write_http_json(stream, 400, "Bad Request", &msg).await
+                }
+            };
+        }
+
+        if method == "GET" && path == "/v1/apps" {
+            let apps: Vec<&crate::rbac::CompanyApp> = store
+                .apps
+                .values()
+                .filter(|a| a.is_visible_to(user, is_admin))
+                .collect();
+            let json = serde_json::json!({ "apps": apps }).to_string();
+            return write_http_json(stream, 200, "OK", &json).await;
+        }
+
+        if method == "PUT" && path.starts_with("/v1/apps/") {
+            if !is_admin {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"requires domain:admin capability"}"#,
+                )
+                .await;
+            }
+            let app_id = path.trim_start_matches("/v1/apps/");
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let mut app: crate::rbac::CompanyApp = match serde_json::from_slice(&body) {
+                Ok(a) => a,
+                Err(e) => {
+                    let msg =
+                        serde_json::json!({ "error": format!("Invalid JSON: {e}") }).to_string();
+                    return write_http_json(stream, 400, "Bad Request", &msg).await;
+                }
+            };
+            app.id = app_id.to_string();
+            return match store.upsert_app(app) {
+                Ok(saved) => {
+                    let _ = store.save(&rbac_path);
+                    let _ = crate::audit_log::append_audit_event(
+                        &audit_path,
+                        &claims.subject,
+                        "app.upsert",
+                        &saved.id,
+                        "ok",
+                        serde_json::json!({ "url": saved.url }),
+                    );
+                    let json = serde_json::to_string(&saved).map_err(|e| e.to_string())?;
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    write_http_json(stream, 400, "Bad Request", &msg).await
+                }
+            };
+        }
+
+        if method == "DELETE" && path.starts_with("/v1/apps/") {
+            if !is_admin {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"requires domain:admin capability"}"#,
+                )
+                .await;
+            }
+            let app_id = path.trim_start_matches("/v1/apps/");
+            if store.apps.remove(app_id).is_some() {
+                let _ = store.save(&rbac_path);
+                let json = serde_json::json!({ "deleted": app_id }).to_string();
+                return write_http_json(stream, 200, "OK", &json).await;
+            }
+            return write_http_json(stream, 404, "Not Found", r#"{"error":"app not found"}"#).await;
+        }
+    }
+
+    if path.starts_with("/v1/me/vault") || path.starts_with("/v1/vault/team") {
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let users_path = base_dir.join("users.json");
+        let users_dir =
+            crate::directory_users::IdentityDirectory::load_or_create(&users_path, "corp.eu")
+                .unwrap_or_default();
+        let Some(user) = users_dir.users.get(&claims.subject) else {
+            return write_http_json(
+                stream,
+                403,
+                "Forbidden",
+                r#"{"error":"user not found in directory"}"#,
+            )
+            .await;
+        };
+        if !user.enabled {
+            return write_http_json(
+                stream,
+                403,
+                "Forbidden",
+                r#"{"error":"user account is disabled"}"#,
+            )
+            .await;
+        }
+        let vaults_root = base_dir.join("vaults");
+        let audit_path = base_dir.join("audit.jsonl");
+
+        // Personal Vault (/v1/me/vault)
+        if method == "GET" && path == "/v1/me/vault" {
+            return match crate::vault_manager::list_personal_vault(&claims.subject, &vaults_root) {
+                Ok(entries) => {
+                    let json = serde_json::json!({ "entries": entries }).to_string();
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    write_http_json(stream, 400, "Bad Request", &msg).await
+                }
+            };
+        }
+
+        if method == "PUT" && path.starts_with("/v1/me/vault/") {
+            let key = path.trim_start_matches("/v1/me/vault/");
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let payload: serde_json::Value = match serde_json::from_slice(&body) {
+                Ok(v) => v,
+                Err(e) => {
+                    let msg =
+                        serde_json::json!({ "error": format!("Invalid JSON: {e}") }).to_string();
+                    return write_http_json(stream, 400, "Bad Request", &msg).await;
+                }
+            };
+            let label = payload["label"].as_str().unwrap_or("");
+            let secret = payload["secret"].as_str().unwrap_or("");
+            let passphrase = payload["passphrase"].as_str().unwrap_or("");
+            return match crate::vault_manager::put_personal_secret(
+                &claims.subject,
+                key,
+                label,
+                secret,
+                passphrase,
+                &vaults_root,
+            ) {
+                Ok(meta) => {
+                    let json = serde_json::to_string(&meta).map_err(|e| e.to_string())?;
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    write_http_json(stream, 400, "Bad Request", &msg).await
+                }
+            };
+        }
+
+        if method == "POST" && path.starts_with("/v1/me/vault/") && path.ends_with("/reveal") {
+            let key = path
+                .trim_start_matches("/v1/me/vault/")
+                .trim_end_matches("/reveal");
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            let passphrase = payload["passphrase"].as_str().unwrap_or("");
+            return match crate::vault_manager::reveal_personal_secret(
+                &claims.subject,
+                key,
+                passphrase,
+                &vaults_root,
+            ) {
+                Ok(secret) => {
+                    let json = serde_json::json!({ "key": key, "secret": secret }).to_string();
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    write_http_json(stream, 403, "Forbidden", &msg).await
+                }
+            };
+        }
+
+        if method == "DELETE" && path.starts_with("/v1/me/vault/") {
+            let key = path.trim_start_matches("/v1/me/vault/");
+            return match crate::vault_manager::delete_personal_secret(
+                &claims.subject,
+                key,
+                &vaults_root,
+            ) {
+                Ok(true) => {
+                    let json = serde_json::json!({ "deleted": key }).to_string();
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Ok(false) => {
+                    write_http_json(stream, 404, "Not Found", r#"{"error":"secret not found"}"#)
+                        .await
+                }
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    write_http_json(stream, 400, "Bad Request", &msg).await
+                }
+            };
+        }
+
+        // Team Vault (/v1/vault/team?group=<g> or /v1/vault/team/<g>/<key>[/reveal])
+        let is_vault_admin = claims
+            .capabilities
+            .iter()
+            .any(|c| c == "domain:admin" || c == "vault:admin");
+
+        if method == "GET" && path == "/v1/vault/team" {
+            let group = query_param(query, "group").unwrap_or("");
+            if !is_vault_admin && !user.groups.iter().any(|g| g == group) {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"not a member of target group"}"#,
+                )
+                .await;
+            }
+            return match crate::vault_manager::list_team_vault(group, &vaults_root) {
+                Ok(entries) => {
+                    let json =
+                        serde_json::json!({ "group": group, "entries": entries }).to_string();
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    write_http_json(stream, 400, "Bad Request", &msg).await
+                }
+            };
+        }
+
+        if let Some(rest) = path.strip_prefix("/v1/vault/team/") {
+            let is_reveal = method == "POST" && rest.ends_with("/reveal");
+            let trimmed = if is_reveal {
+                rest.trim_end_matches("/reveal")
+            } else {
+                rest
+            };
+            let Some((group, key)) = trimmed.split_once('/') else {
+                return write_http_json(
+                    stream,
+                    404,
+                    "Not Found",
+                    r#"{"error":"expected /v1/vault/team/{group}/{key}"}"#,
+                )
+                .await;
+            };
+            let is_member = user.groups.iter().any(|g| g == group);
+            if !is_vault_admin && !is_member {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"not a member of target group"}"#,
+                )
+                .await;
+            }
+
+            if method == "PUT" {
+                let can_write =
+                    is_vault_admin || claims.capabilities.iter().any(|c| c == "vault:write");
+                if !can_write {
+                    return write_http_json(
+                        stream,
+                        403,
+                        "Forbidden",
+                        r#"{"error":"token lacks vault:write or domain:admin capability"}"#,
+                    )
+                    .await;
+                }
+                let body =
+                    match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                        .await?
+                    {
+                        Some(b) => b,
+                        None => return Ok(()),
+                    };
+                let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+                let label = payload["label"].as_str().unwrap_or("");
+                let secret = payload["secret"].as_str().unwrap_or("");
+                let passphrase = payload["passphrase"].as_str().unwrap_or("");
+                return match crate::vault_manager::put_team_secret(
+                    group,
+                    key,
+                    label,
+                    secret,
+                    passphrase,
+                    &claims.subject,
+                    &vaults_root,
+                ) {
+                    Ok(meta) => {
+                        let _ = crate::audit_log::append_audit_event(
+                            &audit_path,
+                            &claims.subject,
+                            "vault.team_write",
+                            &format!("{group}/{key}"),
+                            "ok",
+                            serde_json::json!({ "version": meta.version }),
+                        );
+                        let json = serde_json::to_string(&meta).map_err(|e| e.to_string())?;
+                        write_http_json(stream, 200, "OK", &json).await
+                    }
+                    Err(e) => {
+                        let msg = serde_json::json!({ "error": e }).to_string();
+                        write_http_json(stream, 400, "Bad Request", &msg).await
+                    }
+                };
+            }
+
+            if is_reveal {
+                let body =
+                    match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                        .await?
+                    {
+                        Some(b) => b,
+                        None => return Ok(()),
+                    };
+                let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+                let passphrase = payload["passphrase"].as_str().unwrap_or("");
+                return match crate::vault_manager::reveal_team_secret(
+                    group,
+                    key,
+                    passphrase,
+                    &vaults_root,
+                ) {
+                    Ok(secret) => {
+                        let _ = crate::audit_log::append_audit_event(
+                            &audit_path,
+                            &claims.subject,
+                            "vault.team_read",
+                            &format!("{group}/{key}"),
+                            "ok",
+                            serde_json::json!({}),
+                        );
+                        let json =
+                            serde_json::json!({ "group": group, "key": key, "secret": secret })
+                                .to_string();
+                        write_http_json(stream, 200, "OK", &json).await
+                    }
+                    Err(e) => {
+                        let msg = serde_json::json!({ "error": e }).to_string();
+                        write_http_json(stream, 403, "Forbidden", &msg).await
+                    }
+                };
+            }
+        }
+    }
+
     if (method == "GET" && path == "/v1/me")
         || (method == "PUT" && path == "/v1/me/ssh-key")
         || (method == "POST" && path == "/v1/me/ssh-cert")
@@ -1358,6 +1886,12 @@ pub fn offboard_user(
     }
 
     let audit_path = dir_root.join("audit.jsonl");
+    let rbac_path = dir_root.join("rbac.json");
+    if let Ok(mut rbac_store) = crate::rbac::RbacStore::load(&rbac_path) {
+        if rbac_store.revoke_user_elevations(&disabled_user.username) > 0 {
+            let _ = rbac_store.save(&rbac_path);
+        }
+    }
     let _ = crate::audit_log::append_audit_event(
         &audit_path,
         actor,

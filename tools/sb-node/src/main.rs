@@ -7,6 +7,8 @@ pub mod catalog_sync;
 pub mod directory_users;
 pub mod domain_join;
 pub mod policy_engine;
+pub mod rbac;
+pub mod vault_manager;
 
 use base64::Engine;
 use clap::{Parser, Subcommand};

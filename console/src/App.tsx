@@ -6,6 +6,7 @@ import {
   Globe,
   KeyRound,
   Laptop,
+  Lock,
   RefreshCw,
   ShieldCheck,
   Terminal,
@@ -15,7 +16,23 @@ import {
   Users,
 } from "lucide-react";
 
-type TabId = "overview" | "me" | "users" | "machines" | "policies" | "dns" | "ca" | "audit" | "explorer";
+type TabId = "overview" | "me" | "vault" | "users" | "machines" | "policies" | "dns" | "ca" | "audit" | "explorer";
+
+interface VaultEntryMeta {
+  key: string;
+  label: string;
+  updated_at: string;
+  updated_by: string;
+  version: number;
+}
+
+interface CompanyApp {
+  id: string;
+  name: string;
+  url: string;
+  description: string;
+  allowed_groups: string[];
+}
 
 interface AuditEvent {
   seq: number;
@@ -81,6 +98,18 @@ export default function App() {
   const [meMachines, setMeMachines] = useState<MachineRecord[]>([]);
   const [meSshPubkey, setMeSshPubkey] = useState<string>("");
   const [meSshCert, setMeSshCert] = useState<string>("");
+  const [vaultPass, setVaultPass] = useState<string>("");
+  const [vaultEntries, setVaultEntries] = useState<VaultEntryMeta[]>([]);
+  const [vaultKey, setVaultKey] = useState<string>("");
+  const [vaultLabel, setVaultLabel] = useState<string>("");
+  const [vaultSecret, setVaultSecret] = useState<string>("");
+  const [revealedSecret, setRevealedSecret] = useState<string>("");
+  const [teamGroup, setTeamGroup] = useState<string>("engineering");
+  const [teamEntries, setTeamEntries] = useState<VaultEntryMeta[]>([]);
+  const [apps, setApps] = useState<CompanyApp[]>([]);
+  const [elevRuleId, setElevRuleId] = useState<string>("jit-domain-admin");
+  const [elevReason, setElevReason] = useState<string>("");
+  const [elevOut, setElevOut] = useState<string>("");
   const [statusMsg, setStatusMsg] = useState<string>("");
 
   // API Explorer state
@@ -118,11 +147,14 @@ export default function App() {
       setRoutes(Array.isArray(r.routes) ? r.routes : []);
 
       if (token.trim()) {
-        const [mRes, uRes, aRes, meRes] = await Promise.all([
+        const [mRes, uRes, aRes, meRes, vRes, tvRes, appRes] = await Promise.all([
           fetch("/v1/machines", { headers: authHeaders() }),
           fetch("/v1/users", { headers: authHeaders() }),
           fetch("/v1/audit/events?limit=50", { headers: authHeaders() }),
           fetch("/v1/me", { headers: authHeaders() }),
+          fetch("/v1/me/vault", { headers: authHeaders() }),
+          fetch(`/v1/vault/team?group=${encodeURIComponent(teamGroup)}`, { headers: authHeaders() }),
+          fetch("/v1/apps", { headers: authHeaders() }),
         ]);
         if (mRes.ok) {
           const mJson = await mRes.json();
@@ -144,6 +176,18 @@ export default function App() {
           if (meJson.user?.ssh_public_key) {
             setMeSshPubkey(meJson.user.ssh_public_key);
           }
+        }
+        if (vRes.ok) {
+          const vJson = await vRes.json();
+          setVaultEntries(Array.isArray(vJson.entries) ? vJson.entries : []);
+        }
+        if (tvRes.ok) {
+          const tvJson = await tvRes.json();
+          setTeamEntries(Array.isArray(tvJson.entries) ? tvJson.entries : []);
+        }
+        if (appRes.ok) {
+          const appJson = await appRes.json();
+          setApps(Array.isArray(appJson.apps) ? appJson.apps : []);
         }
       }
     } catch (err) {
@@ -248,6 +292,9 @@ export default function App() {
         <button className={`nav-btn ${tab === "me" ? "active" : ""}`} onClick={() => setTab("me")}>
           <UserCheck size={16} /> Mein Konto
         </button>
+        <button className={`nav-btn ${tab === "vault" ? "active" : ""}`} onClick={() => setTab("vault")}>
+          <Lock size={16} /> Passwort-Tresor
+        </button>
         <button className={`nav-btn ${tab === "users" ? "active" : ""}`} onClick={() => setTab("users")}>
           <Users size={16} /> Users &amp; Gruppen
         </button>
@@ -276,6 +323,7 @@ export default function App() {
           <h1 style={{ margin: 0, fontSize: 22 }}>
             {tab === "overview" && "Infrastruktur-Übersicht"}
             {tab === "me" && "Mein Konto (Self-Service)"}
+            {tab === "vault" && "Sovereign Passwort-Tresor (Argon2id + AES-256-GCM)"}
             {tab === "users" && "Domänen-Benutzer & Gruppen"}
             {tab === "machines" && "Domänen-Maschinen & Mobile Enrollment"}
             {tab === "policies" && "Signierte Cross-Platform GPOs"}
@@ -337,6 +385,30 @@ export default function App() {
                   )}
                 </div>
               </div>
+            </div>
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">Firmen-App-Portal ({apps.length})</div>
+              {apps.length > 0 ? (
+                <div className="grid" style={{ marginBottom: 0 }}>
+                  {apps.map((app) => (
+                    <a
+                      key={app.id}
+                      href={app.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="card"
+                      style={{ textDecoration: "none", color: "inherit", borderColor: "rgba(82,199,189,0.35)" }}
+                    >
+                      <div style={{ fontWeight: 700, color: "var(--accent)" }}>{app.name}</div>
+                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>{app.description || app.url}</div>
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ color: "var(--muted)", margin: 0 }}>
+                  Noch keine Firmen-Apps sichtbar (über <code>PUT /v1/apps/{"{id}"}</code> anlegen).
+                </p>
+              )}
             </div>
             <div className="card">
               <div className="card-title">Unified API Endpunkte</div>
@@ -416,6 +488,28 @@ export default function App() {
               {meSshCert && <pre className="code-block">{meSshCert}</pre>}
             </div>
 
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">Just-in-Time Admin-Rechte (nur bei RBAC-Berechtigung)</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                <input className="input" placeholder="Rule ID (z. B. jit-domain-admin)" value={elevRuleId} onChange={(e) => setElevRuleId(e.target.value)} />
+                <input className="input" style={{ flex: 1, minWidth: 220 }} placeholder="Begründung (min. 5 Zeichen)" value={elevReason} onChange={(e) => setElevReason(e.target.value)} />
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    const res = await fetch("/v1/me/elevate", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
+                      body: JSON.stringify({ rule_id: elevRuleId, reason: elevReason, ttl_seconds: 1800 }),
+                    });
+                    setElevOut(await res.text());
+                  }}
+                >
+                  30 Min anfordern
+                </button>
+              </div>
+              {elevOut && <pre className="code-block">{elevOut}</pre>}
+            </div>
+
             <div className="card">
               <div className="card-title">Meine Geräte ({meMachines.length})</div>
               <table className="table">
@@ -436,6 +530,146 @@ export default function App() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </>
+        )}
+
+        {tab === "vault" && (
+          <>
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">Tresor-Master-Passwort (nur im RAM)</div>
+              <input
+                className="input"
+                type="password"
+                placeholder="Master-Passwort zum Ver-/Entschlüsseln..."
+                value={vaultPass}
+                onChange={(e) => setVaultPass(e.target.value)}
+                style={{ width: 320 }}
+              />
+            </div>
+
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">Neues Secret speichern (Persönlich oder Team)</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                <input className="input" placeholder="Key (z. B. github-pat)" value={vaultKey} onChange={(e) => setVaultKey(e.target.value)} />
+                <input className="input" placeholder="Label / URL" value={vaultLabel} onChange={(e) => setVaultLabel(e.target.value)} />
+                <input className="input" type="password" placeholder="Secret / Passwort" value={vaultSecret} onChange={(e) => setVaultSecret(e.target.value)} />
+                <button
+                  className="btn"
+                  onClick={() => {
+                    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*";
+                    const arr = new Uint32Array(24);
+                    crypto.getRandomValues(arr);
+                    setVaultSecret(Array.from(arr, (n) => chars[n % chars.length]).join(""));
+                  }}
+                >
+                  Passwort generieren
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    const res = await fetch(`/v1/me/vault/${encodeURIComponent(vaultKey)}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
+                      body: JSON.stringify({ label: vaultLabel, secret: vaultSecret, passphrase: vaultPass }),
+                    });
+                    if (res.ok) {
+                      setVaultKey("");
+                      setVaultSecret("");
+                      await refreshAll();
+                    } else {
+                      setStatusMsg(`Tresor-Fehler (${res.status}): ${await res.text()}`);
+                    }
+                  }}
+                >
+                  Persönlich speichern
+                </button>
+                <button
+                  className="btn"
+                  onClick={async () => {
+                    const res = await fetch(`/v1/vault/team/${encodeURIComponent(teamGroup)}/${encodeURIComponent(vaultKey)}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
+                      body: JSON.stringify({ label: vaultLabel, secret: vaultSecret, passphrase: vaultPass }),
+                    });
+                    if (res.ok) {
+                      setVaultKey("");
+                      setVaultSecret("");
+                      await refreshAll();
+                    } else {
+                      setStatusMsg(`Team-Tresor-Fehler (${res.status}): ${await res.text()}`);
+                    }
+                  }}
+                >
+                  Im Team ({teamGroup}) speichern
+                </button>
+              </div>
+              {revealedSecret && <pre className="code-block">{revealedSecret}</pre>}
+            </div>
+
+            <div className="grid">
+              <div className="card">
+                <div className="card-title">Mein persönlicher Tresor ({vaultEntries.length})</div>
+                <table className="table">
+                  <thead><tr><th>Key</th><th>Label</th><th>Aktion</th></tr></thead>
+                  <tbody>
+                    {vaultEntries.map((e) => (
+                      <tr key={e.key}>
+                        <td><code>{e.key}</code></td>
+                        <td>{e.label}</td>
+                        <td>
+                          <button
+                            className="btn"
+                            onClick={async () => {
+                              const r = await fetch(`/v1/me/vault/${encodeURIComponent(e.key)}/reveal`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json", ...authHeaders() },
+                                body: JSON.stringify({ passphrase: vaultPass }),
+                              });
+                              setRevealedSecret(await r.text());
+                            }}
+                          >
+                            Entschlüsseln
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="card">
+                <div className="card-title">
+                  Team-Tresor{" "}
+                  <input className="input" value={teamGroup} onChange={(e) => setTeamGroup(e.target.value)} style={{ width: 130, padding: "4px 8px" }} />
+                </div>
+                <table className="table">
+                  <thead><tr><th>Key</th><th>Label</th><th>Aktion</th></tr></thead>
+                  <tbody>
+                    {teamEntries.map((e) => (
+                      <tr key={e.key}>
+                        <td><code>{e.key}</code></td>
+                        <td>{e.label}</td>
+                        <td>
+                          <button
+                            className="btn"
+                            onClick={async () => {
+                              const r = await fetch(`/v1/vault/team/${encodeURIComponent(teamGroup)}/${encodeURIComponent(e.key)}/reveal`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json", ...authHeaders() },
+                                body: JSON.stringify({ passphrase: vaultPass }),
+                              });
+                              setRevealedSecret(await r.text());
+                            }}
+                          >
+                            Entschlüsseln
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </>
         )}
