@@ -10,11 +10,12 @@ import {
   ShieldCheck,
   Terminal,
   Trash2,
+  UserCheck,
   UserX,
   Users,
 } from "lucide-react";
 
-type TabId = "overview" | "users" | "machines" | "policies" | "dns" | "ca" | "audit" | "explorer";
+type TabId = "overview" | "me" | "users" | "machines" | "policies" | "dns" | "ca" | "audit" | "explorer";
 
 interface AuditEvent {
   seq: number;
@@ -76,6 +77,10 @@ export default function App() {
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditValid, setAuditValid] = useState<boolean | null>(null);
   const [enrollPkg, setEnrollPkg] = useState<Record<string, unknown> | null>(null);
+  const [meUser, setMeUser] = useState<(DomainUser & { ssh_public_key?: string }) | null>(null);
+  const [meMachines, setMeMachines] = useState<MachineRecord[]>([]);
+  const [meSshPubkey, setMeSshPubkey] = useState<string>("");
+  const [meSshCert, setMeSshCert] = useState<string>("");
   const [statusMsg, setStatusMsg] = useState<string>("");
 
   // API Explorer state
@@ -113,10 +118,11 @@ export default function App() {
       setRoutes(Array.isArray(r.routes) ? r.routes : []);
 
       if (token.trim()) {
-        const [mRes, uRes, aRes] = await Promise.all([
+        const [mRes, uRes, aRes, meRes] = await Promise.all([
           fetch("/v1/machines", { headers: authHeaders() }),
           fetch("/v1/users", { headers: authHeaders() }),
           fetch("/v1/audit/events?limit=50", { headers: authHeaders() }),
+          fetch("/v1/me", { headers: authHeaders() }),
         ]);
         if (mRes.ok) {
           const mJson = await mRes.json();
@@ -130,6 +136,14 @@ export default function App() {
           const aJson = await aRes.json();
           setAuditEvents(Array.isArray(aJson.events) ? aJson.events : []);
           setAuditValid(typeof aJson.chain_valid === "boolean" ? aJson.chain_valid : null);
+        }
+        if (meRes.ok) {
+          const meJson = await meRes.json();
+          setMeUser(meJson.user ?? null);
+          setMeMachines(Array.isArray(meJson.machines) ? meJson.machines : []);
+          if (meJson.user?.ssh_public_key) {
+            setMeSshPubkey(meJson.user.ssh_public_key);
+          }
         }
       }
     } catch (err) {
@@ -231,6 +245,9 @@ export default function App() {
         <button className={`nav-btn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>
           <Activity size={16} /> Übersicht
         </button>
+        <button className={`nav-btn ${tab === "me" ? "active" : ""}`} onClick={() => setTab("me")}>
+          <UserCheck size={16} /> Mein Konto
+        </button>
         <button className={`nav-btn ${tab === "users" ? "active" : ""}`} onClick={() => setTab("users")}>
           <Users size={16} /> Users &amp; Gruppen
         </button>
@@ -258,6 +275,7 @@ export default function App() {
         <div className="topbar">
           <h1 style={{ margin: 0, fontSize: 22 }}>
             {tab === "overview" && "Infrastruktur-Übersicht"}
+            {tab === "me" && "Mein Konto (Self-Service)"}
             {tab === "users" && "Domänen-Benutzer & Gruppen"}
             {tab === "machines" && "Domänen-Maschinen & Mobile Enrollment"}
             {tab === "policies" && "Signierte Cross-Platform GPOs"}
@@ -329,6 +347,95 @@ export default function App() {
                   /v1/openapi.json
                 </a>
               </p>
+            </div>
+          </>
+        )}
+
+        {tab === "me" && (
+          <>
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">Mein Domänen-Profil</div>
+              {meUser ? (
+                <div>
+                  <p style={{ margin: "4px 0" }}>
+                    <strong>{meUser.display_name}</strong> (<code>{meUser.username}</code>) — {meUser.email}
+                  </p>
+                  <p style={{ margin: "4px 0", color: "var(--muted)" }}>
+                    Gruppen: {meUser.groups.join(", ") || "keine"}
+                  </p>
+                </div>
+              ) : (
+                <p style={{ color: "var(--muted)", margin: 0 }}>
+                  Bitte oben dein <code>sb-auth</code> Token einfügen und Refresh klicken.
+                </p>
+              )}
+            </div>
+
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">OpenSSH Public Key &amp; 8h-Zertifikat</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                <input
+                  className="input"
+                  style={{ flex: 1, minWidth: 260 }}
+                  placeholder="ssh-ed25519 AAAA..."
+                  value={meSshPubkey}
+                  onChange={(e) => setMeSshPubkey(e.target.value)}
+                />
+                <button
+                  className="btn"
+                  onClick={async () => {
+                    const res = await fetch("/v1/me/ssh-key", {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
+                      body: JSON.stringify({ ssh_public_key: meSshPubkey }),
+                    });
+                    if (res.ok) {
+                      await refreshAll();
+                    } else {
+                      setStatusMsg(`SSH-Key Fehler (${res.status}): ${await res.text()}`);
+                    }
+                  }}
+                >
+                  Key speichern
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    const res = await fetch("/v1/me/ssh-cert", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
+                      body: JSON.stringify({ ttl_seconds: 28800 }),
+                    });
+                    const text = await res.text();
+                    setMeSshCert(text);
+                  }}
+                >
+                  8h SSH-Zertifikat holen
+                </button>
+              </div>
+              {meSshCert && <pre className="code-block">{meSshCert}</pre>}
+            </div>
+
+            <div className="card">
+              <div className="card-title">Meine Geräte ({meMachines.length})</div>
+              <table className="table">
+                <thead>
+                  <tr><th>FQDN</th><th>OS</th><th>Mesh IP</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                  {meMachines.map((m) => (
+                    <tr key={m.machine_id}>
+                      <td>{m.fqdn}</td>
+                      <td>{m.os}</td>
+                      <td>{m.mesh_ip}</td>
+                      <td><span className={`badge ${m.revoked ? "badge-err" : "badge-ok"}`}>{m.revoked ? "REVOKED" : "ACTIVE"}</span></td>
+                    </tr>
+                  ))}
+                  {meMachines.length === 0 && (
+                    <tr><td colSpan={4} style={{ color: "var(--muted)" }}>Noch keine eigenen Geräte registriert.</td></tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </>
         )}

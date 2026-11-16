@@ -855,6 +855,177 @@ async fn handle_join_http_connection(
         };
     }
 
+    if (method == "GET" && path == "/v1/me")
+        || (method == "PUT" && path == "/v1/me/ssh-key")
+        || (method == "POST" && path == "/v1/me/ssh-cert")
+    {
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let users_path = base_dir.join("users.json");
+        let mut dir =
+            match crate::directory_users::IdentityDirectory::load_or_create(&users_path, "corp.eu")
+            {
+                Ok(d) => d,
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+                }
+            };
+
+        if method == "GET" && path == "/v1/me" {
+            let Some(user) = dir.users.get(&claims.subject) else {
+                return write_http_json(
+                    stream,
+                    404,
+                    "Not Found",
+                    r#"{"error":"user not found in directory"}"#,
+                )
+                .await;
+            };
+            if !user.enabled {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"user account is disabled"}"#,
+                )
+                .await;
+            }
+            let reg_file = registry_path
+                .map(PathBuf::from)
+                .unwrap_or_else(|| base_dir.join("machines.json"));
+            let machines: Vec<MachineRecord> = fs::read_to_string(&reg_file)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<DomainRegistry>(&raw).ok())
+                .map(|r| {
+                    r.machines
+                        .into_iter()
+                        .filter(|m| m.joined_by == claims.subject)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let json = serde_json::json!({
+                "user": user,
+                "machines": machines,
+            })
+            .to_string();
+            return write_http_json(stream, 200, "OK", &json).await;
+        }
+
+        if method == "PUT" && path == "/v1/me/ssh-key" {
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let payload: serde_json::Value = match serde_json::from_slice(&body) {
+                Ok(v) => v,
+                Err(e) => {
+                    let msg =
+                        serde_json::json!({ "error": format!("Invalid JSON: {e}") }).to_string();
+                    return write_http_json(stream, 400, "Bad Request", &msg).await;
+                }
+            };
+            let raw_key = payload["ssh_public_key"].as_str().unwrap_or("");
+            let validated_key = match sb_core::identity::validate_openssh_pubkey(raw_key) {
+                Ok(k) => k,
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    return write_http_json(stream, 400, "Bad Request", &msg).await;
+                }
+            };
+            let Some(user) = dir.users.get_mut(&claims.subject) else {
+                return write_http_json(
+                    stream,
+                    404,
+                    "Not Found",
+                    r#"{"error":"user not found in directory"}"#,
+                )
+                .await;
+            };
+            if !user.enabled {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"user account is disabled"}"#,
+                )
+                .await;
+            }
+            user.ssh_public_key = Some(validated_key);
+            user.updated_at = Utc::now().to_rfc3339();
+            let updated = user.clone();
+            if let Err(e) = dir.save(&users_path) {
+                let msg = serde_json::json!({ "error": e }).to_string();
+                return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+            }
+            let _ = crate::audit_log::append_audit_event(
+                &base_dir.join("audit.jsonl"),
+                &claims.subject,
+                "user.ssh_key_update",
+                &claims.subject,
+                "ok",
+                serde_json::json!({}),
+            );
+            let json = serde_json::to_string(&updated).map_err(|e| e.to_string())?;
+            return write_http_json(stream, 200, "OK", &json).await;
+        }
+
+        // POST /v1/me/ssh-cert
+        let body =
+            match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines).await? {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+        let req: sb_core::identity::SshUserCertRequest =
+            serde_json::from_slice(&body).unwrap_or(sb_core::identity::SshUserCertRequest {
+                ssh_public_key: None,
+                ttl_seconds: 8 * 3600,
+            });
+        return match dir.issue_user_ssh_cert(
+            &claims.subject,
+            req.ssh_public_key.as_deref(),
+            req.ttl_seconds,
+        ) {
+            Ok(resp) => {
+                let _ = crate::audit_log::append_audit_event(
+                    &base_dir.join("audit.jsonl"),
+                    &claims.subject,
+                    "user.ssh_cert",
+                    &claims.subject,
+                    "ok",
+                    serde_json::json!({ "ttl_seconds": resp.ttl_seconds }),
+                );
+                let json = serde_json::to_string(&resp).map_err(|e| e.to_string())?;
+                write_http_json(stream, 200, "OK", &json).await
+            }
+            Err(e) => {
+                let msg = serde_json::json!({ "error": e }).to_string();
+                write_http_json(stream, 400, "Bad Request", &msg).await
+            }
+        };
+    }
+
     if method == "GET" && (path == "/v1/users" || path == "/v1/groups") {
         let Some(token) = extract_bearer_token(&header_lines) else {
             return write_http_json(
@@ -1669,6 +1840,95 @@ mod tests {
         send_http_request(dc_addr, &del_req).await.unwrap();
         let bundle_after = fetch_remote_policy_bundle(dc_addr).await.unwrap();
         assert!(bundle_after.policies.is_empty());
+
+        let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[tokio::test]
+    async fn self_service_me_endpoints_enforce_auth_and_update_ssh_key() {
+        use sb_auth::crypto::Keypair;
+        use sb_auth::{AuthEngine, MemoryRevocationStore};
+        use sb_core::identity::DomainUser;
+
+        let temp = std::env::temp_dir().join(format!(
+            "sb_node_me_test_{}_{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        let domain_dir = temp.join("domain");
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&domain_dir).unwrap();
+
+        let keypair = Keypair::generate();
+        let store = Arc::new(MemoryRevocationStore::new());
+        let engine = AuthEngine::new(keypair, store.clone());
+        let verifier =
+            Arc::new(AuthVerifier::from_public_base64(&engine.public_key_base64(), store).unwrap());
+
+        let reg_path = domain_dir.join("machines.json");
+        let reg = DomainRegistry {
+            domain: "corp.eu".into(),
+            machines: Vec::new(),
+        };
+        reg.save_to_path(&reg_path).unwrap();
+
+        let users_path = domain_dir.join("users.json");
+        let mut users_dir =
+            crate::directory_users::IdentityDirectory::load_or_create(&users_path, "corp.eu")
+                .unwrap();
+        users_dir
+            .upsert_user(DomainUser {
+                username: "bob.dev".into(),
+                display_name: "Bob Dev".into(),
+                email: "bob@corp.eu".into(),
+                groups: vec!["engineering".into()],
+                ssh_public_key: None,
+                enabled: true,
+                created_at: String::new(),
+                updated_at: String::new(),
+            })
+            .unwrap();
+        users_dir.save(&users_path).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let dc_addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = serve_domain_join_on_listener(listener, verifier, Some(reg_path), false).await;
+        });
+
+        let bob_tokens = engine
+            .issue_session(
+                "bob.dev",
+                vec!["user".into()],
+                vec![],
+                serde_json::json!({}),
+            )
+            .unwrap();
+
+        // GET /v1/me succeeds with Bob's own token
+        let me_req = format!(
+            "GET /v1/me HTTP/1.1\r\nHost: {dc_addr}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
+            bob_tokens.access_token
+        );
+        let me_resp = send_http_request(dc_addr, &me_req).await.unwrap();
+        assert!(String::from_utf8_lossy(&me_resp).contains("bob@corp.eu"));
+
+        // PUT /v1/me/ssh-key updates Bob's key and logs an audit event
+        let key_body = serde_json::json!({
+            "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKeyDataHere123456 bob@corp.eu"
+        })
+        .to_string();
+        let key_req = format!(
+            "PUT /v1/me/ssh-key HTTP/1.1\r\nHost: {dc_addr}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            bob_tokens.access_token,
+            key_body.len(),
+            key_body
+        );
+        let key_resp = send_http_request(dc_addr, &key_req).await.unwrap();
+        assert!(String::from_utf8_lossy(&key_resp).contains("bob@corp.eu"));
+
+        let events = crate::audit_log::read_all_events(&domain_dir.join("audit.jsonl")).unwrap();
+        assert_eq!(events.last().unwrap().action, "user.ssh_key_update");
 
         let _ = fs::remove_dir_all(&temp);
     }

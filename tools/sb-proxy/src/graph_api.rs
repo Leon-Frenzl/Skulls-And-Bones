@@ -105,6 +105,10 @@ async fn handle_graph_request(
     }
 
     // 1. Unified Health & OpenAPI 3.1 Discovery
+    if method == Method::GET && uri_path == "/enroll" {
+        return Ok(html_response(StatusCode::OK, PUBLIC_ENROLL_HTML));
+    }
+
     if method == Method::GET && uri_path == "/v1/health" {
         let body = serde_json::json!({
             "status": "ok",
@@ -214,8 +218,9 @@ async fn handle_graph_request(
         return Ok(json_response(StatusCode::OK, &resp));
     }
 
-    // 4. Upstream DC Forwarding (/v1/machines*, /v1/policies*, /v1/users*, /v1/groups*, /v1/audit*)
-    if uri_path.starts_with("/v1/machines")
+    // 4. Upstream DC Forwarding (/v1/me*, /v1/machines*, /v1/policies*, /v1/users*, /v1/groups*, /v1/audit*)
+    if uri_path.starts_with("/v1/me")
+        || uri_path.starts_with("/v1/machines")
         || uri_path.starts_with("/v1/policies")
         || uri_path.starts_with("/v1/users")
         || uri_path.starts_with("/v1/groups")
@@ -427,6 +432,9 @@ pub fn build_openapi_spec() -> serde_json::Value {
         "paths": {
             "/v1/health": { "get": { "summary": "Gateway & DC upstream health" } },
             "/v1/openapi.json": { "get": { "summary": "OpenAPI 3.1.0 specification" } },
+            "/v1/me": { "get": { "summary": "Self-service profile and joined machines" } },
+            "/v1/me/ssh-key": { "put": { "summary": "Register or update own OpenSSH public key" } },
+            "/v1/me/ssh-cert": { "post": { "summary": "Issue own short-lived OpenSSH user certificate" } },
             "/v1/machines": { "get": { "summary": "List domain-joined machines" } },
             "/v1/machines/join": { "post": { "summary": "Join a machine to the domain" } },
             "/v1/users": { "get": { "summary": "List domain users" } },
@@ -453,6 +461,37 @@ pub fn build_openapi_spec() -> serde_json::Value {
         }
     })
 }
+
+fn html_response(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .header("X-Content-Type-Options", "nosniff")
+        .header("X-Frame-Options", "DENY")
+        .body(Full::new(Bytes::from(body.to_string())))
+        .unwrap()
+}
+
+const PUBLIC_ENROLL_HTML: &str = r#"<!doctype html>
+<html lang="de"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Skulls &amp; Bones — Gerät verbinden</title>
+<style>body{margin:0;font-family:system-ui,sans-serif;background:#0b1113;color:#e6f1f0;display:grid;place-items:center;min-height:100vh}
+.card{background:#121b1e;border:1px solid #24353a;border-radius:12px;padding:24px;max-width:460px;width:92%}
+input,button{width:100%;padding:10px 12px;border-radius:8px;margin-top:10px;font-size:14px;box-sizing:border-box}
+input{background:#0b1113;border:1px solid #24353a;color:#e6f1f0}
+button{background:#52c7bd;color:#062120;border:0;font-weight:700;cursor:pointer}
+pre{background:#080d0e;padding:10px;border-radius:8px;overflow:auto;font-size:12px;display:none}</style></head>
+<body><div class="card"><h2 style="margin-top:0">Gerät mit Domäne verbinden</h2>
+<p style="color:#8ea6aa;font-size:13px">Öffentliches Enrollment-Portal (keine internen Daten sichtbar). Gib dein Einmal-Token ein, um die <code>.sb-enroll</code> Datei herunterzuladen.</p>
+<input id="dom" value="corp.eu" placeholder="Domäne (z. B. corp.eu)"/>
+<input id="tok" type="password" placeholder="Enrollment-Token (sbt....)"/>
+<button onclick="enroll()">.sb-enroll Paket erzeugen &amp; laden</button>
+<pre id="out"></pre></div>
+<script>async function enroll(){const d=document.getElementById('dom').value.trim(),t=document.getElementById('tok').value.trim(),o=document.getElementById('out');
+const r=await fetch('/v1/enrollments',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+t},body:JSON.stringify({domain:d})});
+const j=await r.json();o.style.display='block';o.textContent=JSON.stringify(j,null,2);
+if(r.ok&&j.enrollment_package){const b=new Blob([JSON.stringify(j.enrollment_package,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=d+'.sb-enroll';a.click();}}</script>
+</body></html>"#;
 
 fn json_response(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
     Response::builder()
