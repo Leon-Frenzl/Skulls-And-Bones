@@ -261,7 +261,7 @@ pub async fn publish(
     port: u16,
     gateway_node: &str,
 ) -> Result<(), String> {
-    sb_code::escape::validate_domain(domain)?;
+    sb_proxy::escape::validate_domain(domain)?;
     if !(1024..=65535).contains(&port) {
         return Err("Der Produktionsport muss zwischen 1024 und 65535 liegen.".into());
     }

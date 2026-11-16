@@ -94,7 +94,8 @@ pub fn handle_up(fix: bool, json: bool) {
     let shared_id = SovereignIdentity::load_or_create();
     let mut key_opt = sb_key::inspect_identity(None).ok();
     if key_opt.is_none() {
-        if let Ok(created_key) = sb_key::init_identity(Some(shared_id.callsign.clone()), None, false)
+        if let Ok(created_key) =
+            sb_key::init_identity(Some(shared_id.callsign.clone()), None, false)
         {
             actions.push(format!(
                 "Initialized Sovereign Root Key ({})",
@@ -136,7 +137,10 @@ pub fn handle_up(fix: bool, json: bool) {
     let mut lease_opt = sb_key::get_lease_status();
     if lease_opt.is_none() {
         if let Ok(minted) = sb_key::mint_lease(None, 8) {
-            actions.push(format!("Minted fresh 8h ephemeral RAM lease ({})", minted.lease_id));
+            actions.push(format!(
+                "Minted fresh 8h ephemeral RAM lease ({})",
+                minted.lease_id
+            ));
             lease_opt = Some(minted);
         }
     }
@@ -298,10 +302,7 @@ pub fn handle_up(fix: bool, json: bool) {
     }
 
     if let Some(ref hint) = report.fix_hint {
-        println!(
-            "\n  ► Fix with: {}",
-            hint.bright_cyan().bold()
-        );
+        println!("\n  ► Fix with: {}", hint.bright_cyan().bold());
     }
 
     println!(
@@ -312,9 +313,13 @@ pub fn handle_up(fix: bool, json: bool) {
             "!".bright_yellow().bold()
         },
         if report.ready {
-            "Sovereign Workstation & Session sind vollständig einsatzbereit!".bright_green().bold()
+            "Sovereign Workstation & Session sind vollständig einsatzbereit!"
+                .bright_green()
+                .bold()
         } else {
-            "Einige Komponenten benötigen Aufmerksamkeit ('sb up --fix').".bright_yellow().bold()
+            "Einige Komponenten benötigen Aufmerksamkeit ('sb up --fix')."
+                .bright_yellow()
+                .bold()
         }
     );
 

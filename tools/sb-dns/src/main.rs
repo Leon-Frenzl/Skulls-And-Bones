@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use hickory_proto::op::{Message, MessageType, OpCode, Query};
-use hickory_proto::rr::{DNSClass, Name, RecordType};
+use hickory_proto::rr::{Name, RecordType};
 use sb_dns::client::query_server;
 use sb_dns::config::ConfigManager;
 use sb_dns::os_integration::OsIntegration;
@@ -178,18 +178,11 @@ async fn main() {
                     std::process::exit(2);
                 }
             };
-            let mut question = Query::new();
-            question
-                .set_name(name)
-                .set_query_type(record_type)
-                .set_query_class(DNSClass::IN);
-            let mut request = Message::new();
-            request
-                .set_id(rand::random())
-                .set_message_type(MessageType::Query)
-                .set_op_code(OpCode::Query)
-                .set_recursion_desired(true)
-                .add_query(question);
+            let question = Query::query(name, record_type);
+            let request = Message::new(rand::random(), MessageType::Query, OpCode::Query);
+            let mut request = request;
+            request.metadata.recursion_desired = true;
+            request.add_query(question);
             let target_server = server.unwrap_or_else(|| "127.0.0.1:53".parse().unwrap());
             println!(
                 "\x1b[1;36m[?] Querying {} for '{}' ({:?})...\x1b[0m",
@@ -215,20 +208,18 @@ async fn main() {
                 Ok((from, response)) => {
                     println!(
                         "\x1b[1;32m[âœ“] Response from {} (RCODE: {:?}, Auth: {}):\x1b[0m",
-                        from,
-                        response.response_code(),
-                        response.authoritative()
+                        from, response.metadata.response_code, response.metadata.authoritative
                     );
-                    if response.answers().is_empty() {
+                    if response.answers.is_empty() {
                         println!("    (No answers returned)");
                     } else {
-                        for answer in response.answers() {
+                        for answer in &response.answers {
                             println!(
-                                "    {} \t{} \tIN \t{:?} \t{:?}",
-                                answer.name(),
-                                answer.ttl(),
+                                "{} \t{}\tIN \t{:?} \t{:?}",
+                                answer.name,
+                                answer.ttl,
                                 answer.record_type(),
-                                answer.data()
+                                answer.data
                             );
                         }
                     }

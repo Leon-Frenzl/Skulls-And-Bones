@@ -119,9 +119,9 @@ async fn process_packet(resolver: &DnsResolver, packet: &[u8]) -> Result<Vec<u8>
                 .map_err(|error| format!("DNS response encoding failed: {error}")),
             Ok(Err(error)) => {
                 eprintln!("DNS resolver failed: {error}");
-                error_response(query.id(), ResponseCode::ServFail)
+                error_response(query.id, ResponseCode::ServFail)
             }
-            Err(_) => error_response(query.id(), ResponseCode::ServFail),
+            Err(_) => error_response(query.id, ResponseCode::ServFail),
         },
         Err(error) => {
             if packet.len() >= 2 {
@@ -138,12 +138,8 @@ async fn process_packet(resolver: &DnsResolver, packet: &[u8]) -> Result<Vec<u8>
 }
 
 fn error_response(id: u16, code: ResponseCode) -> Result<Vec<u8>, String> {
-    let mut response = Message::new();
-    response
-        .set_id(id)
-        .set_message_type(MessageType::Response)
-        .set_op_code(OpCode::Query)
-        .set_response_code(code);
+    let mut response = Message::new(id, MessageType::Response, OpCode::Query);
+    response.metadata.response_code = code;
     response
         .to_vec()
         .map_err(|error| format!("DNS error response encoding failed: {error}"))
@@ -154,10 +150,11 @@ fn limit_udp_response(response: Vec<u8>) -> Result<Vec<u8>, String> {
         return Ok(response);
     }
     match Message::from_vec(&response) {
-        Ok(mut message) => {
-            message.set_truncated(true).answers_mut().clear();
-            message.name_servers_mut().clear();
-            message.additionals_mut().clear();
+        Ok(message) => {
+            let mut message = message.truncate();
+            message.answers.clear();
+            message.authorities.clear();
+            message.additionals.clear();
             let truncated = message
                 .to_vec()
                 .map_err(|error| format!("DNS truncated response encoding failed: {error}"))?;
@@ -217,23 +214,17 @@ mod tests {
     use super::*;
     use crate::config::{DnsConfig, RecordsConfig};
     use hickory_proto::op::Query;
-    use hickory_proto::rr::{DNSClass, Name, RecordType};
+    use hickory_proto::rr::{Name, RecordType};
     use std::collections::HashMap;
     use std::net::{Ipv4Addr, SocketAddr};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn query() -> Message {
-        let mut question = Query::new();
-        question
-            .set_name(Name::from_ascii("dns-test.example").unwrap())
-            .set_query_type(RecordType::A)
-            .set_query_class(DNSClass::IN);
-        let mut message = Message::new();
-        message
-            .set_id(452)
-            .set_message_type(MessageType::Query)
-            .set_op_code(OpCode::Query)
-            .add_query(question);
+        let mut message = Message::new(452, MessageType::Query, OpCode::Query);
+        message.add_query(Query::query(
+            Name::from_ascii("dns-test.example").unwrap(),
+            RecordType::A,
+        ));
         message
     }
 
@@ -257,7 +248,7 @@ mod tests {
         .await
         .expect("UDP DNS request should complete")
         .expect("UDP DNS request should succeed");
-        assert_eq!(udp_response.answers().len(), 1);
+        assert_eq!(udp_response.answers.len(), 1);
 
         let mut tcp = tokio::time::timeout(Duration::from_secs(2), TcpStream::connect(addr))
             .await
@@ -277,8 +268,8 @@ mod tests {
         let mut response_bytes = vec![0u8; length];
         tcp.read_exact(&mut response_bytes).await.unwrap();
         let tcp_response = Message::from_vec(&response_bytes).unwrap();
-        assert_eq!(tcp_response.id(), 452);
-        assert_eq!(tcp_response.answers().len(), 1);
+        assert_eq!(tcp_response.id, 452);
+        assert_eq!(tcp_response.answers.len(), 1);
 
         server_task.abort();
     }

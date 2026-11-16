@@ -1799,7 +1799,14 @@ fn read_selected_binaries(
                     "ZIP-Eintrag kann nicht gelesen werden: {error}"
                 ))
             })?;
-            let name = entry.name().to_string();
+            let name = entry
+                .name()
+                .map_err(|error| {
+                    ReleaseError::PackagingError(format!(
+                        "ZIP-Eintrag-Name kann nicht gelesen werden: {error}"
+                    ))
+                })?
+                .to_string();
             if !requested.contains(&name) {
                 continue;
             }
@@ -2737,14 +2744,14 @@ mod tests {
             let name = executable_name(product.binary_name.as_deref().unwrap());
             let bytes = match product.binary_name.as_deref() {
                 Some("sb") => b"binary-sb-v1".as_slice(),
-                Some("sb-drive") => b"binary-drive-v1".as_slice(),
+                Some("sb-dns") => b"binary-dns-v1".as_slice(),
                 _ => b"test-binary".as_slice(),
             };
             fs::write(input.join(name), bytes).unwrap();
         }
 
         let sb_bin = executable_name("sb");
-        let drive_bin = executable_name("sb-drive");
+        let dns_bin = executable_name("sb-dns");
 
         let format = if cfg!(windows) { "zip" } else { "tar.gz" };
         let archive = pack_all_release(
@@ -2765,7 +2772,7 @@ mod tests {
 
         // 3. Install
         install_requested_to_dir(
-            &["sb".to_string(), "drive".to_string()],
+            &["sb".to_string(), "dns".to_string()],
             false,
             &ReleaseSource::LocalDir(dist.clone()),
             &test_public_key,
@@ -2774,7 +2781,7 @@ mod tests {
         .unwrap();
 
         assert!(install_dir.join(&sb_bin).is_file());
-        assert!(install_dir.join(&drive_bin).is_file());
+        assert!(install_dir.join(&dns_bin).is_file());
         assert!(base.join("sb_root").join(INSTALLED_LEDGER_NAME).exists());
 
         // 4. Audit: All verified
@@ -2822,7 +2829,7 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("ist unvollständig"));
-        assert!(error.contains("sb-code"));
+        assert!(error.contains("sb-mesh"));
         assert!(!dist.exists());
         let _ = fs::remove_dir_all(base);
     }
@@ -2955,7 +2962,7 @@ mod tests {
 
         // 5. Install from fetched release
         install_requested_to_dir(
-            &["sb".to_string(), "code".to_string()],
+            &["sb".to_string(), "dns".to_string()],
             false,
             &ReleaseSource::LocalDir(fetched_dir.clone()),
             &test_public_key,
@@ -2964,6 +2971,6 @@ mod tests {
         .expect("installation of fetched release should succeed");
 
         assert!(install_dir.join(executable_name("sb")).is_file());
-        assert!(install_dir.join(executable_name("sb-code")).is_file());
+        assert!(install_dir.join(executable_name("sb-dns")).is_file());
     }
 }

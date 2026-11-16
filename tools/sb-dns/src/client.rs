@@ -1,4 +1,4 @@
-use hickory_proto::op::{Message, MessageType};
+use hickory_proto::op::Message;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -35,7 +35,7 @@ pub async fn query_server(server: SocketAddr, request: &Message) -> Result<Messa
     let response = Message::from_vec(&response_bytes[..length])
         .map_err(|error| format!("DNS response parsing failed: {error}"))?;
     validate_response(request, &response)?;
-    if response.truncated() {
+    if response.truncation {
         return query_server_tcp(server, &request_bytes, request).await;
     }
     Ok(response)
@@ -81,11 +81,10 @@ async fn query_server_tcp(
 }
 
 fn validate_response(request: &Message, response: &Message) -> Result<(), String> {
-    if response.id() != request.id()
-        || response.message_type() != MessageType::Response
-        || response.queries() != request.queries()
-    {
-        return Err("DNS response does not match the outstanding query".to_string());
-    }
-    Ok(())
+    crate::protocol::validate_dns_response(
+        request,
+        response,
+        request.id,
+        "DNS response does not match the outstanding query",
+    )
 }

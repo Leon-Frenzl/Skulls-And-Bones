@@ -202,10 +202,10 @@ impl ContextStore {
         }
         let raw = fs::read_to_string(&forge_toml).ok()?;
         let parsed: toml::Value = toml::from_str(&raw).ok()?;
-        if let Some(ctx_name) = parsed
-            .get("context")
-            .and_then(|c| c.as_str().or_else(|| c.get("name").and_then(|n| n.as_str())))
-        {
+        if let Some(ctx_name) = parsed.get("context").and_then(|c| {
+            c.as_str()
+                .or_else(|| c.get("name").and_then(|n| n.as_str()))
+        }) {
             if !ctx_name.trim().is_empty() {
                 return Some(ctx_name.trim().to_string());
             }

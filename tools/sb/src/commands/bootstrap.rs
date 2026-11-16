@@ -18,15 +18,17 @@
 //! - FIPS 180-4 / IETF RFC 6234 (Secure Hash Standard SHA-256)
 //! - CIS Linux Benchmark Level 2 & BSI IT-Grundschutz SYS.1.1 (Daemon Sandboxing)
 
+use colored::Colorize;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use colored::Colorize;
-use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
 
 use crate::cli::BootstrapArgs;
-use crate::commands::fleet::{is_valid_host, is_valid_nodename, is_valid_username, register_server_in_vault};
+use crate::commands::fleet::{
+    is_valid_host, is_valid_nodename, is_valid_username, register_server_in_vault,
+};
 
 /// Parsed and sanitized SSH target credentials.
 #[derive(Clone, PartialEq, Eq)]
@@ -53,10 +55,7 @@ impl std::fmt::Debug for SshTarget {
             .field("host", &self.host)
             .field("port", &self.port)
             .field("identity", &self.identity)
-            .field(
-                "password",
-                &self.password.as_ref().map(|_| "[REDACTED]"),
-            )
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
             .finish()
     }
 }
@@ -147,7 +146,8 @@ impl SshTransport {
             .or_else(|| which::which("ssh").ok())
             .or_else(|| which::which("ssh.exe").ok())
             .ok_or_else(|| {
-                "Kein SSH-Client gefunden. Bitte 'sb-ssh' oder 'ssh' im Pfad installieren.".to_string()
+                "Kein SSH-Client gefunden. Bitte 'sb-ssh' oder 'ssh' im Pfad installieren."
+                    .to_string()
             })?;
         Ok(Self { target, ssh_bin })
     }
@@ -202,7 +202,10 @@ impl SshTransport {
      */
     pub fn upload(&self, local_path: &Path, remote_path: &str) -> Result<(), String> {
         if !local_path.exists() {
-            return Err(format!("Lokale Datei existiert nicht: {}", local_path.display()));
+            return Err(format!(
+                "Lokale Datei existiert nicht: {}",
+                local_path.display()
+            ));
         }
 
         let mut cmd = Command::new(&self.ssh_bin);
@@ -254,16 +257,23 @@ impl SshTransport {
      * - Applied Mitigation: Compute local SHA-256 via `sha2::Sha256`, execute remote `sha256sum`, and assert bitwise equality.
      * - Standards Compliance: FIPS 180-4 / IETF RFC 6234 (SHA-256).
      */
-    pub fn upload_and_verify(&self, local_path: &Path, remote_path: &str) -> Result<String, String> {
-        let file_bytes = fs::read(local_path)
-            .map_err(|e| format!("Konnte lokale Datei nicht lesen: {e}"))?;
+    pub fn upload_and_verify(
+        &self,
+        local_path: &Path,
+        remote_path: &str,
+    ) -> Result<String, String> {
+        let file_bytes =
+            fs::read(local_path).map_err(|e| format!("Konnte lokale Datei nicht lesen: {e}"))?;
         let expected_hash = hex::encode(Sha256::digest(&file_bytes));
 
         self.upload(local_path, remote_path)?;
 
         let hash_output = self.exec(&format!("sha256sum '{remote_path}' | awk '{{print $1}}'"))?;
         if !hash_output.success {
-            return Err(format!("Remote sha256sum fehlgeschlagen: {}", hash_output.stderr));
+            return Err(format!(
+                "Remote sha256sum fehlgeschlagen: {}",
+                hash_output.stderr
+            ));
         }
 
         let actual_hash = hash_output.stdout.trim().to_lowercase();
@@ -295,7 +305,10 @@ impl SshTransport {
             "mkdir -m 0700 -p '{remote_dir}' && test -d '{remote_dir}' && ! test -L '{remote_dir}'"
         ))?;
         if !res.success {
-            return Err(format!("Konnte Remote-Staging-Verzeichnis nicht anlegen: {}", res.stderr));
+            return Err(format!(
+                "Konnte Remote-Staging-Verzeichnis nicht anlegen: {}",
+                res.stderr
+            ));
         }
 
         Ok(remote_dir)
@@ -332,7 +345,10 @@ impl SshTransport {
  */
 pub fn validate_admin_username(admin: &str) -> Result<(), String> {
     if admin.eq_ignore_ascii_case("root") {
-        return Err("Der dedizierte Admin-Benutzer darf nicht 'root' sein (Least-Privilege-Prinzip).".to_string());
+        return Err(
+            "Der dedizierte Admin-Benutzer darf nicht 'root' sein (Least-Privilege-Prinzip)."
+                .to_string(),
+        );
     }
     if !is_valid_username(admin) {
         return Err(format!(
@@ -363,7 +379,9 @@ pub fn resolve_ca_public_key(ca_key_arg: Option<&str>) -> Result<String, String>
             || trimmed.contains('"')
             || trimmed.contains('\n')
             || trimmed.contains('\r')
-            || !trimmed.chars().all(|c| c.is_ascii_alphanumeric() || " +/=@.-_".contains(c))
+            || !trimmed
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || " +/=@.-_".contains(c))
         {
             return Err("Ungültiger Swarm-CA Key: Enthält unzulässige Zeichen oder Zeilenumbrüche (RFC 4251 / OpenSSH Format erforderlich).".to_string());
         }
@@ -390,8 +408,9 @@ pub fn resolve_ca_public_key(ca_key_arg: Option<&str>) -> Result<String, String>
     }
 
     // Fallback to fleet helper
-    let key = crate::commands::fleet::get_or_detect_ca_pubkey()
-        .map_err(|e| format!("Konnte Swarm-CA Public Key weder über sb-ca noch lokal ermitteln: {e}"))?;
+    let key = crate::commands::fleet::get_or_detect_ca_pubkey().map_err(|e| {
+        format!("Konnte Swarm-CA Public Key weder über sb-ca noch lokal ermitteln: {e}")
+    })?;
     validate_key(&key)
 }
 
@@ -421,16 +440,26 @@ pub fn resolve_pairing_token(
             || clean.contains('\n')
             || clean.contains('\r')
         {
-            return Err("Ungültiges Pairing-Token: Enthält unzulässige Metazeichen oder Zeilenumbrüche.".to_string());
+            return Err(
+                "Ungültiges Pairing-Token: Enthält unzulässige Metazeichen oder Zeilenumbrüche."
+                    .to_string(),
+            );
         }
         if !clean.starts_with("sbm-pair://") {
-            return Err("Ungültiges Pairing-Token: Format muss mit 'sbm-pair://' beginnen.".to_string());
+            return Err(
+                "Ungültiges Pairing-Token: Format muss mit 'sbm-pair://' beginnen.".to_string(),
+            );
         }
         let payload_part = &clean["sbm-pair://".len()..];
         if payload_part.is_empty()
-            || !payload_part.chars().all(|c| c.is_ascii_alphanumeric() || "+/=-_".contains(c))
+            || !payload_part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "+/=-_".contains(c))
         {
-            return Err("Ungültiges Pairing-Token: Format muss 'sbm-pair://<base64>' entsprechen.".to_string());
+            return Err(
+                "Ungültiges Pairing-Token: Format muss 'sbm-pair://<base64>' entsprechen."
+                    .to_string(),
+            );
         }
         crate::commands::fleet::parse_pairing_token(clean)
             .map_err(|e| format!("Ungültiges Pairing-Token: {e}"))?;
@@ -877,56 +906,115 @@ pub fn handle_node_bootstrap(mut args: BootstrapArgs) -> Result<(), String> {
             "[DRY-RUN SIMULATION]".bright_yellow()
         );
         println!("{}", "═".repeat(80).bright_cyan());
-        println!("  {:<24} {}", "Target:", target.target_string().bright_green().bold());
-        println!("  {:<24} {}", "Port:", target.port.to_string().bright_white());
-        println!("  {:<24} {}", "Admin User:", args.admin.bright_yellow().bold());
-        println!("  {:<24} {}", "Node Callsign:", node_name.bright_cyan().bold());
+        println!(
+            "  {:<24} {}",
+            "Target:",
+            target.target_string().bright_green().bold()
+        );
+        println!(
+            "  {:<24} {}",
+            "Port:",
+            target.port.to_string().bright_white()
+        );
+        println!(
+            "  {:<24} {}",
+            "Admin User:",
+            args.admin.bright_yellow().bold()
+        );
+        println!(
+            "  {:<24} {}",
+            "Node Callsign:",
+            node_name.bright_cyan().bold()
+        );
         println!("  {:<24} {}.sbm", "Mesh Domain:", node_name.bright_green());
-        println!("  {:<24} {}", "Mesh Networks:", meshes.join(", ").bright_white());
+        println!(
+            "  {:<24} {}",
+            "Mesh Networks:",
+            meshes.join(", ").bright_white()
+        );
         println!("  {:<24} {}", "Swarm CA Key:", ca_pubkey.bright_black());
-        println!("  {:<24} {}", "Pairing Token:", pairing_token.bright_black());
+        println!(
+            "  {:<24} {}",
+            "Pairing Token:",
+            pairing_token.bright_black()
+        );
         if args.force {
-            println!("  {:<24} {}", "Force Overwrite:", "Aktiv (erzwungen)".bright_red().bold());
+            println!(
+                "  {:<24} {}",
+                "Force Overwrite:",
+                "Aktiv (erzwungen)".bright_red().bold()
+            );
         }
         println!();
 
         println!("{}", "--- Phase 1: Pre-Flight Probe ---".bold());
         println!("  [Plan] Probe target host OS (Linux), CPU architecture, UID, and disk space.");
-        println!("  [Plan] Test pre-existing sshd configuration with `sshd -t` (fail-closed if broken).");
+        println!(
+            "  [Plan] Test pre-existing sshd configuration with `sshd -t` (fail-closed if broken)."
+        );
         println!();
 
-        println!("{}", "--- Phase 2: Staging Upload & SHA-256 Integrity Verification ---".bold());
+        println!(
+            "{}",
+            "--- Phase 2: Staging Upload & SHA-256 Integrity Verification ---".bold()
+        );
         println!("  [Plan] Create isolated staging directory: /tmp/.sb-staging-<uuid> (POSIX mode 0700).");
         println!("  [Plan] Upload runner script and binaries via SFTP with SHA-256 checksum verification.");
         println!();
 
-        println!("{}", "--- Phase 3: OpenSSH Swarm-CA Anchoring & Rollback ---".bold());
+        println!(
+            "{}",
+            "--- Phase 3: OpenSSH Swarm-CA Anchoring & Rollback ---".bold()
+        );
         println!("  [Plan] Create transaction snapshot in /etc/ssh/.sb-backup-<timestamp>_$$/");
         println!("  [Plan] Safely disable /etc/ssh/sshd_config.d/50-cloud-init.conf (preserve original settings).");
         println!("  [Plan] Append Swarm-CA public key to /etc/ssh/trusted_user_ca_keys (0644).");
         println!("  [Plan] Deploy /etc/ssh/sshd_config.d/99-sb-ca.conf with RFC 4251 & PROTOCOL.certkeys trust settings.");
-        println!("  [Plan] Validate configuration via `sshd -t` (auto-rollback on syntax failure).");
+        println!(
+            "  [Plan] Validate configuration via `sshd -t` (auto-rollback on syntax failure)."
+        );
         println!("  [Plan] Graceful SIGHUP reload of ssh daemon (`systemctl reload ssh || systemctl reload sshd`).");
         println!();
 
-        println!("{}", "--- Phase 4: Dedicated Admin User & Sudoers Hardening ---".bold());
-        println!("  [Plan] Create unprivileged admin user '{}' with home directory and .ssh layout.", args.admin);
+        println!(
+            "{}",
+            "--- Phase 4: Dedicated Admin User & Sudoers Hardening ---".bold()
+        );
+        println!(
+            "  [Plan] Create unprivileged admin user '{}' with home directory and .ssh layout.",
+            args.admin
+        );
         println!("  [Plan] Copy authorized keys from root for break-glass access.");
-        println!("  [Plan] Stage /etc/sudoers.d/90-sb-{}.tmp (POSIX mode 0440).", args.admin);
+        println!(
+            "  [Plan] Stage /etc/sudoers.d/90-sb-{}.tmp (POSIX mode 0440).",
+            args.admin
+        );
         println!("  [Plan] Pre-validate sudoers syntax via `visudo -cf` before activating.");
         println!();
 
-        println!("{}", "--- Phase 5: Sandboxed Systemd Service Deployment ---".bold());
+        println!(
+            "{}",
+            "--- Phase 5: Sandboxed Systemd Service Deployment ---".bold()
+        );
         println!("  [Plan] Deploy /etc/systemd/system/sb-node.service with CIS Benchmark Level 2 sandboxing.");
         println!("  [Plan] Reload systemd daemon, enable and restart sb-node service.");
         println!("  [Plan] Verify active service state and UDP port 58888 dispatcher binding.");
         println!();
 
-        println!("{}", "--- Phase 6: Mesh Onboarding & Vault Registration ---".bold());
-        println!("  [Plan] Execute `sudo -u {} /usr/local/bin/sb-node init --token <token>`.", args.admin);
+        println!(
+            "{}",
+            "--- Phase 6: Mesh Onboarding & Vault Registration ---".bold()
+        );
+        println!(
+            "  [Plan] Execute `sudo -u {} /usr/local/bin/sb-node init --token <token>`.",
+            args.admin
+        );
         println!("  [Plan] Register target server in local vault (~/.sb/servers.toml).");
         println!("{}", "═".repeat(80).bright_cyan());
-        println!("  {} Dry-run completed successfully. No remote changes were made.", "✓".bright_green().bold());
+        println!(
+            "  {} Dry-run completed successfully. No remote changes were made.",
+            "✓".bright_green().bold()
+        );
         return Ok(());
     }
 
@@ -938,21 +1026,41 @@ pub fn handle_node_bootstrap(mut args: BootstrapArgs) -> Result<(), String> {
         "[6-PHASE PROVISIONING]".bright_green()
     );
     println!("{}", "═".repeat(80).bright_cyan());
-    println!("  {:<24} {}", "Target:", target.target_string().bright_green().bold());
-    println!("  {:<24} {}", "Port:", target.port.to_string().bright_white());
-    println!("  {:<24} {}", "Admin User:", args.admin.bright_yellow().bold());
+    println!(
+        "  {:<24} {}",
+        "Target:",
+        target.target_string().bright_green().bold()
+    );
+    println!(
+        "  {:<24} {}",
+        "Port:",
+        target.port.to_string().bright_white()
+    );
+    println!(
+        "  {:<24} {}",
+        "Admin User:",
+        args.admin.bright_yellow().bold()
+    );
     println!("  {:<24} {}.sbm", "Mesh Domain:", node_name.bright_green());
     println!();
 
     let transport = SshTransport::new(target.clone())?;
 
     // Phase 1: Pre-Flight Probe
-    println!("  {} Phase 1: Pre-flight system probe...", "►".bright_cyan());
+    println!(
+        "  {} Phase 1: Pre-flight system probe...",
+        "►".bright_cyan()
+    );
     let probe = transport.exec("uname -s; uname -m; id -u")?;
     if !probe.success {
         return Err(format!("Pre-Flight Probe fehlgeschlagen: {}", probe.stderr));
     }
-    let lines: Vec<&str> = probe.stdout.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = probe
+        .stdout
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
     if lines.is_empty() || lines[0] != "Linux" {
         return Err(format!("Zielsystem ist kein Linux: {}", probe.stdout));
     }
@@ -960,7 +1068,10 @@ pub fn handle_node_bootstrap(mut args: BootstrapArgs) -> Result<(), String> {
     println!("    System: Linux ({arch}), SSH Connectivity: OK");
 
     // Phase 2: Staging Upload & SHA-256 Integrity Check
-    println!("  {} Phase 2: Creating isolated remote staging environment...", "►".bright_cyan());
+    println!(
+        "  {} Phase 2: Creating isolated remote staging environment...",
+        "►".bright_cyan()
+    );
     let staging_dir = transport.create_staging_dir()?;
     println!("    Staging Directory: {}", staging_dir.bright_black());
 
@@ -992,7 +1103,8 @@ pub fn handle_node_bootstrap(mut args: BootstrapArgs) -> Result<(), String> {
         &staging_dir,
         uploaded_bin_name.as_deref(),
     );
-    let local_runner_tmp = std::env::temp_dir().join(format!("sb_runner_{:032x}.sh", rand::random::<u128>()));
+    let local_runner_tmp =
+        std::env::temp_dir().join(format!("sb_runner_{:032x}.sh", rand::random::<u128>()));
     fs::write(&local_runner_tmp, runner_script.as_bytes())
         .map_err(|e| format!("Konnte lokales Runner-Skript nicht schreiben: {e}"))?;
 
@@ -1004,7 +1116,10 @@ pub fn handle_node_bootstrap(mut args: BootstrapArgs) -> Result<(), String> {
     let _ = transport.exec(&format!("chmod 0700 '{remote_runner_path}'"));
 
     // Phase 3-6: Execute Runner Script
-    println!("  {} Executing provisioning phases 3 through 6...", "►".bright_cyan());
+    println!(
+        "  {} Executing provisioning phases 3 through 6...",
+        "►".bright_cyan()
+    );
     let run_res = transport.exec(&format!("bash '{remote_runner_path}'"))?;
 
     // Print remote output
@@ -1018,7 +1133,10 @@ pub fn handle_node_bootstrap(mut args: BootstrapArgs) -> Result<(), String> {
         eprintln!("  {} Remote-Fehler beim Bootstrap:", "✗".bright_red());
         eprintln!("{}", run_res.stderr.bright_red());
         let _ = transport.cleanup_staging_dir(&staging_dir);
-        return Err(format!("Bootstrap auf Zielserver mit Exit-Code {} fehlgeschlagen.", run_res.exit_code));
+        return Err(format!(
+            "Bootstrap auf Zielserver mit Exit-Code {} fehlgeschlagen.",
+            run_res.exit_code
+        ));
     }
 
     // Clean up staging directory
@@ -1031,20 +1149,46 @@ pub fn handle_node_bootstrap(mut args: BootstrapArgs) -> Result<(), String> {
     println!("{}", "═".repeat(80).bright_green());
     println!(
         "  {} {}",
-        "✓ NODE BOOTSTRAP ERFOLGREICH ABGESCHLOSSEN".bold().bright_green(),
+        "✓ NODE BOOTSTRAP ERFOLGREICH ABGESCHLOSSEN"
+            .bold()
+            .bright_green(),
         format!("[{node_name}]").bright_white()
     );
     println!("{}", "═".repeat(80).bright_green());
     println!("  {:<24} {}", "Server:", target.host.bright_white().bold());
-    println!("  {:<24} {}", "Admin-Benutzer:", args.admin.bright_yellow().bold());
-    println!("  {:<24} {}", "Swarm-CA Status:", "Verankert & Aktiv".bright_green().bold());
-    println!("  {:<24} {}", "Systemd Daemon:", "sb-node.service (aktiv)".bright_green());
-    println!("  {:<24} {}.sbm", "Mesh-Domain:", node_name.bright_cyan().bold());
+    println!(
+        "  {:<24} {}",
+        "Admin-Benutzer:",
+        args.admin.bright_yellow().bold()
+    );
+    println!(
+        "  {:<24} {}",
+        "Swarm-CA Status:",
+        "Verankert & Aktiv".bright_green().bold()
+    );
+    println!(
+        "  {:<24} {}",
+        "Systemd Daemon:",
+        "sb-node.service (aktiv)".bright_green()
+    );
+    println!(
+        "  {:<24} {}.sbm",
+        "Mesh-Domain:",
+        node_name.bright_cyan().bold()
+    );
     println!();
     println!("  {} Verbindung testen:", "i".bright_cyan());
-    println!("    {}", format!("sb ssh {}@{}.sbm", args.admin, node_name).bright_yellow().bold());
+    println!(
+        "    {}",
+        format!("sb ssh {}@{}.sbm", args.admin, node_name)
+            .bright_yellow()
+            .bold()
+    );
     println!("  Oder über IP-Adresse:");
-    println!("    {}", format!("sb ssh {}@{}", args.admin, target.host).bright_black());
+    println!(
+        "    {}",
+        format!("sb ssh {}@{}", args.admin, target.host).bright_black()
+    );
     println!();
 
     Ok(())
@@ -1059,8 +1203,8 @@ fn defer_zeroize(opt: &mut Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
     use crate::cli::{Cli, Commands, NodeAction};
+    use clap::Parser;
 
     #[test]
     fn test_ssh_target_parsing_valid() {
@@ -1071,7 +1215,8 @@ mod tests {
         assert_eq!(t1.target_string(), "root@145.223.83.235");
         assert!(t1.password.is_none());
 
-        let t2 = SshTarget::parse("145.223.83.235", 2222, None, Some("secret123".to_string())).unwrap();
+        let t2 =
+            SshTarget::parse("145.223.83.235", 2222, None, Some("secret123".to_string())).unwrap();
         assert_eq!(t2.user, "root");
         assert_eq!(t2.host, "145.223.83.235");
         assert_eq!(t2.port, 2222);
@@ -1191,7 +1336,9 @@ mod tests {
         assert!(script.contains("([ -e /etc/ssh/sshd_config.d/99-sb-ca.conf ] || [ -L /etc/ssh/sshd_config.d/99-sb-ca.conf ]) && cp -a /etc/ssh/sshd_config.d/99-sb-ca.conf"));
         assert!(script.contains("([ -e /etc/ssh/sshd_config.d/99-sbm.conf ] || [ -L /etc/ssh/sshd_config.d/99-sbm.conf ]) && cp -a /etc/ssh/sshd_config.d/99-sbm.conf"));
         assert!(script.contains("rm -f /etc/ssh/sshd_config.d/99-sb-ca.conf"));
-        assert!(script.contains("if [ -e \"$B/99-sb-ca.conf\" ] || [ -L \"$B/99-sb-ca.conf\" ]; then"));
+        assert!(
+            script.contains("if [ -e \"$B/99-sb-ca.conf\" ] || [ -L \"$B/99-sb-ca.conf\" ]; then")
+        );
         assert!(script.contains("cp -a \"$B/99-sb-ca.conf\" /etc/ssh/sshd_config.d/99-sb-ca.conf"));
         assert!(script.contains("rm -f /etc/ssh/sshd_config.d/99-sbm.conf"));
         assert!(script.contains("if [ -e \"$B/99-sbm.conf\" ] || [ -L \"$B/99-sbm.conf\" ]; then"));
@@ -1202,7 +1349,9 @@ mod tests {
         assert!(script.contains("systemctl reload ssh"));
 
         // Phase 6 onboarding and daemon restart assertions
-        assert!(script.contains("sudo -u \"$ADMIN\" /usr/local/bin/sb-node init --token 'sbm-pair://testtoken'"));
+        assert!(script.contains(
+            "sudo -u \"$ADMIN\" /usr/local/bin/sb-node init --token 'sbm-pair://testtoken'"
+        ));
         assert!(script.contains("systemctl restart sb-node 2>/dev/null || true"));
         assert!(script.contains("sb-mesh bootstrap --headless -n \"dev\""));
         assert!(script.contains("sb-mesh bootstrap --headless -n \"prod\""));
@@ -1210,7 +1359,14 @@ mod tests {
 
     #[test]
     fn test_cli_parsing_node_bootstrap_dry_run() {
-        let cli = Cli::try_parse_from(["sb", "node", "bootstrap", "root@145.223.83.235", "--dry-run"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "sb",
+            "node",
+            "bootstrap",
+            "root@145.223.83.235",
+            "--dry-run",
+        ])
+        .unwrap();
         match cli.command {
             Some(Commands::Node {
                 action: Some(NodeAction::Bootstrap(args)),
@@ -1300,7 +1456,8 @@ mod tests {
     #[test]
     fn test_resolve_pairing_token_validation() {
         let ca_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI test-ca";
-        let valid_token = crate::commands::fleet::build_pairing_token("sbm-swarm-default", "node-1", ca_key);
+        let valid_token =
+            crate::commands::fleet::build_pairing_token("sbm-swarm-default", "node-1", ca_key);
 
         // Valid token passes
         assert!(resolve_pairing_token(Some(&valid_token), "node-1", ca_key).is_ok());
@@ -1316,9 +1473,14 @@ mod tests {
         assert!(resolve_pairing_token(Some("http://evil.com/token"), "node-1", ca_key).is_err());
 
         // Injection attacks rejected
-        assert!(resolve_pairing_token(Some("sbm-pair://abc'; rm -rf /; echo '"), "node-1", ca_key).is_err());
+        assert!(
+            resolve_pairing_token(Some("sbm-pair://abc'; rm -rf /; echo '"), "node-1", ca_key)
+                .is_err()
+        );
         assert!(resolve_pairing_token(Some("sbm-pair://abc\nreboot"), "node-1", ca_key).is_err());
-        assert!(resolve_pairing_token(Some("sbm-pair://abc\" && whoami"), "node-1", ca_key).is_err());
+        assert!(
+            resolve_pairing_token(Some("sbm-pair://abc\" && whoami"), "node-1", ca_key).is_err()
+        );
         assert!(resolve_pairing_token(Some("sbm-pair://abc $(reboot)"), "node-1", ca_key).is_err());
     }
 
@@ -1340,7 +1502,11 @@ mod tests {
 
         // Valid meshes
         let mut ok_args = base_args.clone();
-        ok_args.mesh = vec!["dev".to_string(), "prod_1".to_string(), "alpha-mesh".to_string()];
+        ok_args.mesh = vec![
+            "dev".to_string(),
+            "prod_1".to_string(),
+            "alpha-mesh".to_string(),
+        ];
         assert!(handle_node_bootstrap(ok_args).is_ok());
 
         // Malicious injection meshes rejected

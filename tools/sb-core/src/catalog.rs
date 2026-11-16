@@ -199,12 +199,12 @@ mod tests {
                 || product.package_name == "sb-ssh"
                 || product.package_name == "sb-vault"
         }));
-        assert_eq!(all.len(), 15);
+        assert_eq!(all.len(), 9);
         assert_eq!(
             all.iter()
                 .filter(|product| product.maturity == ProductMaturity::Releasevalidated)
                 .count(),
-            15
+            9
         );
         assert!(all.iter().filter(|p| p.maturity == ProductMaturity::Releasevalidated).all(|product| {
             !product.release_evidence.is_empty()
@@ -213,13 +213,13 @@ mod tests {
         assert_eq!(ca_product.maturity, ProductMaturity::Releasevalidated);
         assert!(!ca_product.release_evidence.is_empty());
 
-        assert_eq!(installable.len(), 12);
+        assert_eq!(installable.len(), 8);
         assert_eq!(
             installable
                 .iter()
                 .filter(|product| product.maturity == ProductMaturity::Releasevalidated)
                 .count(),
-            12
+            8
         );
         assert!(installable.iter().all(|product| {
             product.binary_name.is_some()

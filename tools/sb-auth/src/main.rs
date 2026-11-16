@@ -18,6 +18,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Initialisiert ~/.sb/auth/ (Ed25519 Keypair + Public Key + Revocation Store) für sb-auth und sb-proxy
+    Init {
+        /// Überschreibt bestehende Schlüssel in ~/.sb/auth/
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Generiert ein neues kryptografisches Ed25519-Schlüsselpaar
     Keygen {
         #[arg(short, long, help = "Optionaler Pfad zum Speichern des Secret Keys")]
@@ -273,6 +280,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Init { force } => {
+            let auth_dir = dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".sb")
+                .join("auth");
+            std::fs::create_dir_all(&auth_dir)?;
+            let key_path = auth_dir.join("auth.key");
+            let pub_path = auth_dir.join("auth.pub");
+            let rev_path = auth_dir.join("revocations.json");
+
+            if key_path.exists() && !force {
+                return Err(format!(
+                    "Auth-Schlüssel existiert bereits unter {}. Nutze --force zum Überschreiben.",
+                    key_path.display()
+                )
+                .into());
+            }
+
+            let keypair = Keypair::generate();
+            std::fs::write(&key_path, keypair.to_secret_base64())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
+            }
+            std::fs::write(&pub_path, keypair.to_public_base64())?;
+            let _store = FileRevocationStore::open(&rev_path)?;
+
+            println!(
+                "{}",
+                "═══ S&B AUTH // INITIALISIERT ═══".bright_cyan().bold()
+            );
+            println!("  ► Key ID (KID):    {}", keypair.key_id.yellow());
+            println!(
+                "  ► Secret Key:      {}",
+                key_path.display().to_string().bright_black()
+            );
+            println!(
+                "  ► Public Key:      {}",
+                pub_path.display().to_string().green()
+            );
+            println!(
+                "  ► Revocation DB:   {}",
+                rev_path.display().to_string().cyan()
+            );
+        }
+
         Commands::Keygen { out } => {
             let keypair = Keypair::generate();
             let secret_b64 = keypair.to_secret_base64();
@@ -307,10 +361,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 let keypair = if let Some(sk) = secret_key {
                     Keypair::from_secret_base64(&sk)?
+                } else if let Some(default_key) = dirs::home_dir()
+                    .map(|h| h.join(".sb").join("auth").join("auth.key"))
+                    .filter(|p| p.exists())
+                {
+                    let sk = std::fs::read_to_string(&default_key)?;
+                    Keypair::from_secret_base64(sk.trim())?
                 } else {
                     let kp = Keypair::generate();
                     eprintln!(
-                        "  {} Kein Secret Key übergeben — verwende temporären Schlüssel.",
+                        "  {} Kein Secret Key übergeben — verwende temporären Schlüssel (Tipp: 'sb-auth init').",
                         "i".bright_yellow()
                     );
                     eprintln!(
@@ -617,10 +677,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .bright_cyan()
                     .bold()
             );
-            println!(
-                "  ► Sovereign Home:  {}",
-                status.sb_home.bright_black()
-            );
+            println!("  ► Sovereign Home:  {}", status.sb_home.bright_black());
             match (&status.identity_callsign, &status.node_fingerprint) {
                 (Some(callsign), Some(fp)) => {
                     println!(
@@ -669,7 +726,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 status.revocation_db_path.bright_black()
             );
-            if status.identity_callsign.is_none() || !status.ssh_ca_active || !status.x509_ca_active {
+            if status.identity_callsign.is_none() || !status.ssh_ca_active || !status.x509_ca_active
+            {
                 println!(
                     "  ► Fix with:        {}",
                     "sb up --fix".bright_cyan().bold()

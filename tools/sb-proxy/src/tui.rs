@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
     Terminal,
 };
-use sb_code::escape::{verify_domain_dns, EscapeSpaceStore, EscapeStatus};
+use crate::escape::{verify_domain_dns, EscapeSpaceStore, EscapeStatus};
 use std::io;
 use std::time::Duration;
 

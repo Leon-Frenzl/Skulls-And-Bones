@@ -23,7 +23,7 @@
 //! ```
 
 use colored::Colorize;
-use sb_code::escape::SovereignTunnelClient;
+use crate::escape::SovereignTunnelClient;
 use std::process::Command as StdCommand;
 use std::sync::atomic::Ordering;
 use std::time::Duration;

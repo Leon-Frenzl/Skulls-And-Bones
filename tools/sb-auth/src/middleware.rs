@@ -1,5 +1,5 @@
 use crate::claims::SovereignClaims;
-use crate::engine::AuthEngine;
+use crate::engine::{AuthEngine, AuthVerifier};
 use crate::error::AuthError;
 
 /// Extrahiert einen Bearer-Token aus einem HTTP Authorization Header (z. B. "Bearer sbt....")
@@ -44,4 +44,15 @@ pub fn authorize_header(
 ) -> Result<SovereignClaims, AuthError> {
     let token = extract_bearer_token(header_value)?;
     engine.authorize(token, required_role, required_capability)
+}
+
+/// Extrahiert, verifiziert und autorisiert einen Token mittels eines Public-Key-Only `AuthVerifier`
+pub fn authorize_header_with_verifier(
+    verifier: &AuthVerifier,
+    header_value: &str,
+    required_role: Option<&str>,
+    required_capability: Option<&str>,
+) -> Result<SovereignClaims, AuthError> {
+    let token = extract_bearer_token(header_value)?;
+    verifier.authorize(token, required_role, required_capability)
 }

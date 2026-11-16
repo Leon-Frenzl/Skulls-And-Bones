@@ -499,7 +499,8 @@ fn check_mesh_socket() -> DiagnosticCheck {
 fn check_tool_integrity(fix: bool) -> DiagnosticCheck {
     let bin_dir = get_sb_dir().join("bin");
     let audit = crate::commands::release::audit_installed_binaries(&bin_dir);
-    let all_installable = sb_core::catalog::installable_products().unwrap_or_else(|_| available_tools());
+    let all_installable =
+        sb_core::catalog::installable_products().unwrap_or_else(|_| available_tools());
     let total = all_installable.len();
     let mut installed_count = audit.total_installed;
 
@@ -755,7 +756,9 @@ fn check_developer_ca(fix: bool) -> DiagnosticCheck {
                 issues: 1,
                 fixed: 1,
                 advice: None,
-                items: vec!["[AUTO-FIX] Developer Root-CA im OS-Zertifikatsmagazin verankert".to_string()],
+                items: vec![
+                    "[AUTO-FIX] Developer Root-CA im OS-Zertifikatsmagazin verankert".to_string(),
+                ],
             }
         } else {
             let advice = if fix {
@@ -806,7 +809,9 @@ fn check_developer_ca(fix: bool) -> DiagnosticCheck {
             level: DiagnosticLevel::Warning,
             issues: 1,
             fixed: 0,
-            advice: Some("Initialisiere Developer CA mit: sb-ca init && sb-ca install-root".to_string()),
+            advice: Some(
+                "Initialisiere Developer CA mit: sb-ca init && sb-ca install-root".to_string(),
+            ),
             items: Vec::new(),
         }
     }

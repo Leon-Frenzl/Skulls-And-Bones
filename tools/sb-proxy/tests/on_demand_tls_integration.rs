@@ -5,7 +5,7 @@
 //! - Conforms to IETF RFC 8446 (TLS 1.3)
 //! - Conforms to IETF RFC 6066 §3 (TLS Server Name Indication)
 
-use sb_code::escape::{EscapeSpace, EscapeSpaceStore, EscapeStatus};
+use sb_proxy::escape::{EscapeSpace, EscapeSpaceStore, EscapeStatus};
 use sb_proxy::ca::DeveloperCa;
 use sb_proxy::proxy::DynamicSniResolver;
 use std::sync::{Arc, RwLock};
@@ -44,7 +44,10 @@ async fn test_on_demand_tls_resolution_and_in_memory_caching() {
 
     // Request 1: Dynamic on-demand issuance
     let cert1 = resolver.resolve_for_server_name(&test_domain);
-    assert!(cert1.is_some(), "Dynamic on-demand resolution for .sbm must succeed");
+    assert!(
+        cert1.is_some(),
+        "Dynamic on-demand resolution for .sbm must succeed"
+    );
     assert!(
         resolver.is_cached(&test_domain),
         "Domain must be cached in in-memory RAM cache"
@@ -86,9 +89,15 @@ fn test_ineligible_domains_do_not_trigger_on_demand_generation() {
     assert!(DeveloperCa::find_dev_certificate(&ineligible).is_none());
 
     // Adversarial inputs: path traversals and control characters
-    assert!(resolver.resolve_for_server_name("../../etc/shadow").is_none());
-    assert!(resolver.resolve_for_server_name("attack\0domain.sbm").is_none());
-    assert!(resolver.resolve_for_server_name("..\\windows\\system32").is_none());
+    assert!(resolver
+        .resolve_for_server_name("../../etc/shadow")
+        .is_none());
+    assert!(resolver
+        .resolve_for_server_name("attack\0domain.sbm")
+        .is_none());
+    assert!(resolver
+        .resolve_for_server_name("..\\windows\\system32")
+        .is_none());
 }
 
 #[tokio::test]
@@ -119,6 +128,9 @@ async fn test_active_route_dynamic_tls_issuance() {
             is_tunnel: false,
             tunnel_peer: None,
             static_root: None,
+            auth_required: false,
+            required_role: None,
+            required_capability: None,
         }],
     };
     let routes = Arc::new(RwLock::new(store));
@@ -126,12 +138,18 @@ async fn test_active_route_dynamic_tls_issuance() {
 
     // Primary domain resolution
     let cert = resolver.resolve_for_server_name(&route_domain);
-    assert!(cert.is_some(), "Active route must be eligible for TLS issuance");
+    assert!(
+        cert.is_some(),
+        "Active route must be eligible for TLS issuance"
+    );
     assert!(resolver.is_cached(&route_domain));
 
     // Alias domain resolution
     let alias_cert = resolver.resolve_for_server_name(&alias_domain);
-    assert!(alias_cert.is_some(), "Alias of active route must be eligible for TLS issuance");
+    assert!(
+        alias_cert.is_some(),
+        "Alias of active route must be eligible for TLS issuance"
+    );
     assert!(resolver.is_cached(&alias_domain));
 }
 
@@ -193,7 +211,9 @@ async fn test_e2e_tls13_handshake_with_on_demand_sni_resolution() {
         let connector = TlsConnector::from(Arc::new(client_config));
         let stream = TcpStream::connect(server_addr).await.unwrap();
 
-        let server_name = ServerName::try_from(client_sni.as_str()).unwrap().to_owned();
+        let server_name = ServerName::try_from(client_sni.as_str())
+            .unwrap()
+            .to_owned();
         let mut tls_stream = connector.connect(server_name, stream).await.unwrap();
 
         tls_stream.write_all(b"PING").await.unwrap();

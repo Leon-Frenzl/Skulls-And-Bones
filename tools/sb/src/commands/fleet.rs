@@ -1218,4 +1218,3 @@ mod tests {
         assert!(encode_openssh_ed25519_wire(&long_key).is_err());
     }
 }
-

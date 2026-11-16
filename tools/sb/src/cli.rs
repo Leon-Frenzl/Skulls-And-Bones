@@ -228,12 +228,6 @@ pub enum Commands {
         args: Vec<String>,
     },
 
-    /// Delegiert an S&B Forge (sb-forge)
-    Forge {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
     /// Delegiert an S&B Mesh (sb-mesh)
     Mesh {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -272,13 +266,6 @@ pub enum Commands {
         action: Option<NodeAction>,
     },
 
-    /// Delegiert an S&B Code (sb-code) — Sovereign Unified Code Engine: AST Scopes, Live Swarm & Merkle VCS
-    #[command(alias = "c")]
-    Code {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
     /// Delegiert an S&B Proxy (sb-proxy) — Sovereign Pure-Rust Reverse-Proxy & Edge Gateway
     #[command(alias = "px")]
     Proxy {
@@ -300,12 +287,6 @@ pub enum Commands {
 
     /// Delegiert an S&B Sovereign DNS (sb-dns) — Systemweiter .sbm Split-DNS Resolver & Mesh Router
     Dns {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// Delegiert an S&B Sovereign DB (sb-db) — Embedded Document-KV Store & Reactive Watch
-    Db {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -431,20 +412,6 @@ pub enum Commands {
     Quorum {
         #[command(subcommand)]
         action: QuorumAction,
-    },
-
-    /// Sovereign Drive: Peer-Shared Filesystem & Remote Explorer (sb drive <ls|cat|write|get>)
-    #[command(alias = "d")]
-    Drive {
-        #[command(subcommand)]
-        action: DriveAction,
-    },
-
-    /// Publisher-Werkzeug für SB-MAP-Apps (sb app-publish <keygen|pack>)
-    #[command(name = "app-publish")]
-    AppPublish {
-        #[command(subcommand)]
-        action: PublishAction,
     },
 
     /// Startet den Sovereign Headless Daemon & Loopback JSON-RPC API Server (sb daemon [--port <p>] [--api])
@@ -577,96 +544,6 @@ pub enum ReleaseAction {
         /// Ausgabe-Verzeichnis für heruntergeladene und verifizierte Release-Artefakte
         #[arg(long, default_value = "dist")]
         out_dir: PathBuf,
-    },
-}
-
-#[derive(Subcommand, Debug, Clone)]
-pub enum PublishAction {
-    /// Erzeugt einen Publisher-Schlüssel (Seed-Datei, nie überschrieben) und gibt den öffentlichen Schlüssel aus
-    Keygen {
-        #[arg(long)]
-        out: PathBuf,
-    },
-    /// Pinnt das Artefakt im Manifest, signiert und schreibt ein .sbapp-Bundle
-    Pack {
-        #[arg(long)]
-        manifest: PathBuf,
-        #[arg(long)]
-        artifact: PathBuf,
-        #[arg(long)]
-        key: PathBuf,
-        #[arg(long)]
-        out: PathBuf,
-    },
-    /// Veröffentlicht ein signiertes .sbapp-Bundle im Mesh-Objektkatalog und sb-drive-Root
-    Catalog {
-        #[arg(long)]
-        bundle: PathBuf,
-        #[arg(long)]
-        drive_root: PathBuf,
-        #[arg(long)]
-        catalog: PathBuf,
-        #[arg(long)]
-        trusted_publishers: PathBuf,
-        #[arg(long)]
-        owner: String,
-        #[arg(long = "reader")]
-        readers: Vec<String>,
-    },
-}
-
-#[derive(Subcommand, Debug, Clone)]
-pub enum DriveAction {
-    /// Startet den lokalen, auf ein Root-Verzeichnis begrenzten Mesh-Stream-Dienst
-    Serve {
-        /// Freizugebendes Dateisystem-Root
-        #[arg(long)]
-        root: PathBuf,
-        /// Loopback-Adresse des Mesh-Dienstes
-        #[arg(long, default_value = "127.0.0.1:58833")]
-        bind: String,
-        /// Mesh whose object catalog and RBAC store authorize downloads
-        #[arg(short, long, default_value = "corp-mesh")]
-        mesh: String,
-        /// Object catalog path (defaults to ~/.sb-node/catalog/<mesh>/object-catalog.json)
-        #[arg(long)]
-        catalog: Option<PathBuf>,
-        /// SB-MAP grant policy JSON; enables per-operation app grants on downloads
-        #[arg(long)]
-        grant_policy: Option<PathBuf>,
-    },
-    /// Remote-Ordner auflisten (sb drive ls <peer> [path])
-    #[command(alias = "list")]
-    Ls {
-        /// Peer-Identifier oder Servername (z.B. 'hostinger-stealth', 'local')
-        peer: String,
-        /// Pfad auf dem Peer (Standard: '/')
-        path: Option<String>,
-    },
-    /// Datei vom Peer auslesen (sb drive cat <peer> <path>)
-    #[command(alias = "read")]
-    Cat {
-        /// Peer-Identifier oder Servername
-        peer: String,
-        /// Dateipfad auf dem Peer
-        path: String,
-    },
-    /// Datei auf Peer schreiben (sb drive write <peer> <path> <content>)
-    Write {
-        /// Peer-Identifier oder Servername
-        peer: String,
-        /// Dateipfad auf dem Peer
-        path: String,
-        /// Datei-Inhalt als String
-        content: String,
-    },
-    /// Datei in lokalen Ghost-Cache herunterladen (sb drive get <peer> <path>)
-    #[command(alias = "fetch")]
-    Get {
-        /// Peer-Identifier oder Servername
-        peer: String,
-        /// Dateipfad auf dem Peer
-        path: String,
     },
 }
 
@@ -1107,4 +984,3 @@ pub struct BootstrapArgs {
     #[arg(short = 'n', long = "dry-run")]
     pub dry_run: bool,
 }
-

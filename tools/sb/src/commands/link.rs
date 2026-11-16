@@ -75,7 +75,12 @@ fn run_remote_ssh(target: &str, remote_script: &str) -> Result<String, String> {
     let output = Command::new(&ssh_bin)
         .args(&ssh_args)
         .output()
-        .map_err(|e| format!("Konnte OpenSSH ({}) nicht ausführen: {e}", ssh_bin.display()))?;
+        .map_err(|e| {
+            format!(
+                "Konnte OpenSSH ({}) nicht ausführen: {e}",
+                ssh_bin.display()
+            )
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -132,11 +137,15 @@ fn ensure_local_mesh_identity(mesh: &str) -> Result<(String, String), String> {
 
 /// Resolves the local mesh for `sb link`: explicit `--mesh`, else the active network, else `default`.
 fn resolve_local_mesh(explicit: Option<&str>) -> String {
-    if let Some(m) = explicit.map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()) {
+    if let Some(m) = explicit
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+    {
         return m;
     }
     if let Ok(dir) = sb_mesh::identity::default_data_dir() {
-        if let Ok(store) = sb_mesh::network::NetworkStore::load_existing(&dir.join("networks.json")) {
+        if let Ok(store) = sb_mesh::network::NetworkStore::load_existing(&dir.join("networks.json"))
+        {
             return store.active_network;
         }
     }
@@ -213,7 +222,11 @@ pub fn handle_link(target: &str, alias_opt: Option<String>, mesh_opt: Option<Str
     // 2. Ensure local Dual-CA & Ephemeral User Cert & Local Mesh Identity are initialized
     if !sb_ca::SshCa::status().initialized {
         if let Err(e) = sb_ca::init_all(false) {
-            eprintln!("  {} Konnte lokale Dual-CA nicht initialisieren: {}", "✗".bright_red().bold(), e);
+            eprintln!(
+                "  {} Konnte lokale Dual-CA nicht initialisieren: {}",
+                "✗".bright_red().bold(),
+                e
+            );
             std::process::exit(1);
         }
         actions.push("Initialized local Unified Dual-CA (OpenSSH + X.509)".to_string());
@@ -222,7 +235,11 @@ pub fn handle_link(target: &str, alias_opt: Option<String>, mesh_opt: Option<Str
     let ca_pub_openssh = match sb_ca::SshCa::ca_public_key_openssh() {
         Ok(k) => k.trim().to_string(),
         Err(e) => {
-            eprintln!("  {} Konnte lokalen SSH-CA Public Key nicht laden: {}", "✗".bright_red().bold(), e);
+            eprintln!(
+                "  {} Konnte lokalen SSH-CA Public Key nicht laden: {}",
+                "✗".bright_red().bold(),
+                e
+            );
             std::process::exit(1);
         }
     };
@@ -230,7 +247,11 @@ pub fn handle_link(target: &str, alias_opt: Option<String>, mesh_opt: Option<Str
     let (local_node_id, local_pubkey) = match ensure_local_mesh_identity(&local_mesh) {
         Ok(pair) => pair,
         Err(e) => {
-            eprintln!("  {} Konnte lokale sb-mesh Identität nicht initialisieren: {}", "✗".bright_red().bold(), e);
+            eprintln!(
+                "  {} Konnte lokale sb-mesh Identität nicht initialisieren: {}",
+                "✗".bright_red().bold(),
+                e
+            );
             std::process::exit(1);
         }
     };
@@ -263,7 +284,12 @@ printf "HOST_PUB=%s\nNODE_ID=%s\nWG_PUB=%s\n" "$HOST_PUB" "$NODE_ID" "$WG_PUB"
     let probe_out = match run_remote_ssh(&ssh_dest, probe_script) {
         Ok(out) => out,
         Err(e) => {
-            eprintln!("  {} SSH-Verbindung zu '{}' fehlgeschlagen: {}", "✗".bright_red().bold(), ssh_dest, e);
+            eprintln!(
+                "  {} SSH-Verbindung zu '{}' fehlgeschlagen: {}",
+                "✗".bright_red().bold(),
+                ssh_dest,
+                e
+            );
             std::process::exit(1);
         }
     };
@@ -301,7 +327,11 @@ printf "HOST_PUB=%s\nNODE_ID=%s\nWG_PUB=%s\n" "$HOST_PUB" "$NODE_ID" "$WG_PUB"
     ) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("  {} Fehler beim Signieren des Host-Zertifikats: {}", "✗".bright_red().bold(), e);
+            eprintln!(
+                "  {} Fehler beim Signieren des Host-Zertifikats: {}",
+                "✗".bright_red().bold(),
+                e
+            );
             std::process::exit(1);
         }
     };
@@ -379,7 +409,11 @@ echo "LINK_APPLY_OK"
     let apply_out = match run_remote_ssh(&ssh_dest, &apply_script) {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("  {} Fehler beim Konfigurieren des Remote-Servers: {}", "✗".bright_red().bold(), e);
+            eprintln!(
+                "  {} Fehler beim Konfigurieren des Remote-Servers: {}",
+                "✗".bright_red().bold(),
+                e
+            );
             std::process::exit(1);
         }
     };
@@ -429,7 +463,10 @@ echo "LINK_APPLY_OK"
         .map(|p| p.display().to_string())
         .unwrap_or_default();
     let _ = sb_core::ssh_transport::integrate_into_user_ssh_config();
-    actions.push(format!("Updated Sovereign OpenSSH config ({})", ssh_config_path));
+    actions.push(format!(
+        "Updated Sovereign OpenSSH config ({})",
+        ssh_config_path
+    ));
 
     let report = LinkReport {
         linked: sshd_validated,
@@ -497,7 +534,9 @@ echo "LINK_APPLY_OK"
     }
     println!(
         "\n  ► Verbinde dich ab sofort zertifikatsbasiert mit: {}",
-        format!("sb ssh {}", report.server_name).bright_cyan().bold()
+        format!("sb ssh {}", report.server_name)
+            .bright_cyan()
+            .bold()
     );
     println!();
 }

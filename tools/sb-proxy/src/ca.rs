@@ -42,7 +42,10 @@ impl From<sb_ca::x509::X509CaStatus> for CaStatusReport {
                 None
             },
             subject: if s.initialized {
-                Some(format!("CN={}, O={}, OU={}", s.common_name, s.organization, CA_OU))
+                Some(format!(
+                    "CN={}, O={}, OU={}",
+                    s.common_name, s.organization, CA_OU
+                ))
             } else {
                 None
             },
@@ -156,8 +159,8 @@ impl DeveloperCa {
             );
         }
 
-        let pair = sb_ca::x509::issue_leaf_certificate(domains, ttl_days)
-            .map_err(|e| e.to_string())?;
+        let pair =
+            sb_ca::x509::issue_leaf_certificate(domains, ttl_days).map_err(|e| e.to_string())?;
 
         let primary_domain = pair
             .domains
@@ -223,12 +226,21 @@ impl DeveloperCa {
 
     /// Finds a certificate pair for a given domain in the Developer CA cert store.
     pub fn find_dev_certificate(query_domain: &str) -> Option<(PathBuf, PathBuf)> {
-        let q = query_domain.trim().trim_end_matches('.').to_ascii_lowercase();
+        let q = query_domain
+            .trim()
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
         let index = Self::load_index();
 
         for cert in index.certs {
-            if cert.primary_domain.trim_end_matches('.').eq_ignore_ascii_case(&q)
-                || cert.alt_names.iter().any(|d| d.trim_end_matches('.').eq_ignore_ascii_case(&q))
+            if cert
+                .primary_domain
+                .trim_end_matches('.')
+                .eq_ignore_ascii_case(&q)
+                || cert
+                    .alt_names
+                    .iter()
+                    .any(|d| d.trim_end_matches('.').eq_ignore_ascii_case(&q))
             {
                 let crt = PathBuf::from(&cert.cert_path);
                 let key = PathBuf::from(&cert.key_path);
@@ -253,9 +265,7 @@ impl DeveloperCa {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcgen::{
-        BasicConstraints, CertificateParams, IsCa, KeyPair, PKCS_ECDSA_P256_SHA256,
-    };
+    use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair, PKCS_ECDSA_P256_SHA256};
 
     #[test]
     fn test_rcgen_api() {

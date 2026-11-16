@@ -42,10 +42,7 @@ fn ensure_encrypted_local_vault(env: &str) -> Result<(PathBuf, Vec<u8>, usize, S
     let mut vault = store.load(env)?;
     if vault.verifier.is_none() {
         let id = SovereignIdentity::load_or_create();
-        let derived_pass = format!(
-            "sb-sovereign-vault-{}-{}",
-            id.callsign, id.node_fingerprint
-        );
+        let derived_pass = format!("sb-sovereign-vault-{}-{}", id.callsign, id.node_fingerprint);
         let session = sb_core::vault::VaultSession::new(&derived_pass);
         session.initialize(&mut vault)?;
         store.save(env, &vault)?;
@@ -56,8 +53,12 @@ fn ensure_encrypted_local_vault(env: &str) -> Result<(PathBuf, Vec<u8>, usize, S
         store.save(env, &vault)?;
     }
 
-    let raw_bytes = fs::read(&vault_path)
-        .map_err(|e| format!("Konnte lokalen Vault '{}' nicht lesen: {e}", vault_path.display()))?;
+    let raw_bytes = fs::read(&vault_path).map_err(|e| {
+        format!(
+            "Konnte lokalen Vault '{}' nicht lesen: {e}",
+            vault_path.display()
+        )
+    })?;
 
     // Also maintain a `.sbvault` mirror in the same directory for compatibility
     let sbvault_path = vault_path.with_extension("sbvault");
@@ -90,14 +91,18 @@ fn handle_env_sync(server: &str, env: &str, json: bool) {
     });
     let ssh_dest = format!("{}@{}", resolved.user, resolved.host);
 
-    let (local_path, raw_bytes, secrets_count, local_sha256) = match ensure_encrypted_local_vault(env)
-    {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("  {} Vault-Initialisierung fehlgeschlagen: {}", "✗".bright_red().bold(), e);
-            std::process::exit(1);
-        }
-    };
+    let (local_path, raw_bytes, secrets_count, local_sha256) =
+        match ensure_encrypted_local_vault(env) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!(
+                    "  {} Vault-Initialisierung fehlgeschlagen: {}",
+                    "✗".bright_red().bold(),
+                    e
+                );
+                std::process::exit(1);
+            }
+        };
 
     let b64_payload = BASE64.encode(&raw_bytes);
     let safe_env: String = env
@@ -105,7 +110,11 @@ fn handle_env_sync(server: &str, env: &str, json: bool) {
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
         .collect();
     if safe_env.is_empty() {
-        eprintln!("  {} Ungültiger Environment-Name '{}'", "✗".bright_red().bold(), env);
+        eprintln!(
+            "  {} Ungültiger Environment-Name '{}'",
+            "✗".bright_red().bold(),
+            env
+        );
         std::process::exit(1);
     }
 
@@ -144,7 +153,11 @@ printf "REMOTE_SHA256=%s\nREMOTE_PATH=%s/.sb/vault/%s.sbvault\n" "$REM_SHA" "$HO
     let output = match Command::new(&ssh_bin).args(&ssh_args).output() {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("  {} Konnte OpenSSH nicht starten: {}", "✗".bright_red().bold(), e);
+            eprintln!(
+                "  {} Konnte OpenSSH nicht starten: {}",
+                "✗".bright_red().bold(),
+                e
+            );
             std::process::exit(1);
         }
     };

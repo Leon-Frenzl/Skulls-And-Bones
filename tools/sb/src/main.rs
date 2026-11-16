@@ -13,15 +13,13 @@ mod quorum;
 mod trace;
 
 use cli::{
-    Cli, Commands, DriveAction, EscapeAction, InviteAction, QuorumAction, ReleaseAction,
-    ServerAction, WebAction,
+    Cli, Commands, EscapeAction, InviteAction, QuorumAction, ReleaseAction, ServerAction, WebAction,
 };
 use commands::config::handle_config;
 use commands::context::{handle_context_cmd, handle_use_cmd};
 use commands::daemon::run_daemon;
 use commands::delegate::delegate_to;
 use commands::doctor::{handle_completions, handle_doctor};
-use commands::drive::{handle_drive_cat, handle_drive_get, handle_drive_ls, handle_drive_write};
 use commands::env::handle_sb_env;
 use commands::fleet::{
     handle_approve, handle_invite_client, handle_invite_list, handle_join, handle_revoke,
@@ -274,9 +272,6 @@ fn real_main() {
         Some(Commands::Ssh { args }) => {
             commands::ssh::handle_ssh(&args);
         }
-        Some(Commands::Forge { args }) => {
-            delegate_to("forge", "sb-forge", &args);
-        }
         Some(Commands::Mesh { args }) => {
             delegate_to("mesh", "sb-mesh", &args);
         }
@@ -313,17 +308,11 @@ fn real_main() {
                 delegate_to("node", "sb-node", &[]);
             }
         },
-        Some(Commands::Code { args }) => {
-            delegate_to("code", "sb-code", &args);
-        }
         Some(Commands::Proxy { args }) => {
             delegate_to("proxy", "sb-proxy", &args);
         }
         Some(Commands::Dns { args }) => {
             delegate_to("dns", "sb-dns", &args);
-        }
-        Some(Commands::Db { args }) => {
-            delegate_to("db", "sb-db", &args);
         }
         Some(Commands::Ca { args }) => {
             delegate_to("ca", "sb-ca", &args);
@@ -538,107 +527,7 @@ fn real_main() {
                 quorum::handle_quorum_execute(&id);
             }
         },
-        Some(Commands::Drive { action }) => {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to initialize tokio runtime");
-            rt.block_on(async {
-                match action {
-                    DriveAction::Serve {
-                        root,
-                        bind,
-                        mesh,
-                        catalog,
-                        grant_policy,
-                    } => {
-                        let bind = match bind.parse() {
-                            Ok(address) => address,
-                            Err(error) => {
-                                eprintln!("Ungültige sb-drive Bind-Adresse: {error}");
-                                std::process::exit(2);
-                            }
-                        };
-                        let catalog = match catalog {
-                            Some(path) => path,
-                            None => match sb_drive::stream::default_catalog_path(&mesh) {
-                                Ok(path) => path,
-                                Err(error) => {
-                                    eprintln!("Ungültiger sb-drive Catalog-Pfad: {error}");
-                                    std::process::exit(2);
-                                }
-                            },
-                        };
-                        let policy = match grant_policy
-                            .map(|path| sb_drive::stream::AppGrantPolicy::from_config_file(&path))
-                            .transpose()
-                        {
-                            Ok(policy) => policy.map(std::sync::Arc::new),
-                            Err(error) => {
-                                eprintln!("Ungültige Grant-Policy: {error}");
-                                std::process::exit(2);
-                            }
-                        };
-                        if let Err(error) =
-                            sb_drive::stream::serve_with_policy(root, bind, mesh, catalog, policy)
-                                .await
-                        {
-                            eprintln!("sb-drive Stream-Dienst fehlgeschlagen: {error}");
-                            std::process::exit(1);
-                        }
-                    }
-                    DriveAction::Ls { peer, path } => {
-                        handle_drive_ls(&peer, path.as_deref()).await;
-                    }
-                    DriveAction::Cat { peer, path } => {
-                        handle_drive_cat(&peer, &path).await;
-                    }
-                    DriveAction::Write {
-                        peer,
-                        path,
-                        content,
-                    } => {
-                        handle_drive_write(&peer, &path, &content).await;
-                    }
-                    DriveAction::Get { peer, path } => {
-                        handle_drive_get(&peer, &path).await;
-                    }
-                }
-            });
-        }
-        Some(Commands::AppPublish { action }) => {
-            let result = match action {
-                cli::PublishAction::Keygen { out } => commands::publish::keygen(&out)
-                    .map(|public| format!("Öffentlicher Publisher-Schlüssel: {public}")),
-                cli::PublishAction::Pack {
-                    manifest,
-                    artifact,
-                    key,
-                    out,
-                } => commands::publish::pack(&manifest, &artifact, &key, &out)
-                    .map(|size| format!("Bundle geschrieben ({size})")),
-                cli::PublishAction::Catalog {
-                    bundle,
-                    drive_root,
-                    catalog,
-                    trusted_publishers,
-                    owner,
-                    readers,
-                } => commands::publish::publish_to_catalog(
-                    &bundle,
-                    &drive_root,
-                    &catalog,
-                    &trusted_publishers,
-                    &owner,
-                    &readers,
-                )
-                .map(|summary| format!("Im Mesh-Katalog veröffentlicht: {summary}")),
-            };
-            match result {
-                Ok(message) => println!("{message}"),
-                Err(error) => {
-                    eprintln!("sb publish fehlgeschlagen: {error}");
-                    std::process::exit(1);
-                }
-            }
-        }
+
         Some(Commands::Daemon { port, api, detach }) => {
             if detach {
                 let daemon_port = port.unwrap_or(sb_core::ports::DEFAULT_DAEMON_API_PORT);
@@ -728,9 +617,9 @@ mod tests {
         assert!(cli);
 
         // Test specific tool
-        let (tools, cli) = resolve_tools(&["drive".to_string()]).unwrap();
+        let (tools, cli) = resolve_tools(&["dns".to_string()]).unwrap();
         assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].id, "drive");
+        assert_eq!(tools[0].id, "dns");
         assert!(!cli);
 
         // Test sb-cli
@@ -1074,23 +963,10 @@ MULTILINE="first\nsecond"
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
-
     #[test]
-    fn test_drive_and_daemon_cli_parsing() {
-        use crate::cli::{Cli, Commands, DriveAction};
+    fn test_daemon_cli_parsing() {
+        use crate::cli::{Cli, Commands};
         use clap::Parser;
-
-        let drive_cmd = Cli::try_parse_from(["sb", "drive", "ls", "local", "/tmp"]).unwrap();
-        match drive_cmd.command {
-            Some(Commands::Drive {
-                action: DriveAction::Ls { peer, path },
-            }) => {
-                assert_eq!(peer, "local");
-                assert_eq!(path.as_deref(), Some("/tmp"));
-            }
-            _ => panic!("Expected Drive Ls command"),
-        }
-
         let daemon_cmd = Cli::try_parse_from(["sb", "daemon", "--port", "58999"]).unwrap();
         match daemon_cmd.command {
             Some(Commands::Daemon { port, api, detach }) => {
@@ -1103,161 +979,10 @@ MULTILINE="first\nsecond"
     }
 
     #[test]
-    fn test_two_node_pairing_and_workspace_replication_e2e() {
-        let _guard = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let temp_root =
-            std::env::temp_dir().join(format!("sb_e2e_drill_{}", rand::random::<u32>()));
-        let node_a_dir = temp_root.join("node_a");
-        let node_b_dir = temp_root.join("node_b");
-        std::fs::create_dir_all(&node_a_dir).unwrap();
-        std::fs::create_dir_all(&node_b_dir).unwrap();
-
-        // 1. Setup Node A (Admin Swarm Leader)
-        std::env::set_var("SB_HOME", node_a_dir.to_str().unwrap());
-        std::env::set_var("SB_CALLSIGN", "sponsor-node-a");
-
-        // Seed 2 initial team members on Node A so 4-eyes quorum (2 approvals) is strictly required
-        let initial_members = vec![
-            crate::commands::fleet::TeamMember {
-                name: "sponsor-node-a".to_string(),
-                role: "lead".to_string(),
-                added_at: "2026-10-09T00:00:00Z".to_string(),
-                approved_by: vec!["root".to_string()],
-            },
-            crate::commands::fleet::TeamMember {
-                name: "co-admin-bob".to_string(),
-                role: "admin".to_string(),
-                added_at: "2026-10-09T00:00:00Z".to_string(),
-                approved_by: vec!["root".to_string()],
-            },
-        ];
-        crate::commands::fleet::save_team_members(&initial_members).unwrap();
-
-        // 2. Node A issues invite for candidate "dev-alice"
-        crate::commands::fleet::handle_invite_client("dev-alice", "dev", 60);
-
-        let reqs_a = crate::commands::fleet::load_team_requests();
-        assert_eq!(reqs_a.len(), 1, "Expected 1 join request on Node A");
-        let invite_req = &reqs_a[0];
-        assert_eq!(invite_req.candidate_name, "dev-alice");
-        assert_eq!(invite_req.status, "pending");
-        assert_eq!(invite_req.required_quorum, 2);
-        assert_eq!(invite_req.approvals, vec!["sponsor-node-a"]);
-        let req_id = invite_req.request_id.clone();
-        let token = invite_req.token.clone();
-
-        // 3. Candidate Alice on Node B attempts to join before 4-eyes approval
-        std::env::set_var("SB_HOME", node_b_dir.to_str().unwrap());
-        std::env::set_var("SB_CALLSIGN", "dev-alice");
-
-        // Alice receives the token and pending request
-        crate::commands::fleet::save_team_requests(&reqs_a).unwrap();
-        crate::commands::fleet::handle_join(&token, Some("dev-alice".to_string()));
-
-        let members_b_premature = crate::commands::fleet::load_team_members();
-        assert!(
-            members_b_premature.is_empty(),
-            "Node B must NOT be admitted while 4-eyes approval is still pending"
-        );
-
-        // 4. Co-Admin Bob on Node A performs the 4-eyes approval
-        std::env::set_var("SB_HOME", node_a_dir.to_str().unwrap());
-        std::env::set_var("SB_CALLSIGN", "co-admin-bob");
-        crate::commands::fleet::handle_approve(&req_id, Some("co-admin-bob"));
-
-        let reqs_a_approved = crate::commands::fleet::load_team_requests();
-        let approved_req = reqs_a_approved
-            .iter()
-            .find(|r| r.request_id == req_id)
-            .unwrap();
-        assert_eq!(approved_req.status, "approved");
-        assert_eq!(approved_req.approvals.len(), 2);
-        assert!(approved_req
-            .approvals
-            .contains(&"sponsor-node-a".to_string()));
-        assert!(approved_req.approvals.contains(&"co-admin-bob".to_string()));
-
-        // 5. Node B joins successfully after 4-eyes approval
-        std::env::set_var("SB_HOME", node_b_dir.to_str().unwrap());
-        std::env::set_var("SB_CALLSIGN", "dev-alice");
-        crate::commands::fleet::save_team_requests(&reqs_a_approved).unwrap();
-        crate::commands::fleet::handle_join(&token, Some("dev-alice".to_string()));
-
-        let members_b_admitted = crate::commands::fleet::load_team_members();
-        assert_eq!(members_b_admitted.len(), 1);
-        assert_eq!(members_b_admitted[0].name, "dev-alice");
-        assert_eq!(members_b_admitted[0].role, "dev");
-
-        // 6. Dev-Workspace Synchronisation drill (Alice pushed, Node A replicates)
-        let alice_repo = node_b_dir.join("workspaces").join("sb-core");
-        std::fs::create_dir_all(alice_repo.join("src")).unwrap();
-        std::fs::write(
-            alice_repo.join("src").join("lib.rs"),
-            "pub fn sovereign_code() -> &'static str { \"sovereign\" }\n",
-        )
-        .unwrap();
-
-        // Alice initializes VCS and commits
-        let mut alice_vcs = sb_code::vcs::VcsEngine::init(&alice_repo).unwrap();
-        let alice_commit_id = alice_vcs
-            .commit(
-                "feat(core): initial sovereign code implementation",
-                "dev-alice",
-            )
-            .unwrap();
-
-        // Create DevWorkspacePolicy with Alice as authoritative writer
-        let workspace_id = "dev/tools/sb-core";
-        let policy = sb_code::dev_workspace::DevWorkspacePolicy::new(
-            workspace_id,
-            "sb-core",
-            "dev-alice",
-            vec!["sponsor-node-a".into()],
-        )
-        .unwrap();
-
-        // Verify policy authorizations
-        assert!(policy.authorize_write("dev-alice", None).is_ok());
-        assert!(policy.authorize_read("sponsor-node-a", None).is_ok());
-
-        // Unauthorized intruder (mallory) is strictly rejected
-        assert!(policy
-            .authorize_write("unauthorized-mallory", None)
-            .is_err());
-        assert!(policy.authorize_read("unauthorized-mallory", None).is_err());
-
-        // Bundle export on Alice's node
-        let bundle_bytes = alice_vcs.export_bundle("main", None).unwrap();
-        assert!(!bundle_bytes.is_empty(), "Bundle bytes must not be empty");
-
-        // Replicate / Import into Node A's repo
-        let node_a_repo = node_a_dir.join("workspaces").join("sb-core");
-        std::fs::create_dir_all(&node_a_repo).unwrap();
-        let mut admin_vcs = sb_code::vcs::VcsEngine::init(&node_a_repo).unwrap();
-        let sync_report = admin_vcs.import_bundle(&bundle_bytes, "main").unwrap();
-
-        // Heads match perfectly across both nodes
-        assert_eq!(sync_report.new_head, alice_commit_id.commit_id);
-
-        // Checkout main branch on Node A to write files to disk
-        admin_vcs.checkout("main").unwrap();
-        let replicated_file = node_a_repo.join("src").join("lib.rs");
-        assert!(
-            replicated_file.is_file(),
-            "Replicated file must exist in Node A"
-        );
-        let content = std::fs::read_to_string(replicated_file).unwrap();
-        assert!(content.contains("sovereign_code"));
-
-        // Cleanup
-        std::env::remove_var("SB_HOME");
-        std::env::remove_var("SB_CALLSIGN");
-        let _ = std::fs::remove_dir_all(&temp_root);
-    }
-
-    #[test]
     fn test_quorum_hardening_rejects_self_approval_and_unauthorized_and_expired() {
-        let _guard = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         use super::commands::fleet::{
             handle_approve, load_team_requests, save_team_members, save_team_requests,
             TeamJoinRequest, TeamMember,

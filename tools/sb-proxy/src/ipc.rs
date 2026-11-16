@@ -85,7 +85,7 @@ impl ProxyTelemetry {
 pub async fn run_ipc_server(
     bind_addr: &str,
     telemetry: Arc<RwLock<ProxyTelemetry>>,
-    routes: Arc<RwLock<sb_code::escape::EscapeSpaceStore>>,
+    routes: Arc<RwLock<crate::escape::EscapeSpaceStore>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(bind_addr).await?;
 
@@ -119,7 +119,7 @@ pub async fn run_ipc_server(
                                     r.spaces
                                         .iter()
                                         .filter(|s| {
-                                            s.status == sb_code::escape::EscapeStatus::Active
+                                            s.status == crate::escape::EscapeStatus::Active
                                         })
                                         .count()
                                 } else {

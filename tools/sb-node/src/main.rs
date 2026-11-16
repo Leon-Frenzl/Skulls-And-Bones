@@ -403,9 +403,9 @@ const DATABASE_PORT: u16 = 58830;
 const CATALOG_REPLICATION_PORT: u16 = 58831;
 const CODE_MESH: &str = "dev-mesh";
 const CODE_SYNC_PORT: u16 = 58832;
-const CODE_WEB_PORT: u16 = sb_code::web::WEB_PORT;
+const CODE_WEB_PORT: u16 = 58835;
 const DRIVE_STREAM_PORT: u16 = 58833;
-const AST_LOCK_STREAM_PORT: u16 = sb_code::ast_sync::AST_LOCK_STREAM_PORT;
+const AST_LOCK_STREAM_PORT: u16 = 58834;
 
 enum NodeFecCommand {
     Data { data: Vec<u8> },
@@ -2926,17 +2926,10 @@ async fn run_daemon(
             .await;
     }
     if !ast_lock_meshes.is_empty() {
-        if let Err(error) = sb_code::ast_sync::start_ast_syncd(SocketAddr::from((
-            [127, 0, 0, 1],
-            AST_LOCK_STREAM_PORT,
-        )))
-        .await
-        {
-            eprintln!(
-                "AST lock sync daemon failed; its Mesh routes will stay unavailable: {error}"
-            );
-            ast_lock_meshes.clear();
-        }
+        eprintln!(
+            "AST lock sync daemon is not bundled in the trimmed network core; its Mesh routes stay unavailable."
+        );
+        ast_lock_meshes.clear();
     }
     for mesh in &ast_lock_meshes {
         cross_mesh_bridge
@@ -3876,19 +3869,6 @@ fn handle_revoke(name: &str, reason: &str) {
     println!();
 }
 
-fn open_rbac_db() -> Option<sb_db::Database> {
-    let db_path = if Path::new("/etc/sb").exists() {
-        PathBuf::from("/etc/sb/mesh_rbac.sbdb")
-    } else {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        home.join(".sb").join("mesh_rbac.sbdb")
-    };
-    if let Some(parent) = db_path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    sb_db::Database::open(&db_path).ok()
-}
-
 fn handle_member_commands(sub: MemberCommands) {
     match sub {
         MemberCommands::List { mesh } => {
@@ -3956,16 +3936,6 @@ fn handle_member_commands(sub: MemberCommands) {
                             );
                         }
                     }
-                    if let Some(db) = open_rbac_db() {
-                        if let Ok(stats) = db.stats() {
-                            println!(
-                                "\n  {} [sb-db] Persistente Speicherung aktiv: {} Dokumente ({:?})",
-                                "✓".bright_green(),
-                                stats.key_count,
-                                stats.path
-                            );
-                        }
-                    }
                 }
                 Err(e) => eprintln!(
                     "  {} Fehler beim Laden des RBAC-Speichers: {}",
@@ -4011,12 +3981,6 @@ fn handle_member_commands(sub: MemberCommands) {
                         return;
                     }
 
-                    // Synchronize with embedded sb-db
-                    if let Some(db) = open_rbac_db() {
-                        let key = format!("tenant:{}:member:{}", mesh, member.pubkey);
-                        let _ = db.set(&key, &member);
-                    }
-
                     println!(
                         "  {} Mitglied '{}' erfolgreich autorisiert für Mesh '{}'!",
                         "✓".bright_green().bold(),
@@ -4045,12 +4009,6 @@ fn handle_member_commands(sub: MemberCommands) {
                 Ok(mut store) => {
                     if store.revoke(&name, &reason) {
                         let _ = store.save();
-                        if let Some(m) = store.find(&name) {
-                            if let Some(db) = open_rbac_db() {
-                                let key = format!("tenant:{}:member:{}", mesh, m.pubkey);
-                                let _ = db.set(&key, m);
-                            }
-                        }
                         println!(
                             "  {} Mitglied '{}' in Mesh '{}' gesperrt (KRL-Eviction aktiv).",
                             "✓".bright_red().bold(),
@@ -4075,15 +4033,8 @@ fn handle_member_commands(sub: MemberCommands) {
         MemberCommands::Remove { mesh, name } => {
             match sb_mesh::rbac::MeshRbacStore::load_or_create(&mesh) {
                 Ok(mut store) => {
-                    let pubkey_opt = store.find(&name).map(|m| m.pubkey.clone());
                     if store.remove(&name) {
                         let _ = store.save();
-                        if let Some(pubkey) = pubkey_opt {
-                            if let Some(db) = open_rbac_db() {
-                                let key = format!("tenant:{}:member:{}", mesh, pubkey);
-                                let _ = db.delete(&key);
-                            }
-                        }
                         println!(
                             "  {} Mitglied '{}' aus Mesh '{}' entfernt.",
                             "✓".bright_green(),

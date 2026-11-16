@@ -2,11 +2,105 @@ use chrono::Utc;
 use std::sync::Arc;
 
 use crate::claims::{SovereignClaims, TokenType};
-use crate::crypto::Keypair;
+use crate::crypto::{derive_key_id, parse_public_key, Keypair};
 use crate::error::AuthError;
 use crate::revocation::RevocationManager;
 use crate::storage::RevocationStore;
 use crate::token::{TokenDecoder, TokenEncoder};
+use ed25519_dalek::VerifyingKey;
+
+/// Shared verification and authorization routine for both `AuthEngine` and `AuthVerifier`.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Forged, expired, not-yet-valid, or revoked Sovereign Tokens (`sbt.*`)
+///   accessing protected routes or services without holding the required role/capability.
+/// - **CVE / CWE Mapping:** CWE-287 (Improper Authentication) / CWE-863 (Incorrect Authorization).
+/// - **Likelihood & Exploitability:** High (8/10) on public or mesh-exposed HTTP endpoints.
+/// - **Applied Mitigation:** Verifies Ed25519 signature via pinned `VerifyingKey`, enforces temporal
+///   bounds and multi-tier revocation (token, session, user epoch), and checks role/capability claims.
+// Conforms to RFC 7519 §4.1.4/§4.1.5 semantics (exp/nbf) and RFC 8032 (Ed25519).
+fn verify_and_authorize_with_key(
+    verifying_key: &VerifyingKey,
+    revocation: &RevocationManager,
+    token_str: &str,
+    required_role: Option<&str>,
+    required_capability: Option<&str>,
+) -> Result<SovereignClaims, AuthError> {
+    let (_header, claims) = TokenDecoder::decode_and_verify(token_str, verifying_key)?;
+    let now = Utc::now().timestamp();
+    revocation.validate(&claims, now)?;
+
+    if let Some(role) = required_role {
+        if !claims.has_role(role) {
+            return Err(AuthError::MissingRole(role.to_string()));
+        }
+    }
+
+    if let Some(cap) = required_capability {
+        if !claims.has_capability(cap) {
+            return Err(AuthError::MissingCapability(cap.to_string()));
+        }
+    }
+
+    Ok(claims)
+}
+
+/// Public-key-only token verifier for edge services (e.g. `sb-proxy`) that must never hold
+/// token-signing private keys.
+pub struct AuthVerifier {
+    verifying_key: VerifyingKey,
+    key_id: String,
+    revocation: RevocationManager,
+}
+
+impl AuthVerifier {
+    /// Initializes an `AuthVerifier` from a URL-safe Base64 Ed25519 public key and a revocation store.
+    pub fn from_public_base64(
+        public_b64: &str,
+        store: Arc<dyn RevocationStore>,
+    ) -> Result<Self, AuthError> {
+        let verifying_key = parse_public_key(public_b64.trim())?;
+        let key_id = derive_key_id(&verifying_key);
+        Ok(Self {
+            verifying_key,
+            key_id,
+            revocation: RevocationManager::new(store),
+        })
+    }
+
+    /// Initializes an `AuthVerifier` directly from an Ed25519 `VerifyingKey`.
+    pub fn new(verifying_key: VerifyingKey, store: Arc<dyn RevocationStore>) -> Self {
+        let key_id = derive_key_id(&verifying_key);
+        Self {
+            verifying_key,
+            key_id,
+            revocation: RevocationManager::new(store),
+        }
+    }
+
+    pub fn key_id(&self) -> &str {
+        &self.key_id
+    }
+
+    pub fn verify_token(&self, token_str: &str) -> Result<SovereignClaims, AuthError> {
+        verify_and_authorize_with_key(&self.verifying_key, &self.revocation, token_str, None, None)
+    }
+
+    pub fn authorize(
+        &self,
+        token_str: &str,
+        required_role: Option<&str>,
+        required_capability: Option<&str>,
+    ) -> Result<SovereignClaims, AuthError> {
+        verify_and_authorize_with_key(
+            &self.verifying_key,
+            &self.revocation,
+            token_str,
+            required_role,
+            required_capability,
+        )
+    }
+}
 
 /// Sovereign Authentication Engine — Die zentrale Schnittstelle für Entwickler
 pub struct AuthEngine {
@@ -121,11 +215,13 @@ impl AuthEngine {
     /// 2. Zeitliche Gültigkeit (Ablauf & Not-Before)
     /// 3. Multi-Tier Revocation-Prüfung (Token, Session, User-Epoch)
     pub fn verify_token(&self, token_str: &str) -> Result<SovereignClaims, AuthError> {
-        let (_header, claims) =
-            TokenDecoder::decode_and_verify(token_str, &self.keypair.verifying_key)?;
-        let now = Utc::now().timestamp();
-        self.revocation.validate(&claims, now)?;
-        Ok(claims)
+        verify_and_authorize_with_key(
+            &self.keypair.verifying_key,
+            &self.revocation,
+            token_str,
+            None,
+            None,
+        )
     }
 
     /// Verifiziert einen Token und autorisiert erforderliche Rollen oder Capabilities
@@ -135,21 +231,13 @@ impl AuthEngine {
         required_role: Option<&str>,
         required_capability: Option<&str>,
     ) -> Result<SovereignClaims, AuthError> {
-        let claims = self.verify_token(token_str)?;
-
-        if let Some(role) = required_role {
-            if !claims.has_role(role) {
-                return Err(AuthError::MissingRole(role.to_string()));
-            }
-        }
-
-        if let Some(cap) = required_capability {
-            if !claims.has_capability(cap) {
-                return Err(AuthError::MissingCapability(cap.to_string()));
-            }
-        }
-
-        Ok(claims)
+        verify_and_authorize_with_key(
+            &self.keypair.verifying_key,
+            &self.revocation,
+            token_str,
+            required_role,
+            required_capability,
+        )
     }
 
     /// Erneuert eine Session mittels rotierendem Refresh-Token

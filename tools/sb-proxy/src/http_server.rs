@@ -6,13 +6,14 @@ use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::header::{
-    HeaderName, HeaderValue, ALLOW, CACHE_CONTROL, CONTENT_TYPE, HOST, LOCATION, RETRY_AFTER,
+    HeaderName, HeaderValue, ALLOW, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HOST, LOCATION,
+    RETRY_AFTER, WWW_AUTHENTICATE,
 };
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode, Uri, Version};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto::Builder;
-use sb_code::escape::{validate_target_port, EscapeSpaceStore, EscapeStatus};
+use crate::escape::{validate_target_port, EscapeSpaceStore, EscapeStatus};
 use std::convert::Infallible;
 use std::error::Error;
 use std::net::SocketAddr;
@@ -83,6 +84,7 @@ struct RequestState {
     telemetry: Arc<RwLock<ProxyTelemetry>>,
     routes: Arc<RwLock<EscapeSpaceStore>>,
     security_headers: SecurityHeaders,
+    auth_verifier: Option<Arc<sb_auth::AuthVerifier>>,
 }
 
 pub async fn serve_connection<S>(
@@ -97,6 +99,33 @@ pub async fn serve_connection<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    serve_connection_with_auth(
+        stream,
+        client_addr,
+        is_tls,
+        rate_limiter,
+        telemetry,
+        routes,
+        security_headers,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn serve_connection_with_auth<S>(
+    stream: S,
+    client_addr: SocketAddr,
+    is_tls: bool,
+    rate_limiter: IpRateLimiter,
+    telemetry: Arc<RwLock<ProxyTelemetry>>,
+    routes: Arc<RwLock<EscapeSpaceStore>>,
+    security_headers: SecurityHeaders,
+    auth_verifier: Option<Arc<sb_auth::AuthVerifier>>,
+) -> Result<(), BoxError>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let state = RequestState {
         client_addr,
         is_tls,
@@ -104,6 +133,7 @@ where
         telemetry,
         routes,
         security_headers,
+        auth_verifier,
     };
     let service = service_fn(move |request| {
         let state = state.clone();
@@ -270,6 +300,11 @@ async fn route_request(
         _ => {}
     }
 
+    let authenticated_claims = match authorize_route_request(&request, &space, &state) {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
     if let Some(root) = &space.static_root {
         let spa_mode = std::env::var("SB_PROXY_SPA")
             .map(|val| val == "1" || val.eq_ignore_ascii_case("true"))
@@ -317,7 +352,83 @@ async fn route_request(
             }
         }
     };
-    proxy_upstream(request, upstream, state.client_addr, state.is_tls).await
+    proxy_upstream(
+        request,
+        upstream,
+        state.client_addr,
+        state.is_tls,
+        authenticated_claims.as_ref(),
+    )
+    .await
+}
+
+/// Enforces `sb-auth` Sovereign Token authentication and role/capability authorization
+/// for protected routes before forwarding or serving static files.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Unauthenticated or unauthorized HTTP clients accessing protected
+///   mesh/edge routes, or forging `X-SB-Auth-*` identity headers.
+/// - **CVE / CWE Mapping:** CWE-306 (Missing Authentication for Critical Function) / CWE-863.
+/// - **Likelihood & Exploitability:** High (8/10) on edge-exposed proxy routes.
+/// - **Applied Mitigation:** Fails closed (`503`) if no `AuthVerifier` is configured on a protected
+///   route; verifies Ed25519 signature, expiration, and multi-tier revocation (`401`/`403`).
+// Conforms to RFC 9110 §11.6.1 and RFC 6750 §3 (Bearer WWW-Authenticate).
+#[allow(clippy::result_large_err)]
+fn authorize_route_request(
+    request: &Request<Incoming>,
+    space: &crate::escape::EscapeSpace,
+    state: &RequestState,
+) -> Result<Option<sb_auth::claims::SovereignClaims>, Response<HttpBody>> {
+    let requires_auth =
+        space.auth_required || space.required_role.is_some() || space.required_capability.is_some();
+    if !requires_auth {
+        return Ok(None);
+    }
+
+    let Some(verifier) = &state.auth_verifier else {
+        return Err(plain_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Authentication is required for this route, but no verifier is configured.\n",
+        ));
+    };
+
+    let Some(auth_header) = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    else {
+        let mut response = plain_response(StatusCode::UNAUTHORIZED, "Authentication required.\n");
+        response.headers_mut().insert(
+            WWW_AUTHENTICATE,
+            HeaderValue::from_static("Bearer realm=\"sb-proxy\""),
+        );
+        return Err(response);
+    };
+
+    match sb_auth::middleware::authorize_header_with_verifier(
+        verifier,
+        auth_header,
+        space.required_role.as_deref(),
+        space.required_capability.as_deref(),
+    ) {
+        Ok(claims) => Ok(Some(claims)),
+        Err(sb_auth::error::AuthError::MissingRole(_))
+        | Err(sb_auth::error::AuthError::MissingCapability(_)) => Err(plain_response(
+            StatusCode::FORBIDDEN,
+            "Insufficient permissions for this route.\n",
+        )),
+        Err(_) => {
+            let mut response = plain_response(
+                StatusCode::UNAUTHORIZED,
+                "Invalid, expired, or revoked token.\n",
+            );
+            response.headers_mut().insert(
+                WWW_AUTHENTICATE,
+                HeaderValue::from_static("Bearer realm=\"sb-proxy\", error=\"invalid_token\""),
+            );
+            Err(response)
+        }
+    }
 }
 
 async fn serve_static(
@@ -509,16 +620,29 @@ async fn proxy_upstream(
     upstream: TcpStream,
     client_addr: SocketAddr,
     is_tls: bool,
+    authenticated_claims: Option<&sb_auth::claims::SovereignClaims>,
 ) -> Response<HttpBody> {
-    // CVE-Threat: Client-controlled forwarding headers could spoof the source identity upstream.
+    // CVE-Threat: Client-controlled forwarding or identity headers could spoof source/auth upstream.
     // Analysis: Only allow-listed loopback ports or registered mesh tunnels are selected above.
-    // Hardening: Forwarding headers are replaced with values derived from the accepted socket.
+    // Hardening: Forwarding and X-SB-Auth-* headers are stripped and re-injected from verified state.
     let is_upgrade = request.headers().contains_key(hyper::header::UPGRADE);
     let client_upgrade = is_upgrade.then(|| hyper::upgrade::on(&mut request));
     strip_hop_by_hop(request.headers_mut(), is_upgrade);
     request.headers_mut().remove("x-forwarded-for");
     request.headers_mut().remove("x-forwarded-proto");
     request.headers_mut().remove("x-real-ip");
+    request.headers_mut().remove("x-sb-auth-subject");
+    request.headers_mut().remove("x-sb-auth-roles");
+    if let Some(claims) = authenticated_claims {
+        if let Ok(subject) = HeaderValue::from_str(&claims.subject) {
+            request.headers_mut().insert("x-sb-auth-subject", subject);
+        }
+        if !claims.roles.is_empty() {
+            if let Ok(roles) = HeaderValue::from_str(&claims.roles.join(",")) {
+                request.headers_mut().insert("x-sb-auth-roles", roles);
+            }
+        }
+    }
     if let Ok(value) = HeaderValue::from_str(&client_addr.ip().to_string()) {
         request
             .headers_mut()

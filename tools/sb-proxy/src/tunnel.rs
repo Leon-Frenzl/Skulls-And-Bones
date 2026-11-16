@@ -403,7 +403,7 @@ mod tests {
         });
 
         // 3. Start SovereignTunnelClient in background
-        let client = sb_code::escape::SovereignTunnelClient::new(
+        let client = crate::escape::SovereignTunnelClient::new(
             "coolapp.local",
             dev_port,
             &hub_addr.to_string(),

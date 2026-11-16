@@ -1,6 +1,0 @@
-# Local Forge data and generated build output
-.sb-forge/
-forge-secrets.local.toml
-target/
-dist/
-node_modules/

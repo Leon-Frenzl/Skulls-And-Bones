@@ -2,18 +2,12 @@
 resolver = "2"
 members = [
     "tools/sb",
-    "tools/sb-code",
-    "tools/sb-forge",
     "tools/sb-key",
     "tools/sb-mesh",
     "tools/sb-node",
     "tools/sb-proxy",
-    "tools/sb-db",
     "tools/sb-dns",
     "tools/sb-core",
-    "tools/sb-app-contract",
-    "tools/sb-app-protocol",
-    "tools/sb-drive",
     "tools/sb-auth",
     "tools/sb-ca",
 ]

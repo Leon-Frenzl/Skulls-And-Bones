@@ -266,7 +266,9 @@ fn render_ssh_status(cfg_path: &PathBuf, install_include: bool) {
             "○".bright_yellow().bold()
         },
         if kh_ca.is_file() {
-            format!("AKTIV ({})", kh_ca.display()).bright_green().to_string()
+            format!("AKTIV ({})", kh_ca.display())
+                .bright_green()
+                .to_string()
         } else {
             "INAKTIV ('sb up --fix')".bright_yellow().to_string()
         }
@@ -281,9 +283,13 @@ fn render_ssh_status(cfg_path: &PathBuf, install_include: bool) {
             "○".bright_black()
         },
         if cert_path.is_file() {
-            format!(" {}", cert_path.display()).bright_green().to_string()
+            format!(" {}", cert_path.display())
+                .bright_green()
+                .to_string()
         } else {
-            " Standard-Key (kein lokaler ~/.ssh/id_ed25519.pub zum Signieren)".bright_black().to_string()
+            " Standard-Key (kein lokaler ~/.ssh/id_ed25519.pub zum Signieren)"
+                .bright_black()
+                .to_string()
         }
     );
 
@@ -308,9 +314,24 @@ fn render_ssh_status(cfg_path: &PathBuf, install_include: bool) {
     }
 
     println!("\n  {} Befehle:", "i".bright_cyan());
-    println!("    • Interaktive Shell:  {}", "sb ssh <server>".bright_yellow().bold());
-    println!("    • Remote-Befehl:      {}", "sb ssh exec <server> <cmd>".bright_yellow());
-    println!("    • Datei-Upload (SCP): {}", "sb ssh push <server> <local> [remote]".bright_yellow());
-    println!("    • Datei-Download:     {}", "sb ssh pull <server> <remote> [local]".bright_yellow());
-    println!("    • ~/.ssh/config Hook: {}\n", "sb ssh config".bright_yellow());
+    println!(
+        "    • Interaktive Shell:  {}",
+        "sb ssh <server>".bright_yellow().bold()
+    );
+    println!(
+        "    • Remote-Befehl:      {}",
+        "sb ssh exec <server> <cmd>".bright_yellow()
+    );
+    println!(
+        "    • Datei-Upload (SCP): {}",
+        "sb ssh push <server> <local> [remote]".bright_yellow()
+    );
+    println!(
+        "    • Datei-Download:     {}",
+        "sb ssh pull <server> <remote> [local]".bright_yellow()
+    );
+    println!(
+        "    • ~/.ssh/config Hook: {}\n",
+        "sb ssh config".bright_yellow()
+    );
 }

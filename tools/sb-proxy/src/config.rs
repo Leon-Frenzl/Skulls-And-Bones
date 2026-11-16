@@ -1,4 +1,4 @@
-use sb_code::escape::{
+use crate::escape::{
     validate_domain, validate_target_port, EscapeSpace, EscapeSpaceStore, EscapeStatus,
 };
 
@@ -111,6 +111,45 @@ impl ProxyConfig {
                 query
             ))
         }
+    }
+
+    /// Configures `sb-auth` enforcement (authentication, optional role, optional capability) for a route.
+    pub fn set_auth(
+        query: &str,
+        auth_required: bool,
+        required_role: Option<String>,
+        required_capability: Option<String>,
+    ) -> Result<EscapeSpace, String> {
+        let q = query.trim().to_lowercase();
+        let mut store = EscapeSpaceStore::load();
+        let Some(space) = store
+            .spaces
+            .iter_mut()
+            .find(|s| s.id == q || s.domain.to_lowercase() == q)
+        else {
+            return Err(format!(
+                "Keine Route mit Kennung oder Domain '{}' gefunden",
+                query
+            ));
+        };
+
+        if auth_required {
+            space.auth_required = true;
+            space.required_role = required_role
+                .map(|r| r.trim().to_string())
+                .filter(|r| !r.is_empty());
+            space.required_capability = required_capability
+                .map(|c| c.trim().to_string())
+                .filter(|c| !c.is_empty());
+        } else {
+            space.auth_required = false;
+            space.required_role = None;
+            space.required_capability = None;
+        }
+
+        let updated = space.clone();
+        store.save()?;
+        Ok(updated)
     }
 
     /// Sets maintenance mode for a route.

@@ -202,7 +202,9 @@ mod tests {
 
     #[test]
     fn test_spawn_and_track() {
-        let _env_guard = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env_guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut child = if cfg!(windows) {
             std::process::Command::new("powershell")
                 .args(&["-Command", "Start-Sleep -Seconds 5"])
@@ -232,7 +234,9 @@ mod tests {
 
     #[test]
     fn test_service_supervisor_builder_lifecycle() {
-        let _env_guard = crate::TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env_guard = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let svc_name = format!("test-sleep-svc-{}", std::process::id());
         let supervisor = if cfg!(windows) {
             ServiceSupervisor::new(&svc_name)

@@ -2,6 +2,7 @@ pub mod acme;
 pub mod ca;
 pub mod config;
 pub mod discovery;
+pub mod escape;
 pub mod http_server;
 pub mod ipc;
 pub mod link;
@@ -27,7 +28,7 @@ pub use tunnel::{SovereignTunnelHub, TunnelMetadataDto};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sb_code::escape::validate_target_port;
+    use crate::escape::validate_target_port;
 
     #[test]
     fn test_airgap_protected_ports_cannot_be_proxied() {
@@ -87,12 +88,12 @@ mod tests {
         let status =
             ProxyConfig::set_maintenance(&unique_domain, Some("Wartung aktiv".into()), true);
         assert!(status.is_ok(), "set_maintenance failed: {:?}", status.err());
-        assert_eq!(status.unwrap(), sb_code::escape::EscapeStatus::Maintenance);
+        assert_eq!(status.unwrap(), crate::escape::EscapeStatus::Maintenance);
 
         // Turn off maintenance mode
         let resume = ProxyConfig::set_maintenance(&unique_domain, None, false);
         assert!(resume.is_ok(), "resume failed: {:?}", resume.err());
-        assert_eq!(resume.unwrap(), sb_code::escape::EscapeStatus::Active);
+        assert_eq!(resume.unwrap(), crate::escape::EscapeStatus::Active);
     }
 
     #[test]

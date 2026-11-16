@@ -438,3 +438,49 @@ fn read_name(bytes: &[u8], mut pos: usize) -> Result<(String, usize), String> {
 
     Ok((parts.join("."), return_pos))
 }
+
+/// Validates that a received DNS response strictly matches the outstanding query.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Off-path DNS response spoofing / cache poisoning via mismatched
+///   transaction ID, non-response QR bit, or forged Question section.
+/// - **CVE / CWE Mapping:** CWE-345 (Insufficient Verification of Data Authenticity) / CWE-290.
+/// - **Likelihood & Exploitability:** Medium (5/10) on untrusted or shared network paths when
+///   receiving UDP/TCP DNS replies.
+/// - **Applied Mitigation:** Enforces strict transaction ID equality, `MessageType::Response`,
+///   and 1:1 Question section matching (query type, query class, and case-insensitive FQDN-normalized name).
+// Conforms to RFC 1035 §2.3.3 / §4.1.1 and RFC 5452 §9.1
+pub(crate) fn validate_dns_response(
+    request: &hickory_proto::op::Message,
+    response: &hickory_proto::op::Message,
+    expected_id: u16,
+    err_msg: &str,
+) -> Result<(), String> {
+    if response.id != expected_id
+        || response.message_type != hickory_proto::op::MessageType::Response
+        || response.queries.len() != request.queries.len()
+    {
+        return Err(err_msg.to_string());
+    }
+
+    let queries_match =
+        request
+            .queries
+            .iter()
+            .zip(response.queries.iter())
+            .all(|(expected, actual)| {
+                expected.query_type() == actual.query_type()
+                    && expected.query_class() == actual.query_class()
+                    && expected
+                        .name()
+                        .to_ascii()
+                        .trim_end_matches('.')
+                        .eq_ignore_ascii_case(actual.name().to_ascii().trim_end_matches('.'))
+            });
+
+    if !queries_match {
+        return Err(err_msg.to_string());
+    }
+
+    Ok(())
+}

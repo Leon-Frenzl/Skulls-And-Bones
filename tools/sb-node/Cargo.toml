@@ -31,8 +31,6 @@ ed25519-dalek = "2.2"
 x25519-dalek = "2.0"
 sb-core = { version = "0.2.0", path = "../sb-core" }
 sb-mesh = { version = "0.3.0", path = "../sb-mesh" }
-sb-db = { version = "0.2.0", path = "../sb-db" }
-sb-code = { version = "0.1.0", path = "../sb-code" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }

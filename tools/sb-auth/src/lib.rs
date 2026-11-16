@@ -32,7 +32,7 @@ pub mod prelude {
         generate_totp_code, generate_totp_secret, hash_password, verify_password, verify_totp_code,
         Keypair,
     };
-    pub use crate::engine::{AuthEngine, SessionTokens};
+    pub use crate::engine::{AuthEngine, AuthVerifier, SessionTokens};
     pub use crate::error::AuthError;
     pub use crate::middleware::{authenticate_header, authorize_header, extract_bearer_token};
     pub use crate::revocation::RevocationManager;

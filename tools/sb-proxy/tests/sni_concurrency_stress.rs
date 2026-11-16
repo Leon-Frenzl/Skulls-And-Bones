@@ -5,7 +5,7 @@
 //! - Conforms to IETF RFC 8446 (TLS 1.3)
 //! - Conforms to IETF RFC 5280 (Internet X.509 PKI Profile)
 
-use sb_code::escape::EscapeSpaceStore;
+use sb_proxy::escape::EscapeSpaceStore;
 use sb_proxy::ca::DeveloperCa;
 use sb_proxy::proxy::DynamicSniResolver;
 use std::sync::{Arc, Barrier, RwLock};
@@ -60,7 +60,9 @@ fn test_cache_stampede_single_domain_60_threads() {
 
     let mut results = Vec::with_capacity(thread_count);
     for h in handles {
-        let res = h.join().expect("Thread panicked during stampede stress test");
+        let res = h
+            .join()
+            .expect("Thread panicked during stampede stress test");
         results.push(res);
     }
 
@@ -77,10 +79,7 @@ fn test_cache_stampede_single_domain_60_threads() {
             "Thread {} failed to receive certificate during stampede",
             idx
         );
-        println!(
-            "  - Thread {:02} resolved in {:?}",
-            idx, elapsed
-        );
+        println!("  - Thread {:02} resolved in {:?}", idx, elapsed);
     }
 
     // Verify that the domain is now cached in RAM
@@ -251,7 +250,11 @@ fn test_concurrent_resolution_100_distinct_domains() {
             let mut resolved = 0;
             for i in start_idx..end_idx {
                 let cert = res.resolve_for_server_name(&doms[i]);
-                assert!(cert.is_some(), "Failed resolving distinct domain {}", doms[i]);
+                assert!(
+                    cert.is_some(),
+                    "Failed resolving distinct domain {}",
+                    doms[i]
+                );
                 resolved += 1;
             }
             resolved
@@ -371,9 +374,15 @@ fn test_mixed_reads_writes_and_stampede() {
     let established_domain_2 = unique_domain("established-2", "mesh");
     let established_domain_3 = unique_domain("established-3", "local");
 
-    let cert_1 = resolver.resolve_for_server_name(&established_domain_1).unwrap();
-    let cert_2 = resolver.resolve_for_server_name(&established_domain_2).unwrap();
-    let cert_3 = resolver.resolve_for_server_name(&established_domain_3).unwrap();
+    let cert_1 = resolver
+        .resolve_for_server_name(&established_domain_1)
+        .unwrap();
+    let cert_2 = resolver
+        .resolve_for_server_name(&established_domain_2)
+        .unwrap();
+    let cert_3 = resolver
+        .resolve_for_server_name(&established_domain_3)
+        .unwrap();
 
     let established = Arc::new(vec![
         (established_domain_1, cert_1),
@@ -404,7 +413,9 @@ fn test_mixed_reads_writes_and_stampede() {
             for i in 0..1000 {
                 let idx = (r + i) % est.len();
                 let (d, expected_ptr) = &est[idx];
-                let c = res.resolve_for_server_name(d).expect("Reader lookup must succeed");
+                let c = res
+                    .resolve_for_server_name(d)
+                    .expect("Reader lookup must succeed");
                 assert!(
                     Arc::ptr_eq(&c, expected_ptr),
                     "Arc::ptr_eq violated during mixed read/write stress"
@@ -463,4 +474,3 @@ fn test_mixed_reads_writes_and_stampede() {
 
     println!("[MIXED WORKLOAD] Cache integrity and pointer equality 100% verified.");
 }
-

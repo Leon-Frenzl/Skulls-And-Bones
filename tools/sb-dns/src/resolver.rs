@@ -3,7 +3,7 @@ use crate::directory::{
     AuthorityTrust, DirectoryError, DirectorySnapshot, NodeRecord, RecordState, RevisionCursor,
     ServiceProtocol, ServiceRecord,
 };
-use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
+use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode, UpdateMessage};
 use hickory_proto::rr::rdata::SRV;
 use hickory_proto::rr::{DNSClass, Name, RData, Record, RecordType};
 use sha2::{Digest, Sha256};
@@ -257,17 +257,17 @@ impl DnsResolver {
     }
 
     pub async fn resolve(&self, query: &Message) -> Result<Message, String> {
-        if query.message_type() != MessageType::Query {
+        if query.metadata.message_type != MessageType::Query {
             return Ok(self.response(query, ResponseCode::FormErr, false));
         }
-        if query.op_code() != OpCode::Query {
+        if query.metadata.op_code != OpCode::Query {
             return Ok(self.response(query, ResponseCode::NotImp, false));
         }
-        if query.queries().len() != 1 {
+        if query.queries.len() != 1 {
             return Ok(self.response(query, ResponseCode::FormErr, false));
         }
 
-        let question = &query.queries()[0];
+        let question = &query.queries[0];
         if question.query_class() != DNSClass::IN {
             return Ok(self.response(query, ResponseCode::Refused, false));
         }
@@ -303,7 +303,7 @@ impl DnsResolver {
                 Ok(response) => {
                     self.cache_response(cache_key.clone(), &response);
                     let mut response = response;
-                    response.set_id(query.id());
+                    response.metadata.id = query.id();
                     return Ok(response);
                 }
                 Err(error) => last_error = Some(error),
@@ -317,16 +317,12 @@ impl DnsResolver {
     }
 
     fn response(&self, query: &Message, code: ResponseCode, authoritative: bool) -> Message {
-        let mut response = Message::new();
-        response
-            .set_id(query.id())
-            .set_message_type(MessageType::Response)
-            .set_op_code(query.op_code())
-            .set_authoritative(authoritative)
-            .set_recursion_desired(query.recursion_desired())
-            .set_recursion_available(self.config.enable_upstream_forwarding)
-            .set_response_code(code);
-        for question in query.queries() {
+        let mut response = Message::new(query.id(), MessageType::Response, query.metadata.op_code);
+        response.metadata.recursion_desired = query.metadata.recursion_desired;
+        response.metadata.recursion_available = self.config.enable_upstream_forwarding;
+        response.metadata.authoritative = authoritative;
+        response.metadata.response_code = code;
+        for question in &query.queries {
             response.add_query(question.clone());
         }
         response
@@ -550,20 +546,20 @@ impl DnsResolver {
         match cache.get(key) {
             Some(entry) if now < entry.expires_at => {
                 let mut message = entry.message.clone();
-                message.set_id(id);
+                message.metadata.id = id;
                 let remaining_ttl = entry
                     .expires_at
                     .duration_since(now)
                     .as_secs()
                     .min(u32::MAX as u64) as u32;
-                for record in message.answers_mut() {
-                    record.set_ttl(record.ttl().min(remaining_ttl));
+                for record in message.answers.iter_mut() {
+                    record.ttl = record.ttl.min(remaining_ttl);
                 }
-                for record in message.name_servers_mut() {
-                    record.set_ttl(record.ttl().min(remaining_ttl));
+                for record in message.authorities.iter_mut() {
+                    record.ttl = record.ttl.min(remaining_ttl);
                 }
-                for record in message.additionals_mut() {
-                    record.set_ttl(record.ttl().min(remaining_ttl));
+                for record in message.additionals.iter_mut() {
+                    record.ttl = record.ttl.min(remaining_ttl);
                 }
                 Some(message)
             }
@@ -576,10 +572,10 @@ impl DnsResolver {
     }
 
     fn cache_response(&self, key: String, message: &Message) {
-        if self.config.cache_size == 0 || message.answers().is_empty() {
+        if self.config.cache_size == 0 || message.answers.is_empty() {
             return;
         }
-        let ttl = message.answers().iter().map(Record::ttl).min().unwrap_or(0);
+        let ttl = message.answers.iter().map(|r| r.ttl).min().unwrap_or(0);
         if ttl == 0 {
             return;
         }
@@ -602,7 +598,7 @@ impl DnsResolver {
             }
         }
         let mut cached = message.clone();
-        cached.set_id(0);
+        cached.metadata.id = 0;
         cache.insert(
             key,
             CacheEntry {
@@ -631,7 +627,7 @@ fn service_srv_owner(service: &ServiceRecord) -> Option<String> {
 async fn forward_query(upstream: SocketAddr, query: &Message) -> Result<Message, String> {
     let mut forwarded = query.clone();
     let request_id = rand::random::<u16>();
-    forwarded.set_id(request_id);
+    forwarded.metadata.id = request_id;
     let request_bytes = forwarded
         .to_vec()
         .map_err(|error| format!("DNS query encoding failed: {error}"))?;
@@ -665,7 +661,7 @@ async fn forward_query(upstream: SocketAddr, query: &Message) -> Result<Message,
     let mut response = Message::from_vec(&response_bytes)
         .map_err(|error| format!("DNS upstream response is malformed: {error}"))?;
     validate_upstream_response(&forwarded, &response, request_id)?;
-    if response.truncated() {
+    if response.metadata.truncation {
         response = forward_query_tcp(upstream, &request_bytes, request_id, &forwarded).await?;
     }
     Ok(response)
@@ -711,13 +707,12 @@ fn validate_upstream_response(
     response: &Message,
     expected_id: u16,
 ) -> Result<(), String> {
-    if response.id() != expected_id
-        || response.message_type() != MessageType::Response
-        || response.queries() != query.queries()
-    {
-        return Err("DNS upstream response does not match the outstanding query".to_string());
-    }
-    Ok(())
+    crate::protocol::validate_dns_response(
+        query,
+        response,
+        expected_id,
+        "DNS upstream response does not match the outstanding query",
+    )
 }
 
 #[cfg(test)]
@@ -731,18 +726,11 @@ mod tests {
     use tokio::net::UdpSocket;
 
     fn query(name: &str, query_type: RecordType) -> Message {
-        let mut question = Query::new();
-        question
-            .set_name(Name::from_ascii(name).unwrap())
-            .set_query_type(query_type)
-            .set_query_class(DNSClass::IN);
-        let mut message = Message::new();
-        message
-            .set_id(100)
-            .set_message_type(MessageType::Query)
-            .set_op_code(OpCode::Query)
-            .set_recursion_desired(true)
-            .add_query(question);
+        let name = Name::from_ascii(name).unwrap();
+        let query = Query::query(name, query_type);
+        let mut message = Message::new(100, MessageType::Query, OpCode::Query);
+        message.metadata.recursion_desired = true;
+        message.add_query(query);
         message
     }
 
@@ -795,14 +783,14 @@ mod tests {
             .resolve(&query("anchor-01.dev.sbm", RecordType::A))
             .await
             .unwrap();
-        assert_eq!(response.response_code(), ResponseCode::NoError);
-        assert!(response.authoritative());
-        assert_eq!(response.answers().len(), 1);
+        assert_eq!(response.metadata.response_code, ResponseCode::NoError);
+        assert!(response.metadata.authoritative);
+        assert_eq!(response.answers.len(), 1);
         assert_eq!(
-            response.answers()[0].data(),
-            Some(&RData::A(A::from(Ipv4Addr::new(10, 42, 0, 1))))
+            response.answers[0].data,
+            RData::A(A::from(Ipv4Addr::new(10, 42, 0, 1)))
         );
-        assert!(response.answers()[0].ttl() <= 300);
+        assert!(response.answers[0].ttl <= 300);
     }
 
     #[tokio::test]
@@ -834,8 +822,8 @@ mod tests {
             .resolve(&query("anchor-01.dev.sbm", RecordType::A))
             .await
             .unwrap();
-        assert_eq!(response.answers().len(), 1);
-        assert!(response.answers()[0].ttl() <= 50);
+        assert_eq!(response.answers.len(), 1);
+        assert!(response.answers[0].ttl <= 50);
 
         let mut forged_node = node_record_at(&key, 2, Ipv4Addr::new(10, 42, 0, 2));
         forged_node.owner_id = "tampered-after-signing".to_string();
@@ -861,8 +849,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            unchanged.answers()[0].data(),
-            Some(&RData::A(A::from(Ipv4Addr::new(10, 42, 0, 1))))
+            unchanged.answers[0].data,
+            RData::A(A::from(Ipv4Addr::new(10, 42, 0, 1)))
         );
 
         let valid_update = DirectorySnapshot::sign(
@@ -886,8 +874,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            updated.answers()[0].data(),
-            Some(&RData::A(A::from(Ipv4Addr::new(10, 42, 0, 2))))
+            updated.answers[0].data,
+            RData::A(A::from(Ipv4Addr::new(10, 42, 0, 2)))
         );
     }
 
@@ -910,8 +898,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.response_code(), ResponseCode::NXDomain);
-        assert!(response.authoritative());
+        assert_eq!(response.metadata.response_code, ResponseCode::NXDomain);
+        assert!(response.metadata.authoritative);
         assert!(!receive.await.unwrap());
     }
 
@@ -924,7 +912,7 @@ mod tests {
             let (length, peer) = upstream.recv_from(&mut bytes).await.unwrap();
             let request = Message::from_vec(&bytes[..length]).unwrap();
             let mut answer = request.clone();
-            answer.set_message_type(MessageType::Response);
+            answer.metadata.message_type = MessageType::Response;
             answer.add_answer(Record::from_rdata(
                 Name::from_ascii("example.com").unwrap(),
                 25,
@@ -944,17 +932,17 @@ mod tests {
             .await
             .unwrap();
         responder.await.unwrap();
-        assert_eq!(first.answers().len(), 1);
-        assert_eq!(first.id(), 100);
+        assert_eq!(first.answers.len(), 1);
+        assert_eq!(first.metadata.id, 100);
 
         let second_query = {
             let mut q = query("example.com", RecordType::A);
-            q.set_id(101);
+            q.metadata.id = 101;
             q
         };
         let second = resolver.resolve(&second_query).await.unwrap();
-        assert_eq!(second.id(), 101);
-        assert_eq!(second.answers().len(), 1);
+        assert_eq!(second.metadata.id, 101);
+        assert_eq!(second.answers.len(), 1);
     }
 
     #[tokio::test]
@@ -989,16 +977,17 @@ mod tests {
             .resolve(&query("_api._tcp.dev.sbm", RecordType::SRV))
             .await
             .unwrap();
-        assert_eq!(srv.answers().len(), 1);
-        assert_eq!(srv.answers()[0].record_type(), RecordType::SRV);
-        assert_eq!(srv.answers()[0].name().to_ascii(), "_api._tcp.dev.sbm");
-        assert!(srv.answers()[0].ttl() <= 300);
+        assert_eq!(srv.answers.len(), 1);
+        assert_eq!(srv.answers[0].record_type(), RecordType::SRV);
+        assert_eq!(srv.answers[0].name.to_ascii(), "_api._tcp.dev.sbm");
+        assert!(srv.answers[0].ttl <= 300);
         assert_eq!(
             resolver
                 .resolve(&query("api.dev.sbm", RecordType::SRV))
                 .await
                 .unwrap()
-                .response_code(),
+                .metadata
+                .response_code,
             ResponseCode::NoError
         );
     }
@@ -1007,16 +996,26 @@ mod tests {
     async fn rejects_multi_question_and_non_in_queries() {
         let resolver = DnsResolver::new(DnsConfig::default(), RecordsConfig::default());
         let mut multiple = query("example.com", RecordType::A);
-        multiple.add_query(query("example.net", RecordType::A).queries()[0].clone());
+        multiple.add_query(query("example.net", RecordType::A).queries[0].clone());
         assert_eq!(
-            resolver.resolve(&multiple).await.unwrap().response_code(),
+            resolver
+                .resolve(&multiple)
+                .await
+                .unwrap()
+                .metadata
+                .response_code,
             ResponseCode::FormErr
         );
 
         let mut chaos = query("example.com", RecordType::A);
-        chaos.queries_mut()[0].set_query_class(DNSClass::CH);
+        chaos.queries[0].set_query_class(DNSClass::CH);
         assert_eq!(
-            resolver.resolve(&chaos).await.unwrap().response_code(),
+            resolver
+                .resolve(&chaos)
+                .await
+                .unwrap()
+                .metadata
+                .response_code,
             ResponseCode::Refused
         );
     }

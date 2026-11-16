@@ -1,7 +1,7 @@
 #[cfg(test)]
 use chrono::Duration as ChronoDuration;
 use chrono::{DateTime, Utc};
-use sb_code::escape::EscapeSpaceStore;
+use crate::escape::EscapeSpaceStore;
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::path::Path;

@@ -1,8 +1,8 @@
 use crate::acme::AcmeChallengeStore;
-use crate::http_server::{serve_connection, SecurityHeaders};
+use crate::http_server::{serve_connection_with_auth, SecurityHeaders};
 use crate::ipc::ProxyTelemetry;
 use crate::ratelimit::IpRateLimiter;
-use sb_code::escape::{validate_target_port, EscapeSpaceStore, EscapeStatus};
+use crate::escape::{validate_target_port, EscapeSpaceStore, EscapeStatus};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
@@ -117,7 +117,10 @@ impl DynamicSniResolver {
     /// Checks if a certificate for `domain` is cached in RAM memory.
     pub fn is_cached(&self, domain: &str) -> bool {
         let clean = domain.trim_end_matches('.').to_ascii_lowercase();
-        self.cert_cache.read().map(|c| c.contains_key(&clean)).unwrap_or(false)
+        self.cert_cache
+            .read()
+            .map(|c| c.contains_key(&clean))
+            .unwrap_or(false)
     }
 
     /// Exposes a clone of the in-memory certificate cache Arc for inspection.
@@ -168,7 +171,8 @@ impl DynamicSniResolver {
             || d.contains(':')
             || d.contains('[')
             || d.contains(']')
-            || d.chars().any(|c| c.is_ascii_whitespace() || c.is_ascii_control())
+            || d.chars()
+                .any(|c| c.is_ascii_whitespace() || c.is_ascii_control())
         {
             return false;
         }
@@ -179,7 +183,10 @@ impl DynamicSniResolver {
         }
 
         // Hostname labels must consist solely of valid ASCII alphanumeric, hyphen, underscore, and dots
-        if !d.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_') {
+        if !d
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+        {
             return false;
         }
 
@@ -265,7 +272,7 @@ impl DynamicSniResolver {
     /// - Likelihood & Exploitability: High (Score: 8/10) without early pre-filtering under denial-of-service attempts.
     ///   * Threat Condition: Untrusted client initiates rapid TLS handshakes specifying malformed, wildcard, or traversal hostnames
     ///     to force repeated disk checks, mutex contention, and certificate resolution.
-    /// - Applied Mitigation: 
+    /// - Applied Mitigation:
     ///   1. Early fail-closed SNI pre-filtering rejecting wildcards ('*'), colons (':'), traversal ('/', '\\', ".."), null bytes ('\0'),
     ///      whitespace, control characters, leading dots, and invalid labels before RAM cache, route store, or disk inspection.
     ///   2. Sub-microsecond RAM cache (RwLock<HashMap>) short-circuits repeatedly resolved domains.
@@ -292,8 +299,12 @@ impl DynamicSniResolver {
             || name_clean.contains('\0')
             || name_clean.contains("..")
             || name_clean.starts_with('.')
-            || name_clean.chars().any(|c| c.is_ascii_whitespace() || c.is_ascii_control())
-            || !name_clean.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+            || name_clean
+                .chars()
+                .any(|c| c.is_ascii_whitespace() || c.is_ascii_control())
+            || !name_clean
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
         {
             return self.fallback_cert.clone();
         }
@@ -350,11 +361,7 @@ impl DynamicSniResolver {
                     }
                 }
                 Err(err) => {
-                    log::warn!(
-                        "On-demand CA issuance failed for {}: {}",
-                        name_clean,
-                        err
-                    );
+                    log::warn!("On-demand CA issuance failed for {}: {}", name_clean, err);
                 }
             }
         }
@@ -780,6 +787,7 @@ pub async fn run_dual_proxy_server_with_acme(
 
     let tele_for_gateway = telemetry.clone();
     let routes_for_gateway = routes.clone();
+    let auth_verifier = load_auth_verifier();
     if let Some(email) = &acme_email {
         println!(
             "  🔐 ACME TLS-ALPN-01: {} ({}; Cache: {})",
@@ -852,6 +860,7 @@ pub async fn run_dual_proxy_server_with_acme(
                         let headers = security_headers.clone();
                         let challenge_config = challenge_rustls_config.clone();
                         let default_config = default_rustls_config.clone();
+                        let auth = auth_verifier.clone();
 
                         tokio::spawn(async move {
                             match LazyConfigAcceptor::new(Default::default(), stream).await {
@@ -867,9 +876,9 @@ pub async fn run_dual_proxy_server_with_acme(
                                     } else {
                                         match start_handshake.into_stream(default_config).await {
                                             Ok(tls_stream) => {
-                                                if let Err(error) = serve_connection(
+                                                if let Err(error) = serve_connection_with_auth(
                                                     tls_stream, addr, true, limiter, tele, rts,
-                                                    headers,
+                                                    headers, auth,
                                                 )
                                                 .await
                                                 {
@@ -934,11 +943,12 @@ pub async fn run_dual_proxy_server_with_acme(
                         let rts = routes_for_gateway.clone();
                         let acc = tls_acceptor.clone();
                         let headers = security_headers.clone();
+                        let auth = auth_verifier.clone();
                         tokio::spawn(async move {
                             match acc.accept(stream).await {
                                 Ok(tls_stream) => {
-                                    if let Err(error) = serve_connection(
-                                        tls_stream, addr, true, limiter, tele, rts, headers,
+                                    if let Err(error) = serve_connection_with_auth(
+                                        tls_stream, addr, true, limiter, tele, rts, headers, auth,
                                     )
                                     .await
                                     {
@@ -980,10 +990,12 @@ pub async fn run_dual_proxy_server_with_acme(
                         let tele = tele_for_gateway.clone();
                         let rts = routes_for_gateway.clone();
                         let headers = security_headers.clone();
+                        let auth = auth_verifier.clone();
                         tokio::spawn(async move {
-                            if let Err(error) =
-                                serve_connection(stream, addr, false, limiter, tele, rts, headers)
-                                    .await
+                            if let Err(error) = serve_connection_with_auth(
+                                stream, addr, false, limiter, tele, rts, headers, auth,
+                            )
+                            .await
                             {
                                 eprintln!(
                                     "{}",
@@ -1563,10 +1575,45 @@ where
     Ok(())
 }
 
+/// Loads the `sb-auth` public-key-only verifier from `SB_AUTH_PUBLIC_KEY` or `~/.sb/auth/auth.pub`
+/// together with the local revocation store (`SB_AUTH_REVOCATIONS` or `~/.sb/auth/revocations.json`).
+fn load_auth_verifier() -> Option<Arc<sb_auth::AuthVerifier>> {
+    let pub_key = std::env::var("SB_AUTH_PUBLIC_KEY").ok().or_else(|| {
+        let path = dirs::home_dir()?.join(".sb").join("auth").join("auth.pub");
+        std::fs::read_to_string(path).ok()
+    })?;
+    let pub_key = pub_key.trim();
+    if pub_key.is_empty() {
+        return None;
+    }
+
+    let revocation_path = std::env::var("SB_AUTH_REVOCATIONS")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            dirs::home_dir().map(|h| h.join(".sb").join("auth").join("revocations.json"))
+        })?;
+    let store = match sb_auth::FileRevocationStore::open(&revocation_path) {
+        Ok(store) => Arc::new(store),
+        Err(error) => {
+            eprintln!("  ⚠ sb-auth RevocationStore konnte nicht geöffnet werden: {error}");
+            return None;
+        }
+    };
+
+    match sb_auth::AuthVerifier::from_public_base64(pub_key, store) {
+        Ok(verifier) => Some(Arc::new(verifier)),
+        Err(error) => {
+            eprintln!("  ⚠ sb-auth Public Key ungültig: {error}");
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sb_code::escape::EscapeSpace;
+    use crate::escape::EscapeSpace;
 
     #[test]
     fn test_dynamic_sni_resolver_fallback_and_route_matching() {
@@ -1591,6 +1638,9 @@ mod tests {
                 is_tunnel: false,
                 tunnel_peer: None,
                 static_root: None,
+                auth_required: false,
+                required_role: None,
+                required_capability: None,
             }],
         };
         let routes = Arc::new(RwLock::new(store));
@@ -1619,8 +1669,14 @@ mod tests {
 
         // First resolution: On-Demand minting
         let cert1 = resolver.resolve_for_server_name(&domain);
-        assert!(cert1.is_some(), "Should dynamically issue cert for .sbm domain");
-        assert!(resolver.is_cached(&domain), "Domain must now be cached in RAM");
+        assert!(
+            cert1.is_some(),
+            "Should dynamically issue cert for .sbm domain"
+        );
+        assert!(
+            resolver.is_cached(&domain),
+            "Domain must now be cached in RAM"
+        );
         assert_eq!(resolver.cached_certs_count(), 1);
 
         // Second resolution: Sub-microsecond RAM Cache hit
@@ -1639,11 +1695,15 @@ mod tests {
         let resolver = DynamicSniResolver::new(None, routes, None);
 
         // Public/unregistered domains must not trigger on-demand generation
-        assert!(resolver.resolve_for_server_name("evil-attacker.com").is_none());
+        assert!(resolver
+            .resolve_for_server_name("evil-attacker.com")
+            .is_none());
         assert!(!resolver.is_cached("evil-attacker.com"));
 
         // Path traversals and control characters must be rejected by eligibility gate
-        assert!(resolver.resolve_for_server_name("../../etc/shadow").is_none());
+        assert!(resolver
+            .resolve_for_server_name("../../etc/shadow")
+            .is_none());
         assert!(resolver.resolve_for_server_name("bad\\node.sbm").is_none());
     }
 
@@ -1673,13 +1733,19 @@ mod tests {
                 is_tunnel: false,
                 tunnel_peer: None,
                 static_root: None,
+                auth_required: false,
+                required_role: None,
+                required_capability: None,
             }],
         };
         let routes = Arc::new(RwLock::new(store));
         let resolver = DynamicSniResolver::new(None, routes, None);
 
         let cert = resolver.resolve_for_server_name(&route_domain);
-        assert!(cert.is_some(), "Active route without custom certs must be eligible for on-demand TLS");
+        assert!(
+            cert.is_some(),
+            "Active route without custom certs must be eligible for on-demand TLS"
+        );
         assert!(resolver.is_cached(&route_domain));
     }
 

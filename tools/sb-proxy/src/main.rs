@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use colored::*;
-use sb_code::escape::verify_domain_dns;
+use sb_proxy::escape::verify_domain_dns;
 use sb_proxy::ca::DeveloperCa;
 use sb_proxy::config::ProxyConfig;
 use sb_proxy::tui::run_tui;
@@ -35,6 +35,30 @@ enum Commands {
         /// Node Callsign (Standard: hostinger-node)
         #[arg(short, long, default_value = "hostinger-node")]
         node: String,
+        /// Erzwingt sb-auth Sovereign Token Authentisierung für diese Route
+        #[arg(long)]
+        auth: bool,
+        /// Erforderliche sb-auth Rolle (impliziert --auth)
+        #[arg(long)]
+        role: Option<String>,
+        /// Erforderliche sb-auth Capability (impliziert --auth)
+        #[arg(long)]
+        capability: Option<String>,
+    },
+
+    /// Konfiguriert sb-auth Zugriffsschutz (Token, Rolle, Capability) für eine bestehende Route
+    Protect {
+        /// Domain oder ID der Route
+        target: String,
+        /// Erforderliche sb-auth Rolle
+        #[arg(long)]
+        role: Option<String>,
+        /// Erforderliche sb-auth Capability
+        #[arg(long)]
+        capability: Option<String>,
+        /// Deaktiviert den Auth-Schutz wieder (macht die Route öffentlich)
+        #[arg(long)]
+        disable: bool,
     },
 
     /// Veröffentlicht ein statisches Verzeichnis auf einer Domain (ohne Upstream-Prozess)
@@ -270,21 +294,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("{}", "──────────────────────────────────────────────────────────────────────────────────────────".bright_black());
                 for s in spaces {
                     let status_str = match s.status {
-                        sb_code::escape::EscapeStatus::Active => {
+                        sb_proxy::escape::EscapeStatus::Active => {
                             if let Some(ref exp) = s.expires_at {
                                 format!("⏳ PREVIEW (bis {})", &exp[11..16]).bright_cyan()
                             } else {
                                 "🟢 LIVE (200 OK)".green()
                             }
                         }
-                        sb_code::escape::EscapeStatus::Paused => "⏸️ PAUSED (503)".yellow(),
-                        sb_code::escape::EscapeStatus::Maintenance => {
+                        sb_proxy::escape::EscapeStatus::Paused => "⏸️ PAUSED (503)".yellow(),
+                        sb_proxy::escape::EscapeStatus::Maintenance => {
                             "🛠️ WARTUNG (503)".bright_magenta()
                         }
-                        sb_code::escape::EscapeStatus::DnsPending => {
+                        sb_proxy::escape::EscapeStatus::DnsPending => {
                             "⏳ DNS PENDING".bright_yellow()
                         }
-                        sb_code::escape::EscapeStatus::Error(e) => {
+                        sb_proxy::escape::EscapeStatus::Error(e) => {
                             format!("❌ FEHLER: {}", e).red()
                         }
                     };
@@ -303,12 +327,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         |root| format!("static: {}", root),
                     );
 
+                    let auth_badge = if s.auth_required
+                        || s.required_role.is_some()
+                        || s.required_capability.is_some()
+                    {
+                        let mut parts = Vec::new();
+                        if let Some(ref r) = s.required_role {
+                            parts.push(format!("role={r}"));
+                        }
+                        if let Some(ref c) = s.required_capability {
+                            parts.push(format!("cap={c}"));
+                        }
+                        if parts.is_empty() {
+                            " [AUTH]".bright_yellow().to_string()
+                        } else {
+                            format!(" [AUTH: {}]", parts.join(", "))
+                                .bright_yellow()
+                                .to_string()
+                        }
+                    } else {
+                        String::new()
+                    };
+
                     println!(
-                        "{:<30} {:<36} {:<22} {:<15}",
+                        "{:<30} {:<36} {:<22} {:<15}{}",
                         domain_display,
                         target_display.cyan(),
                         status_str,
-                        s.node_callsign.dimmed()
+                        s.node_callsign.dimmed(),
+                        auth_badge
                     );
                 }
             }
@@ -319,6 +366,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             target_port,
             alias,
             node,
+            auth,
+            role,
+            capability,
         }) => {
             let resolved_port = match target_port {
                 Some(p) => p,
@@ -344,7 +394,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             };
 
             match ProxyConfig::add_route(&domain, resolved_port, &node) {
-                Ok(space) => {
+                Ok(mut space) => {
+                    if auth || role.is_some() || capability.is_some() {
+                        match ProxyConfig::set_auth(
+                            &space.domain,
+                            true,
+                            role.clone(),
+                            capability.clone(),
+                        ) {
+                            Ok(updated) => space = updated,
+                            Err(e) => {
+                                eprintln!(
+                                    "{} Auth-Schutz konnte nicht gesetzt werden: {}",
+                                    "❌ Fehler:".red().bold(),
+                                    e
+                                );
+                                std::process::exit(1);
+                            }
+                        }
+                    }
                     println!(
                         "\n{}",
                         "✅ Escape Space erfolgreich angelegt!".green().bold()
@@ -354,6 +422,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         "  Airgap Ziel:  {}",
                         format!("127.0.0.1:{}", space.target_port).yellow()
                     );
+                    if space.auth_required {
+                        println!(
+                            "  Auth-Schutz:  {} (role={:?}, cap={:?})",
+                            "AKTIV (sb-auth)".green().bold(),
+                            space.required_role.as_deref().unwrap_or("-"),
+                            space.required_capability.as_deref().unwrap_or("-")
+                        );
+                    }
                     println!("  Node:         {}", space.node_callsign);
                     println!("  Status:       {}", "DnsPending".bright_yellow());
 
@@ -376,6 +452,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
             }
         }
+        Some(Commands::Protect {
+            target,
+            role,
+            capability,
+            disable,
+        }) => match ProxyConfig::set_auth(&target, !disable, role, capability) {
+            Ok(space) => {
+                if space.auth_required {
+                    println!(
+                        "{} sb-auth Schutz für {} aktiviert (role={}, cap={}).",
+                        "🔒".green(),
+                        space.domain.cyan().bold(),
+                        space.required_role.as_deref().unwrap_or("-"),
+                        space.required_capability.as_deref().unwrap_or("-")
+                    );
+                } else {
+                    println!(
+                        "{} sb-auth Schutz für {} deaktiviert (Route ist öffentlich).",
+                        "🔓".yellow(),
+                        space.domain.cyan().bold()
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("{} {}", "❌ Fehler:".red().bold(), e);
+                std::process::exit(1);
+            }
+        },
         Some(Commands::Static {
             domain,
             directory,

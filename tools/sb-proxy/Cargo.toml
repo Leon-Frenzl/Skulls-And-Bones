@@ -33,9 +33,9 @@ crossterm = "0.28"
 dirs = "6.0"
 chrono = { version = "0.4", features = ["serde"] }
 time = "0.3"
-sb-code = { version = "0.1.0", path = "../sb-code" }
 sb-core = { version = "0.2.0", path = "../sb-core" }
 sb-ca = { version = "0.1.0", path = "../sb-ca" }
+sb-auth = { version = "0.2.0", path = "../sb-auth" }
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring", "x509-parser"] }
 uuid = { version = "1.10", features = ["v4"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }

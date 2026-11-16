@@ -288,9 +288,7 @@ fn probe_node_daemon(timeout: Duration) -> DaemonHealth {
 }
 
 /// Probes the local `sb-mesh` daemon over TCP IPC (Port 58890)
-fn probe_mesh_daemon(
-    timeout: Duration,
-) -> (DaemonHealth, Vec<PeerSummaryPayload>) {
+fn probe_mesh_daemon(timeout: Duration) -> (DaemonHealth, Vec<PeerSummaryPayload>) {
     let start = Instant::now();
     let sock_addr: SocketAddr = "127.0.0.1:58890".parse().unwrap();
 
@@ -339,10 +337,7 @@ fn probe_mesh_daemon(
         if let Ok(n) = stream.read(&mut buf) {
             if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&buf[..n]) {
                 if let Some(data) = val.get("data") {
-                    let peers_count = data
-                        .get("peer_count")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+                    let peers_count = data.get("peer_count").and_then(|v| v.as_u64()).unwrap_or(0);
                     let air_gap = data
                         .get("air_gap_killswitch")
                         .and_then(|v| v.as_bool())
@@ -375,9 +370,8 @@ fn probe_mesh_daemon(
                 }
             }
             if let Ok(resp) = serde_json::from_slice::<sb_core::mesh_ipc::IpcResponse>(&buf) {
-                if let sb_core::mesh_ipc::IpcResponse::Ok(
-                    sb_core::mesh_ipc::IpcPayload::Peers(p),
-                ) = resp
+                if let sb_core::mesh_ipc::IpcResponse::Ok(sb_core::mesh_ipc::IpcPayload::Peers(p)) =
+                    resp
                 {
                     peers = p;
                 }
@@ -495,13 +489,14 @@ fn probe_dns_daemon(timeout: Duration) -> DaemonHealth {
         DaemonHealth {
             name: "sb-dns".to_string(),
             role: "Split-Horizon DNS".to_string(),
-            port_info: if port == 53 { ":53 (Root)".to_string() } else { ":58853".to_string() },
+            port_info: if port == 53 {
+                ":53 (Root)".to_string()
+            } else {
+                ":58853".to_string()
+            },
             status: HealthStatus::Online,
             latency_ms: rtt,
-            details: format!(
-                "Port {} aktiv (.sbm, .mesh Split-Horizon Resolver)",
-                port
-            ),
+            details: format!("Port {} aktiv (.sbm, .mesh Split-Horizon Resolver)", port),
         }
     } else {
         let ledger = sb_core::process::load_ledger();
@@ -633,10 +628,7 @@ fn load_audit_events(limit: usize) -> (Vec<AuditEvent>, Vec<String>) {
                         .or_else(|| v.get("host"))
                         .and_then(|t| t.as_str())
                         .unwrap_or("ssh");
-                    let user = v
-                        .get("user")
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("admin");
+                    let user = v.get("user").and_then(|u| u.as_str()).unwrap_or("admin");
                     let action = v
                         .get("action")
                         .and_then(|a| a.as_str())
@@ -836,10 +828,7 @@ impl CockpitSnapshot {
  *
  * Conforms to ISO 8601, ISO/IEC 10646 (Unicode UTF-8), and VT100 / ECMA-48 text formatting.
  */
-pub fn render_snapshot<W: Write>(
-    snapshot: &CockpitSnapshot,
-    out: &mut W,
-) -> std::io::Result<()> {
+pub fn render_snapshot<W: Write>(snapshot: &CockpitSnapshot, out: &mut W) -> std::io::Result<()> {
     writeln!(
         out,
         "╔══════════════════════════════════════════════════════════════════════════════════════════════════════╗"
@@ -853,7 +842,10 @@ pub fn render_snapshot<W: Write>(
         "╚══════════════════════════════════════════════════════════════════════════════════════════════════════╝"
     )?;
     let quorum_str = if snapshot.pending_quorum > 0 {
-        format!(" | Quorum: {} pending ('sb quorum')", snapshot.pending_quorum)
+        format!(
+            " | Quorum: {} pending ('sb quorum')",
+            snapshot.pending_quorum
+        )
     } else {
         String::new()
     };
@@ -981,7 +973,9 @@ fn render_header(f: &mut Frame, snap: &CockpitSnapshot, area: Rect) {
     let mut header_spans = vec![
         Span::styled(
             " Callsign: ",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("{:<14} ", sanitize_tui_string(&snap.callsign)),
@@ -991,25 +985,36 @@ fn render_header(f: &mut Frame, snap: &CockpitSnapshot, area: Rect) {
         ),
         Span::styled(
             "Swarm: ",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("{:<16} ", snap.swarm_status),
-            Style::default().fg(swarm_color).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(swarm_color)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled("UTC: ", Style::default().fg(Color::Cyan)),
-        Span::styled(format!("{:<20} ", snap.utc_time), Style::default().fg(Color::Yellow)),
+        Span::styled(
+            format!("{:<20} ", snap.utc_time),
+            Style::default().fg(Color::Yellow),
+        ),
         Span::styled("RAM Lease: ", Style::default().fg(Color::Cyan)),
         Span::styled(
             format!("{} ({})", snap.lease_status, snap.lease_remaining),
-            Style::default().fg(lease_color).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(lease_color)
+                .add_modifier(Modifier::BOLD),
         ),
     ];
 
     if snap.pending_quorum > 0 {
         header_spans.push(Span::styled(
             format!(" | [!] {} QUORUM PENDING", snap.pending_quorum),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         ));
     }
 
@@ -1086,7 +1091,11 @@ fn render_daemons_panel(
         })
         .collect();
 
-    let border_color = if focused { Color::Cyan } else { Color::DarkGray };
+    let border_color = if focused {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
     let table = Table::new(
         rows,
         [
@@ -1138,12 +1147,7 @@ fn render_daemons_panel(
  *
  * Conforms to ISO/IEC 10646 (Unicode UTF-8) and VT100 / ECMA-48 terminal control sequence handling.
  */
-fn render_mesh_peers_panel(
-    f: &mut Frame,
-    snap: &CockpitSnapshot,
-    area: Rect,
-    selected: usize,
-) {
+fn render_mesh_peers_panel(f: &mut Frame, snap: &CockpitSnapshot, area: Rect, selected: usize) {
     let rows: Vec<Row> = if snap.peers.is_empty() {
         vec![Row::new(vec![
             "(No WireGuard peers registered in mesh)".to_string(),
@@ -1198,10 +1202,7 @@ fn render_mesh_peers_panel(
             .collect()
     };
 
-    let title = format!(
-        " [TOP-RIGHT: WIREGUARD MESH PEERS ({})] ",
-        snap.peers.len()
-    );
+    let title = format!(" [TOP-RIGHT: WIREGUARD MESH PEERS ({})] ", snap.peers.len());
     let table = Table::new(
         rows,
         [
@@ -1326,12 +1327,7 @@ fn render_audit_panel(f: &mut Frame, snap: &CockpitSnapshot, area: Rect) {
     f.render_widget(p, area);
 }
 
-fn render_footer(
-    f: &mut Frame,
-    _snap: &CockpitSnapshot,
-    area: Rect,
-    toast_msg: Option<&str>,
-) {
+fn render_footer(f: &mut Frame, _snap: &CockpitSnapshot, area: Rect, toast_msg: Option<&str>) {
     let mut spans = vec![
         Span::styled(
             " [Tab] ",
@@ -1363,9 +1359,7 @@ fn render_footer(
         Span::raw("Lease "),
         Span::styled(
             "[x] ",
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
         Span::raw("Lock "),
         Span::styled(
@@ -1423,10 +1417,10 @@ fn ui(
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),      // Header: Callsign, Swarm Status, System Time, Lease
+            Constraint::Length(3), // Header: Callsign, Swarm Status, System Time, Lease
             Constraint::Percentage(55), // Middle Row: Daemons (Left) & WireGuard Peers (Right)
-            Constraint::Min(8),         // Bottom Row: Recent Audit & Access Events
-            Constraint::Length(3),      // Footer: Shortcuts, Status & Controls
+            Constraint::Min(8),    // Bottom Row: Recent Audit & Access Events
+            Constraint::Length(3), // Footer: Shortcuts, Status & Controls
         ])
         .split(f.area());
 
@@ -1518,7 +1512,12 @@ fn toggle_selected_daemon(daemon: &DaemonHealth) -> String {
             .stderr(std::process::Stdio::null());
         match cmd.spawn() {
             Ok(child) => {
-                sb_core::process::register_process(bin, child.id(), None, &format!("{} (cockpit)", bin));
+                sb_core::process::register_process(
+                    bin,
+                    child.id(),
+                    None,
+                    &format!("{} (cockpit)", bin),
+                );
                 format!("Daemon '{}' gestartet (PID {})", bin, child.id())
             }
             Err(e) => format!("Start von '{}' fehlgeschlagen: {}", bin, e),
@@ -1580,7 +1579,8 @@ fn run_interactive_loop(
                         }
                         match sb_key::mint_lease(None, 8) {
                             Ok(lease) => {
-                                last_toast = Some(format!("8h RAM-Lease geprägt ({})", lease.lease_id));
+                                last_toast =
+                                    Some(format!("8h RAM-Lease geprägt ({})", lease.lease_id));
                             }
                             Err(e) => {
                                 last_toast = Some(format!("Lease-Fehler: {}", e));
@@ -1594,7 +1594,8 @@ fn run_interactive_loop(
                     KeyCode::Char('x') => {
                         match sb_key::lock_lease() {
                             Ok(()) => {
-                                last_toast = Some("RAM-Lease gesperrt & vernichtet (zeroize)".to_string());
+                                last_toast =
+                                    Some("RAM-Lease gesperrt & vernichtet (zeroize)".to_string());
                             }
                             Err(e) => {
                                 last_toast = Some(format!("Lock-Fehler: {}", e));
@@ -1618,7 +1619,8 @@ fn run_interactive_loop(
                         if let Ok(mut lock) = snapshot_state.write() {
                             *lock = fresh;
                         }
-                        last_toast = Some("Auto-Fix (Identity + Dual-CA + 8h Lease) ausgeführt".to_string());
+                        last_toast =
+                            Some("Auto-Fix (Identity + Dual-CA + 8h Lease) ausgeführt".to_string());
                     }
                     KeyCode::Char('s') => {
                         if let Some(d) = snap.daemons.get(selected_daemon) {
@@ -1983,7 +1985,10 @@ mod tests {
         // 7. Truncated and unterminated escape sequences
         assert_eq!(sanitize_tui_string("trailing\x1b"), "trailing");
         assert_eq!(sanitize_tui_string("trailing_csi\x1b["), "trailing_csi");
-        assert_eq!(sanitize_tui_string("trailing_osc\x1b]0;never_ends"), "trailing_osc");
+        assert_eq!(
+            sanitize_tui_string("trailing_osc\x1b]0;never_ends"),
+            "trailing_osc"
+        );
         assert_eq!(sanitize_tui_string("\x1b\x1b\x1b"), "");
 
         // 8. C0 control character suite (0x00 to 0x1F)
@@ -2088,7 +2093,10 @@ mod tests {
             let draw_res = terminal.draw(|f| {
                 render_mesh_peers_panel(f, &snapshot, f.area(), 0);
             });
-            assert!(draw_res.is_ok(), "TUI render_mesh_peers_panel should draw without panic");
+            assert!(
+                draw_res.is_ok(),
+                "TUI render_mesh_peers_panel should draw without panic"
+            );
         }));
 
         assert!(
@@ -2097,4 +2105,3 @@ mod tests {
         );
     }
 }
-

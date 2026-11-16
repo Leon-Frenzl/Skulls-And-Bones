@@ -377,7 +377,10 @@ pub fn start_services() -> Result<Vec<String>, String> {
     } else {
         for spec in &specs {
             if probe_tcp_port(spec.probe_port) {
-                actions.push(format!("{} already online on port {}", spec.name, spec.probe_port));
+                actions.push(format!(
+                    "{} already online on port {}",
+                    spec.name, spec.probe_port
+                ));
                 continue;
             }
             let args: Vec<String> = spec.args.iter().map(|s| s.to_string()).collect();
@@ -412,9 +415,9 @@ pub fn start_services() -> Result<Vec<String>, String> {
 
     // Brief settle window (up to 600ms) for sockets to bind
     for _ in 0..6 {
-        let all_up = specs.iter().all(|s| {
-            probe_tcp_port(s.probe_port) || is_systemd_unit_active(s.name)
-        });
+        let all_up = specs
+            .iter()
+            .all(|s| probe_tcp_port(s.probe_port) || is_systemd_unit_active(s.name));
         if all_up {
             break;
         }
@@ -546,7 +549,11 @@ pub fn handle_service(action: Option<ServiceAction>, json: bool) {
             let acts = match install_services() {
                 Ok(a) => a,
                 Err(e) => {
-                    eprintln!("  {} Service-Installation fehlgeschlagen: {}", "✗".bright_red().bold(), e);
+                    eprintln!(
+                        "  {} Service-Installation fehlgeschlagen: {}",
+                        "✗".bright_red().bold(),
+                        e
+                    );
                     std::process::exit(1);
                 }
             };
@@ -556,7 +563,11 @@ pub fn handle_service(action: Option<ServiceAction>, json: bool) {
             let acts = match start_services() {
                 Ok(a) => a,
                 Err(e) => {
-                    eprintln!("  {} Service-Start fehlgeschlagen: {}", "✗".bright_red().bold(), e);
+                    eprintln!(
+                        "  {} Service-Start fehlgeschlagen: {}",
+                        "✗".bright_red().bold(),
+                        e
+                    );
                     std::process::exit(1);
                 }
             };
@@ -566,7 +577,11 @@ pub fn handle_service(action: Option<ServiceAction>, json: bool) {
             let acts = match stop_services() {
                 Ok(a) => a,
                 Err(e) => {
-                    eprintln!("  {} Service-Stop fehlgeschlagen: {}", "✗".bright_red().bold(), e);
+                    eprintln!(
+                        "  {} Service-Stop fehlgeschlagen: {}",
+                        "✗".bright_red().bold(),
+                        e
+                    );
                     std::process::exit(1);
                 }
             };
@@ -577,7 +592,11 @@ pub fn handle_service(action: Option<ServiceAction>, json: bool) {
             match start_services() {
                 Ok(started) => acts.extend(started),
                 Err(e) => {
-                    eprintln!("  {} Service-Restart fehlgeschlagen: {}", "✗".bright_red().bold(), e);
+                    eprintln!(
+                        "  {} Service-Restart fehlgeschlagen: {}",
+                        "✗".bright_red().bold(),
+                        e
+                    );
                     std::process::exit(1);
                 }
             }

@@ -6,7 +6,7 @@
 //! - IETF RFC 8446 (TLS 1.3)
 //! - IETF RFC 5280 (X.509 PKI Profile)
 
-use sb_code::escape::EscapeSpaceStore;
+use sb_proxy::escape::EscapeSpaceStore;
 use sb_proxy::ca::DeveloperCa;
 use sb_proxy::proxy::DynamicSniResolver;
 use std::sync::{Arc, RwLock};
@@ -49,17 +49,32 @@ fn test_adversarial_trailing_dots() {
     assert!(resolver.resolve_for_server_name("test..sbm").is_none());
 
     // 5. Bare TLD with dot prefix: '.sbm' and '.sbm.'
-    assert!(!resolver.is_eligible_for_on_demand(".sbm"), "Bare '.sbm' must not be eligible");
-    assert!(resolver.resolve_for_server_name(".sbm").is_none(), "Bare '.sbm' must not resolve");
-    assert!(!resolver.is_eligible_for_on_demand(".sbm."), "Bare '.sbm.' must not be eligible");
-    assert!(resolver.resolve_for_server_name(".sbm.").is_none(), "Bare '.sbm.' must not resolve");
+    assert!(
+        !resolver.is_eligible_for_on_demand(".sbm"),
+        "Bare '.sbm' must not be eligible"
+    );
+    assert!(
+        resolver.resolve_for_server_name(".sbm").is_none(),
+        "Bare '.sbm' must not resolve"
+    );
+    assert!(
+        !resolver.is_eligible_for_on_demand(".sbm."),
+        "Bare '.sbm.' must not be eligible"
+    );
+    assert!(
+        resolver.resolve_for_server_name(".sbm.").is_none(),
+        "Bare '.sbm.' must not resolve"
+    );
 
     // 6. Valid mesh domain with trailing dot: 'valid-test-node.sbm.'
     // RFC 1035 allows trailing dot indicating root in FQDN notation.
     let trailing_dot_domain = "valid-test-trailing-dot.sbm.";
     assert!(resolver.is_eligible_for_on_demand(trailing_dot_domain));
     let cert = resolver.resolve_for_server_name(trailing_dot_domain);
-    assert!(cert.is_some(), "Valid domain with trailing dot should resolve successfully");
+    assert!(
+        cert.is_some(),
+        "Valid domain with trailing dot should resolve successfully"
+    );
     assert!(resolver.is_cached("valid-test-trailing-dot.sbm"));
 }
 
@@ -75,23 +90,40 @@ fn test_adversarial_wildcards() {
 
     // 2. Double wildcard '*.*.sbm'
     let double_wildcard = "*.*.sbm";
-    assert!(!resolver.is_eligible_for_on_demand(double_wildcard), "*.*.sbm must not be eligible");
+    assert!(
+        !resolver.is_eligible_for_on_demand(double_wildcard),
+        "*.*.sbm must not be eligible"
+    );
     let res = resolver.resolve_for_server_name(double_wildcard);
-    assert!(res.is_none(), "*.*.sbm must NOT mint or resolve a certificate");
+    assert!(
+        res.is_none(),
+        "*.*.sbm must NOT mint or resolve a certificate"
+    );
 
     // 3. Embedded wildcard 'foo.*.sbm'
     let embedded_wildcard = "foo.*.sbm";
-    assert!(!resolver.is_eligible_for_on_demand(embedded_wildcard), "foo.*.sbm must not be eligible");
+    assert!(
+        !resolver.is_eligible_for_on_demand(embedded_wildcard),
+        "foo.*.sbm must not be eligible"
+    );
     let embedded_res = resolver.resolve_for_server_name(embedded_wildcard);
-    assert!(embedded_res.is_none(), "foo.*.sbm must NOT mint a certificate");
+    assert!(
+        embedded_res.is_none(),
+        "foo.*.sbm must NOT mint a certificate"
+    );
 
     // 4. Single wildcard '*.sbm'
     let wildcard_sbm = "*.sbm";
-    assert!(!resolver.is_eligible_for_on_demand(wildcard_sbm), "*.sbm must not be eligible");
+    assert!(
+        !resolver.is_eligible_for_on_demand(wildcard_sbm),
+        "*.sbm must not be eligible"
+    );
     let wildcard_res = resolver.resolve_for_server_name(wildcard_sbm);
-    assert!(wildcard_res.is_none(), "*.sbm must NOT mint or resolve a certificate");
+    assert!(
+        wildcard_res.is_none(),
+        "*.sbm must NOT mint or resolve a certificate"
+    );
 }
-
 
 #[test]
 fn test_adversarial_extreme_lengths() {
@@ -129,7 +161,10 @@ fn test_adversarial_extreme_lengths() {
     let domain_253 = format!("{}.sbm", "c".repeat(249));
     assert_eq!(domain_253.len(), 253);
     let eligible_253 = resolver.is_eligible_for_on_demand(&domain_253);
-    println!("Diagnostic: domain length 253 eligibility: {}", eligible_253);
+    println!(
+        "Diagnostic: domain length 253 eligibility: {}",
+        eligible_253
+    );
 }
 
 #[test]
@@ -191,30 +226,41 @@ fn test_adversarial_ipv6_colons_null_and_non_ascii() {
         "::1.sbm",
     ];
     for ip in ipv6_inputs {
-        assert!(!resolver.is_eligible_for_on_demand(ip), "IPv6 input '{}' must not be eligible", ip);
-        assert!(resolver.resolve_for_server_name(ip).is_none(), "IPv6 input '{}' must not resolve", ip);
+        assert!(
+            !resolver.is_eligible_for_on_demand(ip),
+            "IPv6 input '{}' must not be eligible",
+            ip
+        );
+        assert!(
+            resolver.resolve_for_server_name(ip).is_none(),
+            "IPv6 input '{}' must not resolve",
+            ip
+        );
     }
 
     // 2. Colons / port attachments
-    let colon_inputs = vec![
-        "service.sbm:8080",
-        "service.sbm:443",
-        "foo:bar.sbm",
-    ];
+    let colon_inputs = vec!["service.sbm:8080", "service.sbm:443", "foo:bar.sbm"];
     for col in colon_inputs {
-        assert!(!resolver.is_eligible_for_on_demand(col), "Colon input '{}' must not be eligible", col);
-        assert!(resolver.resolve_for_server_name(col).is_none(), "Colon input '{}' must not resolve", col);
+        assert!(
+            !resolver.is_eligible_for_on_demand(col),
+            "Colon input '{}' must not be eligible",
+            col
+        );
+        assert!(
+            resolver.resolve_for_server_name(col).is_none(),
+            "Colon input '{}' must not resolve",
+            col
+        );
     }
 
     // 3. Null bytes
-    let null_inputs = vec![
-        "domain\0evil.sbm",
-        "domain.sbm\0",
-        "\0.sbm",
-        "\0",
-    ];
+    let null_inputs = vec!["domain\0evil.sbm", "domain.sbm\0", "\0.sbm", "\0"];
     for nb in null_inputs {
-        assert!(!resolver.is_eligible_for_on_demand(nb), "Null byte in '{}' must be rejected", nb);
+        assert!(
+            !resolver.is_eligible_for_on_demand(nb),
+            "Null byte in '{}' must be rejected",
+            nb
+        );
         assert!(resolver.resolve_for_server_name(nb).is_none());
     }
 
@@ -227,8 +273,16 @@ fn test_adversarial_ipv6_colons_null_and_non_ascii() {
         "domain\t.sbm",
     ];
     for na in non_ascii_inputs {
-        assert!(!resolver.is_eligible_for_on_demand(na), "Non-ASCII / control input '{}' must not be eligible", na);
-        assert!(resolver.resolve_for_server_name(na).is_none(), "Non-ASCII / control input '{}' must not resolve", na);
+        assert!(
+            !resolver.is_eligible_for_on_demand(na),
+            "Non-ASCII / control input '{}' must not be eligible",
+            na
+        );
+        assert!(
+            resolver.resolve_for_server_name(na).is_none(),
+            "Non-ASCII / control input '{}' must not resolve",
+            na
+        );
     }
 }
 
@@ -337,14 +391,23 @@ fn test_adversarial_sni_resolution_matrix() {
         );
 
         if is_eligible != expected_eligible {
-            findings.push((input, category, is_eligible, was_resolved, was_minted, expected_eligible));
+            findings.push((
+                input,
+                category,
+                is_eligible,
+                was_resolved,
+                was_minted,
+                expected_eligible,
+            ));
         }
     }
 
     println!("=== TOTAL MISMATCH FINDINGS: {} ===", findings.len());
     for (input, cat, actual_elig, res, minted, exp) in &findings {
-        println!("FAIL: [{}] '{}' actual_eligible={} (resolved={}, minted={}) vs expected_eligible={}",
-            cat, input, actual_elig, res, minted, exp);
+        println!(
+            "FAIL: [{}] '{}' actual_eligible={} (resolved={}, minted={}) vs expected_eligible={}",
+            cat, input, actual_elig, res, minted, exp
+        );
     }
     assert_eq!(
         findings.len(),
@@ -353,4 +416,3 @@ fn test_adversarial_sni_resolution_matrix() {
         findings.len()
     );
 }
-
