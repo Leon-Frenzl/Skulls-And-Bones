@@ -1,8 +1,8 @@
 use clap::{Parser, Subcommand};
 use colored::*;
-use sb_proxy::escape::verify_domain_dns;
 use sb_proxy::ca::DeveloperCa;
 use sb_proxy::config::ProxyConfig;
+use sb_proxy::escape::verify_domain_dns;
 use sb_proxy::tui::run_tui;
 
 #[derive(Parser)]
@@ -116,6 +116,19 @@ enum Commands {
     Pause {
         /// Domain oder ID der Route
         target: String,
+    },
+
+    /// Startet das einheitliche Open Graph API Gateway (/v1/*) & die Web-Management-Konsole
+    Graph {
+        /// Bind-Adresse für API & Console (Standard: 127.0.0.1:8090)
+        #[arg(long, default_value = "127.0.0.1:8090")]
+        bind: std::net::SocketAddr,
+        /// Upstream Domain Controller Adresse (Standard: 127.0.0.1:8443)
+        #[arg(long, default_value = "127.0.0.1:8443")]
+        dc: std::net::SocketAddr,
+        /// Verzeichnis der gebauten Web-Console (Standard: console/dist)
+        #[arg(long, default_value = "console/dist")]
+        console_dir: std::path::PathBuf,
     },
 
     /// Reaktiviert eine pausierte Route
@@ -932,6 +945,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         status.issued_certs_count.to_string().yellow().bold()
                     );
                 }
+            }
+        }
+        Some(Commands::Graph {
+            bind,
+            dc,
+            console_dir,
+        }) => {
+            let auth_dir = sb_core::paths::sb_home().join("auth");
+            let verifier = std::fs::read_to_string(auth_dir.join("auth.pub"))
+                .ok()
+                .and_then(|pub_b64| {
+                    sb_auth::FileRevocationStore::open(auth_dir.join("revocations.json"))
+                        .ok()
+                        .and_then(|rev| {
+                            sb_auth::AuthVerifier::from_public_base64(
+                                &pub_b64,
+                                std::sync::Arc::new(rev),
+                            )
+                            .ok()
+                        })
+                })
+                .map(std::sync::Arc::new);
+
+            println!(
+                "\n{} Open Graph API Gateway & Console läuft auf http://{}",
+                "✓".green().bold(),
+                bind
+            );
+            println!("  ► OpenAPI 3.1:  http://{}/v1/openapi.json", bind);
+            println!("  ► DC Upstream:  {}", dc);
+            println!("  ► Console Dir:  {}\n", console_dir.display());
+
+            let cfg = sb_proxy::graph_api::GraphGatewayConfig {
+                bind,
+                dc_addr: dc,
+                console_dist_dir: Some(console_dir),
+            };
+            if let Err(err) = sb_proxy::graph_api::serve_graph_gateway(cfg, verifier).await {
+                eprintln!("{} Graph Gateway Fehler: {err}", "✗".red().bold());
+                std::process::exit(1);
             }
         }
     }

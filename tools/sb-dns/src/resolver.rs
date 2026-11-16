@@ -456,6 +456,10 @@ impl DnsResolver {
             return response;
         }
 
+        if let Some(static_resp) = self.resolve_static(query, owner, qname, qtype) {
+            return static_resp;
+        }
+
         self.response(query, ResponseCode::NXDomain, true)
     }
 
@@ -525,6 +529,30 @@ impl DnsResolver {
                             ttl,
                             RData::TXT(hickory_proto::rr::rdata::TXT::new(vec![text.clone()])),
                         ));
+                        return Some(response);
+                    }
+                }
+            }
+            RecordType::SRV => {
+                if let Some(entries) = records.srv.get(qname) {
+                    let mut added = false;
+                    for entry in entries {
+                        if let Ok(mut target) = Name::from_ascii(&entry.target) {
+                            target.set_fqdn(true);
+                            response.add_answer(Record::from_rdata(
+                                owner.clone(),
+                                ttl,
+                                RData::SRV(hickory_proto::rr::rdata::SRV::new(
+                                    entry.priority,
+                                    entry.weight,
+                                    entry.port,
+                                    target,
+                                )),
+                            ));
+                            added = true;
+                        }
+                    }
+                    if added {
                         return Some(response);
                     }
                 }
@@ -1018,5 +1046,26 @@ mod tests {
                 .response_code,
             ResponseCode::Refused
         );
+    }
+
+    #[tokio::test]
+    async fn resolves_static_srv_records_for_dc_discovery() {
+        let mut records = RecordsConfig::default();
+        records.srv.insert(
+            "_dc._tcp.corp.sbm".to_string(),
+            vec![crate::config::SrvRecordConfig {
+                priority: 10,
+                weight: 0,
+                port: 8443,
+                target: "dc.corp.sbm".to_string(),
+            }],
+        );
+        let resolver = DnsResolver::new(DnsConfig::default(), records);
+        let res = resolver
+            .resolve(&query("_dc._tcp.corp.sbm", RecordType::SRV))
+            .await
+            .unwrap();
+        assert_eq!(res.answers.len(), 1);
+        assert_eq!(res.answers[0].record_type(), RecordType::SRV);
     }
 }

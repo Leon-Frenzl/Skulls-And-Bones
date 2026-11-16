@@ -26,8 +26,9 @@ Cargo.lock
 Forge.toml
 forge-sealed*
 
-# Website build
-website/dist/
+# Console build
+console/dist/
+*.tsbuildinfo
 
 # Staging
 staging/

@@ -5,8 +5,8 @@
 //! - Conforms to IETF RFC 8446 (TLS 1.3)
 //! - Conforms to IETF RFC 6066 §3 (TLS Server Name Indication)
 
-use sb_proxy::escape::{EscapeSpace, EscapeSpaceStore, EscapeStatus};
 use sb_proxy::ca::DeveloperCa;
+use sb_proxy::escape::{EscapeSpace, EscapeSpaceStore, EscapeStatus};
 use sb_proxy::proxy::DynamicSniResolver;
 use std::sync::{Arc, RwLock};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

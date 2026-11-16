@@ -1,3 +1,4 @@
+use crate::escape::{validate_target_port, EscapeSpaceStore, EscapeStatus};
 use crate::ipc::ProxyTelemetry;
 use crate::ratelimit::IpRateLimiter;
 use bytes::Bytes;
@@ -13,7 +14,6 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode, Uri, Version};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto::Builder;
-use crate::escape::{validate_target_port, EscapeSpaceStore, EscapeStatus};
 use std::convert::Infallible;
 use std::error::Error;
 use std::net::SocketAddr;

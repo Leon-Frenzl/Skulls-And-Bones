@@ -206,10 +206,14 @@ mod tests {
                 .count(),
             9
         );
-        assert!(all.iter().filter(|p| p.maturity == ProductMaturity::Releasevalidated).all(|product| {
-            !product.release_evidence.is_empty()
-        }));
-        let ca_product = all.iter().find(|p| p.id == "ca").expect("ca product must exist");
+        assert!(all
+            .iter()
+            .filter(|p| p.maturity == ProductMaturity::Releasevalidated)
+            .all(|product| { !product.release_evidence.is_empty() }));
+        let ca_product = all
+            .iter()
+            .find(|p| p.id == "ca")
+            .expect("ca product must exist");
         assert_eq!(ca_product.maturity, ProductMaturity::Releasevalidated);
         assert!(!ca_product.release_evidence.is_empty());
 

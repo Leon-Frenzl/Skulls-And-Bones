@@ -1,3 +1,4 @@
+use crate::escape::{verify_domain_dns, EscapeSpaceStore, EscapeStatus};
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
@@ -10,7 +11,6 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
     Terminal,
 };
-use crate::escape::{verify_domain_dns, EscapeSpaceStore, EscapeStatus};
 use std::io;
 use std::time::Duration;
 

@@ -77,6 +77,14 @@ impl Default for DnsConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SrvRecordConfig {
+    pub priority: u16,
+    pub weight: u16,
+    pub port: u16,
+    pub target: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RecordsConfig {
     #[serde(default)]
@@ -87,6 +95,8 @@ pub struct RecordsConfig {
     pub cname: HashMap<String, String>,
     #[serde(default)]
     pub txt: HashMap<String, String>,
+    #[serde(default)]
+    pub srv: HashMap<String, Vec<SrvRecordConfig>>,
 }
 
 pub struct ConfigManager;
@@ -202,6 +212,47 @@ impl ConfigManager {
         Self::save_records(&records)
     }
 
+    /// Registers or updates an RFC 2782 SRV record (e.g. `_dc._tcp.corp.eu -> 10 0 8443 dc.corp.eu`).
+    pub fn add_srv_record(
+        domain: &str,
+        priority: u16,
+        weight: u16,
+        port: u16,
+        target: &str,
+    ) -> Result<(), String> {
+        let mut records = Self::load_records();
+        let clean = domain.to_lowercase().trim_end_matches('.').to_string();
+        let clean_target = target.to_lowercase().trim_end_matches('.').to_string();
+        let entry = SrvRecordConfig {
+            priority,
+            weight,
+            port,
+            target: clean_target.clone(),
+        };
+        let list = records.srv.entry(clean).or_default();
+        list.retain(|existing| !(existing.target == clean_target && existing.port == port));
+        list.push(entry);
+        Self::save_records(&records)
+    }
+
+    pub fn add_cname_record(domain: &str, target: &str) -> Result<(), String> {
+        let mut records = Self::load_records();
+        let clean = domain.to_lowercase().trim_end_matches('.').to_string();
+        let clean_target = target.to_lowercase().trim_end_matches('.').to_string();
+        records.cname.insert(clean, clean_target);
+        Self::save_records(&records)
+    }
+
+    pub fn add_txt_record(domain: &str, text: &str) -> Result<(), String> {
+        if text.len() > 255 {
+            return Err("TXT record value exceeds 255-byte single-string limit".to_string());
+        }
+        let mut records = Self::load_records();
+        let clean = domain.to_lowercase().trim_end_matches('.').to_string();
+        records.txt.insert(clean, text.to_string());
+        Self::save_records(&records)
+    }
+
     pub fn remove_record(domain: &str) -> Result<bool, String> {
         let mut records = Self::load_records();
         let clean = domain.to_lowercase().trim_end_matches('.').to_string();
@@ -216,6 +267,9 @@ impl ConfigManager {
             removed = true;
         }
         if records.txt.remove(&clean).is_some() {
+            removed = true;
+        }
+        if records.srv.remove(&clean).is_some() {
             removed = true;
         }
         if removed {

@@ -1,0 +1,409 @@
+import React, { useEffect, useState } from "react";
+import {
+  Activity,
+  Globe,
+  KeyRound,
+  Laptop,
+  RefreshCw,
+  ShieldCheck,
+  Terminal,
+  Trash2,
+} from "lucide-react";
+
+type TabId = "overview" | "machines" | "policies" | "dns" | "ca" | "explorer";
+
+interface HealthInfo {
+  status: string;
+  service: string;
+  api_version: string;
+  dc_upstream: string;
+}
+
+interface MachineRecord {
+  machine_id: string;
+  fqdn: string;
+  os: string;
+  mesh_ip: string;
+  joined_by: string;
+  revoked: boolean;
+}
+
+interface PolicyDocument {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  target_os: string[];
+  rules: unknown[];
+  updated_at: string;
+  updated_by: string;
+}
+
+export default function App() {
+  const [tab, setTab] = useState<TabId>("overview");
+  const [token, setToken] = useState<string>(() => localStorage.getItem("sb_token") || "");
+  const [health, setHealth] = useState<HealthInfo | null>(null);
+  const [machines, setMachines] = useState<MachineRecord[]>([]);
+  const [policies, setPolicies] = useState<PolicyDocument[]>([]);
+  const [dnsRecords, setDnsRecords] = useState<Record<string, unknown> | null>(null);
+  const [caStatus, setCaStatus] = useState<Record<string, unknown> | null>(null);
+  const [routes, setRoutes] = useState<unknown[]>([]);
+  const [statusMsg, setStatusMsg] = useState<string>("");
+
+  // API Explorer state
+  const [apiMethod, setApiMethod] = useState<string>("GET");
+  const [apiPath, setApiPath] = useState<string>("/v1/openapi.json");
+  const [apiBody, setApiBody] = useState<string>("{}");
+  const [apiOutput, setApiOutput] = useState<string>("");
+
+  // Enrollment state
+  const [enrollDomain, setEnrollDomain] = useState<string>("corp.eu");
+  const [enrollResult, setEnrollResult] = useState<string>("");
+
+  const authHeaders = (): Record<string, string> =>
+    token.trim() ? { Authorization: `Bearer ${token.trim()}` } : {};
+
+  const saveToken = (val: string) => {
+    setToken(val);
+    localStorage.setItem("sb_token", val);
+  };
+
+  const refreshAll = async () => {
+    setStatusMsg("");
+    try {
+      const [h, p, d, c, r] = await Promise.all([
+        fetch("/v1/health").then((x) => x.json()),
+        fetch("/v1/policies").then((x) => x.json()).catch(() => ({ policies: [] })),
+        fetch("/v1/dns/records").then((x) => x.json()),
+        fetch("/v1/ca/status").then((x) => x.json()),
+        fetch("/v1/proxy/routes").then((x) => x.json()),
+      ]);
+      setHealth(h);
+      setPolicies(Array.isArray(p.policies) ? p.policies : []);
+      setDnsRecords(d);
+      setCaStatus(c);
+      setRoutes(Array.isArray(r.routes) ? r.routes : []);
+
+      if (token.trim()) {
+        const mRes = await fetch("/v1/machines", { headers: authHeaders() });
+        if (mRes.ok) {
+          const mJson = await mRes.json();
+          setMachines(Array.isArray(mJson.machines) ? mJson.machines : []);
+        }
+      }
+    } catch (err) {
+      setStatusMsg(`API-Verbindung fehlgeschlagen: ${String(err)}`);
+    }
+  };
+
+  useEffect(() => {
+    void refreshAll();
+  }, []);
+
+  const runExplorer = async () => {
+    setApiOutput("Loading...");
+    try {
+      const init: RequestInit = {
+        method: apiMethod,
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(),
+        },
+      };
+      if (apiMethod === "POST" || apiMethod === "PUT") {
+        init.body = apiBody;
+      }
+      const res = await fetch(apiPath, init);
+      const text = await res.text();
+      try {
+        setApiOutput(`HTTP ${res.status}\n` + JSON.stringify(JSON.parse(text), null, 2));
+      } catch {
+        setApiOutput(`HTTP ${res.status}\n${text}`);
+      }
+    } catch (err) {
+      setApiOutput(`Error: ${String(err)}`);
+    }
+  };
+
+  const createEnrollment = async () => {
+    setEnrollResult("");
+    const res = await fetch("/v1/enrollments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ domain: enrollDomain }),
+    });
+    const data = await res.json();
+    setEnrollResult(JSON.stringify(data, null, 2));
+  };
+
+  const deletePolicy = async (id: string) => {
+    const res = await fetch(`/v1/policies/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    if (res.ok) {
+      await refreshAll();
+    } else {
+      const err = await res.text();
+      setStatusMsg(`Löschen fehlgeschlagen (${res.status}): ${err}`);
+    }
+  };
+
+  return (
+    <div className="layout">
+      <aside className="sidebar">
+        <div className="brand">
+          <ShieldCheck size={24} color="#52c7bd" />
+          <div>
+            <div className="brand-title">Skulls &amp; Bones</div>
+            <div className="brand-sub">Sovereign Control Console</div>
+          </div>
+        </div>
+
+        <button className={`nav-btn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>
+          <Activity size={16} /> Übersicht
+        </button>
+        <button className={`nav-btn ${tab === "machines" ? "active" : ""}`} onClick={() => setTab("machines")}>
+          <Laptop size={16} /> Maschinen &amp; Join
+        </button>
+        <button className={`nav-btn ${tab === "policies" ? "active" : ""}`} onClick={() => setTab("policies")}>
+          <ShieldCheck size={16} /> GPO Policies
+        </button>
+        <button className={`nav-btn ${tab === "dns" ? "active" : ""}`} onClick={() => setTab("dns")}>
+          <Globe size={16} /> DNS Manager
+        </button>
+        <button className={`nav-btn ${tab === "ca" ? "active" : ""}`} onClick={() => setTab("ca")}>
+          <KeyRound size={16} /> CA &amp; Proxy
+        </button>
+        <button className={`nav-btn ${tab === "explorer" ? "active" : ""}`} onClick={() => setTab("explorer")}>
+          <Terminal size={16} /> Graph API Explorer
+        </button>
+      </aside>
+
+      <main className="main">
+        <div className="topbar">
+          <h1 style={{ margin: 0, fontSize: 22 }}>
+            {tab === "overview" && "Infrastruktur-Übersicht"}
+            {tab === "machines" && "Domänen-Maschinen & Mobile Enrollment"}
+            {tab === "policies" && "Signierte Cross-Platform GPOs"}
+            {tab === "dns" && "Souveräner DNS-Manager"}
+            {tab === "ca" && "Certificate Authority & Proxy"}
+            {tab === "explorer" && "Open Graph API Explorer (/v1/*)"}
+          </h1>
+
+          <div className="token-box">
+            <input
+              className="input"
+              type="password"
+              placeholder="sb-auth Bearer Token..."
+              value={token}
+              onChange={(e) => saveToken(e.target.value)}
+              style={{ width: 240 }}
+            />
+            <button className="btn" onClick={() => void refreshAll()}>
+              <RefreshCw size={14} /> Refresh
+            </button>
+          </div>
+        </div>
+
+        {statusMsg && (
+          <div className="card" style={{ borderColor: "#ef5350", marginBottom: 16 }}>
+            {statusMsg}
+          </div>
+        )}
+
+        {tab === "overview" && (
+          <>
+            <div className="grid">
+              <div className="card">
+                <div className="card-title">Open Graph Gateway</div>
+                <div className="card-value">
+                  {health?.status === "ok" ? (
+                    <span className="badge badge-ok">ONLINE ({health.api_version})</span>
+                  ) : (
+                    <span className="badge badge-err">OFFLINE</span>
+                  )}
+                </div>
+              </div>
+              <div className="card">
+                <div className="card-title">GPO Policies</div>
+                <div className="card-value">{policies.length}</div>
+              </div>
+              <div className="card">
+                <div className="card-title">Proxy Routen</div>
+                <div className="card-value">{routes.length}</div>
+              </div>
+              <div className="card">
+                <div className="card-title">X.509 / SSH CA</div>
+                <div className="card-value">
+                  {caStatus?.x509_root_initialized ? (
+                    <span className="badge badge-ok">INITIALISIERT</span>
+                  ) : (
+                    <span className="badge badge-warn">AUSSTEHEND</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="card">
+              <div className="card-title">Unified API Endpunkte</div>
+              <p style={{ color: "var(--muted)", marginTop: 0 }}>
+                Alle Module dieser Konsole nutzen dieselbe entwicklerfreundliche Open Graph API unter{" "}
+                <code>/v1/*</code>. OpenAPI 3.1 Spezifikation:{" "}
+                <a href="/v1/openapi.json" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+                  /v1/openapi.json
+                </a>
+              </p>
+            </div>
+          </>
+        )}
+
+        {tab === "machines" && (
+          <>
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-title">Mobile / Remote Work Enrollment</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <input
+                  className="input"
+                  value={enrollDomain}
+                  onChange={(e) => setEnrollDomain(e.target.value)}
+                  placeholder="corp.eu"
+                />
+                <button className="btn btn-primary" onClick={() => void createEnrollment()}>
+                  Join-Kommando erzeugen
+                </button>
+              </div>
+              {enrollResult && <pre className="code-block">{enrollResult}</pre>}
+            </div>
+
+            <div className="card">
+              <div className="card-title">Registrierte Maschinen ({machines.length})</div>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>FQDN</th>
+                    <th>OS</th>
+                    <th>Mesh IP</th>
+                    <th>Joined By</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {machines.map((m) => (
+                    <tr key={m.machine_id}>
+                      <td>{m.fqdn}</td>
+                      <td>{m.os}</td>
+                      <td>{m.mesh_ip}</td>
+                      <td>{m.joined_by}</td>
+                      <td>
+                        <span className={`badge ${m.revoked ? "badge-err" : "badge-ok"}`}>
+                          {m.revoked ? "REVOKED" : "ACTIVE"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  {machines.length === 0 && (
+                    <tr>
+                      <td colSpan={5} style={{ color: "var(--muted)" }}>
+                        Keine Maschinen geladen (Bearer Token mit <code>domain:read</code> oben eintragen &amp; Refresh).
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {tab === "policies" && (
+          <div className="card">
+            <div className="card-title">GPO Policies ({policies.length})</div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Name</th>
+                  <th>Version</th>
+                  <th>Regeln</th>
+                  <th>Aktion</th>
+                </tr>
+              </thead>
+              <tbody>
+                {policies.map((p) => (
+                  <tr key={p.id}>
+                    <td><code>{p.id}</code></td>
+                    <td>{p.name}</td>
+                    <td>v{p.version}</td>
+                    <td>{p.rules.length}</td>
+                    <td>
+                      <button className="btn btn-danger" onClick={() => void deletePolicy(p.id)}>
+                        <Trash2 size={14} /> Löschen
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {policies.length === 0 && (
+                  <tr>
+                    <td colSpan={5} style={{ color: "var(--muted)" }}>
+                      Noch keine GPO-Policies vorhanden. Erstelle eine über den Graph API Explorer (<code>PUT /v1/policies/baseline-ssh</code>) oder <code>sb-node policy put</code>.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {tab === "dns" && (
+          <div className="card">
+            <div className="card-title">Souveräne DNS-Zonen (A / AAAA / CNAME / TXT / SRV)</div>
+            <pre className="code-block">{JSON.stringify(dnsRecords, null, 2)}</pre>
+          </div>
+        )}
+
+        {tab === "ca" && (
+          <div className="grid">
+            <div className="card">
+              <div className="card-title">CA Status</div>
+              <pre className="code-block">{JSON.stringify(caStatus, null, 2)}</pre>
+            </div>
+            <div className="card">
+              <div className="card-title">Reverse-Proxy Routen</div>
+              <pre className="code-block">{JSON.stringify(routes, null, 2)}</pre>
+            </div>
+          </div>
+        )}
+
+        {tab === "explorer" && (
+          <div className="card">
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              <select className="select" value={apiMethod} onChange={(e) => setApiMethod(e.target.value)}>
+                <option value="GET">GET</option>
+                <option value="POST">POST</option>
+                <option value="PUT">PUT</option>
+                <option value="DELETE">DELETE</option>
+              </select>
+              <input
+                className="input"
+                value={apiPath}
+                onChange={(e) => setApiPath(e.target.value)}
+                style={{ flex: 1, minWidth: 220 }}
+              />
+              <button className="btn btn-primary" onClick={() => void runExplorer()}>
+                Request senden
+              </button>
+            </div>
+            {(apiMethod === "POST" || apiMethod === "PUT") && (
+              <textarea
+                className="textarea"
+                value={apiBody}
+                onChange={(e) => setApiBody(e.target.value)}
+                style={{ marginBottom: 12 }}
+              />
+            )}
+            <pre className="code-block">{apiOutput || "// Antwort erscheint hier..."}</pre>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

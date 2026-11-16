@@ -68,7 +68,10 @@ pub fn resolve_system_ssh() -> Result<PathBuf, String> {
         }
     }
 
-    Err("System-OpenSSH ('ssh') wurde nicht gefunden. Bitte OpenSSH Client installieren.".to_string())
+    Err(
+        "System-OpenSSH ('ssh') wurde nicht gefunden. Bitte OpenSSH Client installieren."
+            .to_string(),
+    )
 }
 
 /// Resolves the authentic system OpenSSH `scp` executable.
@@ -116,7 +119,10 @@ pub fn resolve_system_scp() -> Result<PathBuf, String> {
         }
     }
 
-    Err("System-OpenSSH ('scp') wurde nicht gefunden. Bitte OpenSSH Client installieren.".to_string())
+    Err(
+        "System-OpenSSH ('scp') wurde nicht gefunden. Bitte OpenSSH Client installieren."
+            .to_string(),
+    )
 }
 
 /// Returns the canonical path to `~/.sb/ssh/ssh_config`.
@@ -141,8 +147,7 @@ pub fn sb_known_hosts_ca_path() -> PathBuf {
 /// - Standards Compliance: Conforms to OpenSSH `ssh_config(5)`, `PROTOCOL.certkeys`, and POSIX.1-2017.
 pub fn ensure_sovereign_ssh_config() -> Result<PathBuf, String> {
     let ssh_dir = sb_ssh_dir();
-    fs::create_dir_all(&ssh_dir)
-        .map_err(|e| format!("Konnte ~/.sb/ssh nicht anlegen: {}", e))?;
+    fs::create_dir_all(&ssh_dir).map_err(|e| format!("Konnte ~/.sb/ssh nicht anlegen: {}", e))?;
 
     #[cfg(unix)]
     {
@@ -174,10 +179,14 @@ pub fn ensure_sovereign_ssh_config() -> Result<PathBuf, String> {
     // 2. Build ~/.sb/ssh/ssh_config
     let cfg_path = sb_ssh_config_path();
     let mut cfg = String::new();
-    cfg.push_str("# ============================================================================\n");
+    cfg.push_str(
+        "# ============================================================================\n",
+    );
     cfg.push_str("# SKULLS & BONES — SOVEREIGN OPENSSH CONFIGURATION (AUTO-GENERATED)\n");
     cfg.push_str("# Conforms to RFC 4251 & OpenSSH PROTOCOL.certkeys\n");
-    cfg.push_str("# ============================================================================\n\n");
+    cfg.push_str(
+        "# ============================================================================\n\n",
+    );
 
     let servers = TargetResolver::load_servers();
     for srv in &servers {
@@ -189,7 +198,9 @@ pub fn ensure_sovereign_ssh_config() -> Result<PathBuf, String> {
         let safe_host: String = srv
             .host
             .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.' || *c == ':')
+            .filter(|c| {
+                c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.' || *c == ':'
+            })
             .collect();
         let safe_user: String = srv
             .user
@@ -211,7 +222,11 @@ pub fn ensure_sovereign_ssh_config() -> Result<PathBuf, String> {
         cfg.push_str(&format!("    HostName {}\n", safe_host));
         cfg.push_str(&format!(
             "    User {}\n",
-            if safe_user.is_empty() { "root" } else { &safe_user }
+            if safe_user.is_empty() {
+                "root"
+            } else {
+                &safe_user
+            }
         ));
         cfg.push_str(&format!("    Port {}\n\n", srv.port));
     }
@@ -285,8 +300,7 @@ pub fn integrate_into_user_ssh_config() -> Result<PathBuf, String> {
     let sb_cfg = ensure_sovereign_ssh_config()?;
     let home = dirs::home_dir().ok_or_else(|| "Home-Verzeichnis nicht gefunden".to_string())?;
     let user_ssh_dir = home.join(".ssh");
-    fs::create_dir_all(&user_ssh_dir)
-        .map_err(|e| format!("Konnte ~/.ssh nicht anlegen: {}", e))?;
+    fs::create_dir_all(&user_ssh_dir).map_err(|e| format!("Konnte ~/.ssh nicht anlegen: {}", e))?;
 
     #[cfg(unix)]
     {
@@ -341,9 +355,8 @@ pub fn build_ssh_exec_args(
 
     let ssh_bin = resolve_system_ssh()?;
     let cfg_path = ensure_sovereign_ssh_config()?;
-    let resolved = TargetResolver::resolve(trimmed).ok_or_else(|| {
-        format!("Zielserver '{}' konnte nicht aufgelöst werden", target)
-    })?;
+    let resolved = TargetResolver::resolve(trimmed)
+        .ok_or_else(|| format!("Zielserver '{}' konnte nicht aufgelöst werden", target))?;
 
     let dest = resolved.ssh_destination();
     if dest.starts_with('-') {
@@ -381,9 +394,8 @@ pub fn build_scp_push_args(
 
     let scp_bin = resolve_system_scp()?;
     let cfg_path = ensure_sovereign_ssh_config()?;
-    let resolved = TargetResolver::resolve(trimmed).ok_or_else(|| {
-        format!("Zielserver '{}' konnte nicht aufgelöst werden", target)
-    })?;
+    let resolved = TargetResolver::resolve(trimmed)
+        .ok_or_else(|| format!("Zielserver '{}' konnte nicht aufgelöst werden", target))?;
 
     let target_remote = remote_path.unwrap_or("~/");
     let dest = format!("{}:{}", resolved.ssh_destination(), target_remote);
@@ -418,9 +430,8 @@ pub fn build_scp_pull_args(
 
     let scp_bin = resolve_system_scp()?;
     let cfg_path = ensure_sovereign_ssh_config()?;
-    let resolved = TargetResolver::resolve(trimmed).ok_or_else(|| {
-        format!("Zielserver '{}' konnte nicht aufgelöst werden", target)
-    })?;
+    let resolved = TargetResolver::resolve(trimmed)
+        .ok_or_else(|| format!("Zielserver '{}' konnte nicht aufgelöst werden", target))?;
 
     let target_local = local_path.unwrap_or(".");
     let src = format!("{}:{}", resolved.ssh_destination(), remote_path);

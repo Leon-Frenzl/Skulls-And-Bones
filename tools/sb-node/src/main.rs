@@ -3,6 +3,8 @@
 
 pub mod catalog_membership;
 pub mod catalog_sync;
+pub mod domain_join;
+pub mod policy_engine;
 
 use base64::Engine;
 use clap::{Parser, Subcommand};
@@ -120,6 +122,143 @@ enum Commands {
         #[command(subcommand)]
         sub: CatalogCommands,
     },
+
+    /// Domänen-Beitritt, Maschinen-Identitäten & DC-Verwaltung (AD-Alternative)
+    Domain {
+        #[command(subcommand)]
+        sub: DomainCommands,
+    },
+
+    /// Signierte Cross-Platform GPOs (Policies erstellen, signieren & anwenden)
+    Policy {
+        #[command(subcommand)]
+        sub: PolicyCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DomainCommands {
+    /// Initialisiert den Domain Controller (PKI/CA, DNS-Basis & Domänen-Registry)
+    Init {
+        /// Domänenname (z. B. corp.sbm oder lab.eu)
+        domain: String,
+        /// Überschreibt bestehende CA-Schlüssel
+        #[arg(long)]
+        force: bool,
+    },
+    /// Tritt einer Domäne mit einem autorisierten sb-auth Benutzer-Token bei
+    Join {
+        /// Domänenname (z. B. corp.sbm)
+        domain: String,
+        /// Benutzer-Token (sbt.*) mit 'domain:join'-Capability oder 'admin'-Rolle
+        #[arg(long)]
+        token: String,
+        /// Optionaler Hostname (Standard: lokaler System-Hostname)
+        #[arg(long)]
+        hostname: Option<String>,
+        /// Optionaler Pfad zur OpenSSH Host-Public-Key-Datei (z. B. /etc/ssh/ssh_host_ed25519_key.pub)
+        #[arg(long)]
+        ssh_host_pubkey: Option<PathBuf>,
+        /// Optionale feste Mesh-IP (Standard: automatische Zuweisung)
+        #[arg(long)]
+        ip: Option<String>,
+        /// Optionale Adresse eines Remote-Domain-Controllers (z. B. 10.42.0.1:8443)
+        #[arg(long)]
+        dc: Option<SocketAddr>,
+    },
+    /// Startet den Domain-Controller HTTP/JSON Join-Dienst (POST /v1/domain/join)
+    Serve {
+        /// Bind-Adresse (Standard: 127.0.0.1:8443)
+        #[arg(long, default_value = "127.0.0.1:8443")]
+        bind: SocketAddr,
+    },
+    /// Listet alle der Domäne beigetretenen Maschinen auf
+    List {
+        /// Domänenname
+        domain: String,
+    },
+    /// Widerruft eine beigetretene Maschine und entfernt ihren DNS-Eintrag
+    Revoke {
+        /// Domänenname
+        domain: String,
+        /// Machine-ID, FQDN oder Hostname
+        target: String,
+        /// Grund des Widerrufs
+        #[arg(short, long, default_value = "Admin Revocation")]
+        reason: String,
+    },
+    /// Zeigt den lokalen Domänen-Beitrittsstatus dieser Maschine
+    Status,
+}
+
+#[derive(Subcommand, Debug)]
+enum PolicyCommands {
+    /// Initialisiert Policy Authority Keypair & Policy Store für eine Domäne
+    Init {
+        /// Domänenname (z. B. corp.eu)
+        domain: String,
+    },
+    /// Erstellt oder aktualisiert eine GPO-Policy (z. B. SSH-Hardening oder Split-DNS)
+    Put {
+        /// Eindeutige Policy-ID (z. B. baseline-ssh)
+        #[arg(long)]
+        id: String,
+        /// Domänenname (z. B. corp.eu)
+        #[arg(long)]
+        domain: String,
+        /// Lesbarer Name
+        #[arg(long)]
+        name: String,
+        /// Ziel-OS: all, linux, windows, macos
+        #[arg(long, default_value = "all")]
+        os: String,
+        /// Aktiviert SSH-Hardening (keine Passwort-Logins, TrustedUserCAKeys)
+        #[arg(long)]
+        ssh_hardening: bool,
+        /// Konfiguriert Split-DNS-Suffixe (kommagetrennt, z. B. corp.eu,sbm)
+        #[arg(long)]
+        dns_domains: Option<String>,
+        /// Nameserver-IPs für Split-DNS (kommagetrennt, z. B. 10.42.0.1)
+        #[arg(long)]
+        dns_servers: Option<String>,
+    },
+    /// Listet alle gespeicherten GPO-Policies auf
+    List {
+        /// Optionaler OS-Filter (linux, windows, macos)
+        #[arg(long)]
+        os: Option<String>,
+    },
+    /// Erstellt ein Ed25519-signiertes Policy-Bundle (JSON)
+    Bundle {
+        /// Gültigkeitsdauer in Stunden (Standard: 24h)
+        #[arg(long, default_value = "24")]
+        ttl_hours: i64,
+        /// Optionaler Ausgabepfad
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Verifiziert und wendet das signierte Policy-Bundle lokal (oder per --dc remote) an
+    Apply {
+        /// Domänenname (z. B. corp.eu)
+        #[arg(long)]
+        domain: String,
+        /// Optionaler Remote-DC (z. B. 127.0.0.1:8443)
+        #[arg(long)]
+        dc: Option<SocketAddr>,
+        /// Zeigt nur geplante Änderungen ohne Dateisystem-Schreibvorgänge
+        #[arg(long)]
+        dry_run: bool,
+        /// Ziel-Wurzelverzeichnis für gerenderte Configs (Standard: ~/.sb/domain/rendered)
+        #[arg(long)]
+        root: Option<PathBuf>,
+    },
+    /// Löscht eine GPO-Policy anhand ihrer ID
+    Delete {
+        /// Policy-ID (z. B. baseline-ssh)
+        id: String,
+    },
+    /// Zeigt den lokalen GPO-Compliance-Status und Cache-Ablauf an
+    Status,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1979,6 +2118,24 @@ async fn main() {
                 std::process::exit(1);
             }
         }
+        Some(Commands::Domain { sub }) => {
+            if let Err(error) = handle_domain_commands(sub).await {
+                eprintln!(
+                    "  {} Domain operation failed: {error}",
+                    "✗".bright_red().bold()
+                );
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::Policy { sub }) => {
+            if let Err(error) = handle_policy_commands(sub).await {
+                eprintln!(
+                    "  {} Policy operation failed: {error}",
+                    "✗".bright_red().bold()
+                );
+                std::process::exit(1);
+            }
+        }
         Some(Commands::Status) | None => {
             handle_status();
         }
@@ -2799,7 +2956,8 @@ async fn run_daemon(
     // Likelihood & Exploitability: High (Score 8/10) - Triggered when node daemon initializes before identity creation or creates catalog with placeholder key.
     // Applied Mitigation: Resolve and load node identity first, pass actual WireGuard public key to network catalog store, and repair legacy/placeholder default entries automatically on daemon startup.
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let default_mesh_paths = sb_mesh::state::MeshStatePaths::for_mesh_at(&home.join(".sb-mesh"), "default");
+    let default_mesh_paths =
+        sb_mesh::state::MeshStatePaths::for_mesh_at(&home.join(".sb-mesh"), "default");
     let legacy_id = home.join(".sb-mesh").join("identity.json");
     let id_file = if Path::new("/etc/sb/identity.json").exists() {
         PathBuf::from("/etc/sb/identity.json")
@@ -2821,15 +2979,17 @@ async fn run_daemon(
     );
 
     // Multi-Mesh Network Store laden mit tatsächlicher Knoten-Identität
-    let networks_file = config_path.unwrap_or_else(|| {
-        home.join(".sb-mesh").join("networks.json")
-    });
+    let networks_file = config_path.unwrap_or_else(|| home.join(".sb-mesh").join("networks.json"));
 
     let mut store =
-        NetworkStore::load_or_create_default(&networks_file, &identity.wireguard_pubkey).unwrap_or_else(|_| {
-            NetworkStore::load_or_create_default(&PathBuf::from("networks.json"), &identity.wireguard_pubkey)
+        NetworkStore::load_or_create_default(&networks_file, &identity.wireguard_pubkey)
+            .unwrap_or_else(|_| {
+                NetworkStore::load_or_create_default(
+                    &PathBuf::from("networks.json"),
+                    &identity.wireguard_pubkey,
+                )
                 .unwrap()
-        });
+            });
 
     if let Some(default_net) = store.networks.get_mut("default") {
         if default_net.wireguard_pubkey == "sbm_node_fleet_anchor_pubkey=" {
@@ -3867,6 +4027,452 @@ fn handle_revoke(name: &str, reason: &str) {
         name
     );
     println!();
+}
+
+fn load_local_auth_verifier() -> Result<Arc<sb_auth::AuthVerifier>, String> {
+    let auth_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".sb")
+        .join("auth");
+    let pub_b64 = fs::read_to_string(auth_dir.join("auth.pub")).map_err(|e| {
+        format!(
+            "Missing sb-auth public key at {} (run 'sb-auth init' first): {e}",
+            auth_dir.join("auth.pub").display()
+        )
+    })?;
+    let rev_store = sb_auth::FileRevocationStore::open(auth_dir.join("revocations.json"))
+        .map_err(|e| format!("Cannot open sb-auth revocation store: {e}"))?;
+    let verifier = sb_auth::AuthVerifier::from_public_base64(&pub_b64, Arc::new(rev_store))
+        .map_err(|e| format!("Invalid sb-auth public key: {e}"))?;
+    Ok(Arc::new(verifier))
+}
+
+async fn handle_domain_commands(sub: DomainCommands) -> Result<(), String> {
+    match sub {
+        DomainCommands::Init { domain, force } => {
+            let clean_domain = sb_core::domain::validate_domain_name(&domain)?;
+            let _ = sb_ca::init_all(force).map_err(|e| format!("CA init failed: {e}"))?;
+            let registry = domain_join::DomainRegistry::load_or_create(&clean_domain)?;
+            registry.save()?;
+            let dc_fqdn = format!("dc.{clean_domain}");
+            let _ = sb_dns::config::ConfigManager::add_a_record(
+                &dc_fqdn,
+                std::net::Ipv4Addr::new(10, 42, 0, 1),
+            );
+            let _ = sb_dns::config::ConfigManager::add_srv_record(
+                &format!("_dc._tcp.{clean_domain}"),
+                10,
+                0,
+                8443,
+                &dc_fqdn,
+            );
+            println!(
+                "{} Domäne '{}' auf diesem Domain Controller initialisiert (CA + DNS A/SRV + Registry).",
+                "✓".bright_green().bold(),
+                clean_domain.cyan().bold()
+            );
+            Ok(())
+        }
+        DomainCommands::Join {
+            domain,
+            token,
+            hostname,
+            ssh_host_pubkey,
+            ip,
+            dc,
+        } => {
+            let raw_host = hostname.unwrap_or_else(|| {
+                std::env::var("COMPUTERNAME")
+                    .or_else(|_| std::env::var("HOSTNAME"))
+                    .unwrap_or_else(|_| "node-01".to_string())
+            });
+            let ssh_pub =
+                match ssh_host_pubkey {
+                    Some(path) => Some(fs::read_to_string(&path).map_err(|e| {
+                        format!("Cannot read SSH host pubkey {}: {e}", path.display())
+                    })?),
+                    None => None,
+                };
+
+            let (signing_key, machine_pub_b64) = domain_join::generate_local_machine_keypair();
+            let os = sb_core::domain::OsKind::current();
+            let req = sb_core::domain::DomainJoinRequest {
+                hostname: raw_host,
+                domain,
+                os,
+                machine_public_key_b64: machine_pub_b64,
+                ssh_host_public_key: ssh_pub,
+                mesh_ip: ip,
+                join_token: token,
+            };
+
+            let resp = if let Some(dc_addr) = dc {
+                domain_join::send_remote_join_request(dc_addr, &req).await?
+            } else {
+                let verifier = load_local_auth_verifier()?;
+                domain_join::process_join_request(&req, &verifier, None, true)?
+            };
+            let state_path =
+                domain_join::persist_local_machine_state(&resp, &signing_key, os, None)?;
+
+            println!(
+                "{} Maschine '{}' erfolgreich in Domäne '{}' aufgenommen!",
+                "✓".bright_green().bold(),
+                resp.fqdn.cyan().bold(),
+                resp.domain.white().bold()
+            );
+            println!("  ► Machine ID:   {}", resp.machine_id.yellow());
+            println!("  ► Mesh IP:      {}", resp.mesh_ip.green());
+            println!("  ► Joined by:    {}", resp.joined_by);
+            println!("  ► State saved:  {}", state_path.display());
+            Ok(())
+        }
+        DomainCommands::Serve { bind } => {
+            let verifier = load_local_auth_verifier()?;
+            println!(
+                "{} Domain Controller Join-Dienst lauscht auf http://{} (POST /v1/domain/join)",
+                "🛡️".cyan(),
+                bind
+            );
+            domain_join::serve_domain_join(bind, verifier, None, true).await
+        }
+        DomainCommands::List { domain } => {
+            let registry = domain_join::DomainRegistry::load_or_create(&domain)?;
+            println!(
+                "=== DOMAIN MACHINES [{}] ({}) ===",
+                registry.domain.cyan().bold(),
+                registry.machines.len()
+            );
+            for m in registry.machines {
+                let status = if m.revoked {
+                    "REVOKED".red().bold()
+                } else {
+                    "ACTIVE".green().bold()
+                };
+                println!(
+                    "  {:<20} {:<24} {:<15} {:<8} [{}] (by {})",
+                    m.machine_id.yellow(),
+                    m.fqdn.white().bold(),
+                    m.mesh_ip.cyan(),
+                    m.os.to_string(),
+                    status,
+                    m.joined_by
+                );
+            }
+            Ok(())
+        }
+        DomainCommands::Revoke {
+            domain,
+            target,
+            reason,
+        } => {
+            let revoked = domain_join::revoke_machine(&domain, &target, &reason, None, true)?;
+            println!(
+                "{} Maschine '{}' ({}) widerrufen und DNS-Eintrag entfernt.",
+                "✓".bright_red().bold(),
+                revoked.fqdn,
+                revoked.machine_id
+            );
+            Ok(())
+        }
+        DomainCommands::Status => {
+            let state_path = sb_core::domain::local_domain_dir().join("machine.json");
+            if !state_path.exists() {
+                println!("Diese Maschine ist aktuell keiner Domäne beigetreten.");
+                return Ok(());
+            }
+            let raw = fs::read_to_string(&state_path)
+                .map_err(|e| format!("Cannot read {}: {e}", state_path.display()))?;
+            let state: sb_core::domain::JoinedMachineState = serde_json::from_str(&raw)
+                .map_err(|e| format!("Invalid machine state JSON: {e}"))?;
+            println!("=== LOCAL DOMAIN STATUS ===");
+            println!("  ► FQDN:        {}", state.fqdn.cyan().bold());
+            println!("  ► Machine ID:  {}", state.machine_id.yellow());
+            println!("  ► OS:          {}", state.os);
+            println!("  ► Mesh IP:     {}", state.mesh_ip.green());
+            println!("  ► DNS Server:  {}", state.dns_server);
+            println!("  ► Joined by:   {}", state.joined_by);
+            println!("  ► Joined at:   {}", state.joined_at);
+            Ok(())
+        }
+    }
+}
+
+async fn handle_policy_commands(sub: PolicyCommands) -> Result<(), String> {
+    use sb_core::domain::OsKind;
+    use sb_core::policy::{PolicyDocument, PolicyRule, PolicyScope};
+
+    match sub {
+        PolicyCommands::Init { domain } => {
+            let key_path = policy_engine::default_policy_authority_key_path();
+            let pub_path = policy_engine::default_policy_authority_pub_path();
+            let _ = policy_engine::ensure_policy_authority_keypair(&key_path, &pub_path)?;
+            let store_path = policy_engine::default_policy_store_path();
+            let store = policy_engine::PolicyStore::load_or_create(&store_path, &domain)?;
+            store.save(&store_path)?;
+            println!(
+                "{} GPO Policy Authority für '{}' initialisiert.",
+                "✓".green().bold(),
+                store.domain.cyan().bold()
+            );
+            println!("  ► Public Key: {}", pub_path.display());
+            Ok(())
+        }
+        PolicyCommands::Put {
+            id,
+            domain,
+            name,
+            os,
+            ssh_hardening,
+            dns_domains,
+            dns_servers,
+        } => {
+            let target_os = match os.to_ascii_lowercase().as_str() {
+                "all" => Vec::new(),
+                "linux" => vec![OsKind::Linux],
+                "windows" => vec![OsKind::Windows],
+                "macos" => vec![OsKind::MacOs],
+                other => {
+                    return Err(format!(
+                        "Unsupported --os '{other}' (use all|linux|windows|macos)"
+                    ))
+                }
+            };
+            let mut rules = Vec::new();
+            if ssh_hardening {
+                rules.push(PolicyRule::SshHardening {
+                    password_auth: false,
+                    permit_root_login: false,
+                    trusted_user_ca_keys: true,
+                });
+            }
+            if let (Some(doms), Some(srvs)) = (dns_domains, dns_servers) {
+                rules.push(PolicyRule::DnsSplitZone {
+                    domains: doms.split(',').map(|s| s.trim().to_string()).collect(),
+                    nameservers: srvs.split(',').map(|s| s.trim().to_string()).collect(),
+                });
+            }
+            if rules.is_empty() {
+                return Err(
+                    "Mindestens eine Regel angeben (--ssh-hardening oder --dns-domains + --dns-servers)".into(),
+                );
+            }
+
+            let store_path = policy_engine::default_policy_store_path();
+            let mut store = policy_engine::PolicyStore::load_or_create(&store_path, &domain)?;
+            let doc = PolicyDocument {
+                id,
+                name,
+                description: String::new(),
+                version: 1,
+                scope: PolicyScope::Domain,
+                target_os,
+                rules,
+                updated_at: String::new(),
+                updated_by: "cli-admin".into(),
+            };
+            let saved = store.upsert_policy(doc)?;
+            store.save(&store_path)?;
+            println!(
+                "{} Policy '{}' (v{}, Bundle Rev {}) gespeichert.",
+                "✓".green().bold(),
+                saved.id.cyan().bold(),
+                saved.version,
+                store.revision
+            );
+            Ok(())
+        }
+        PolicyCommands::List { os } => {
+            let store =
+                policy_engine::PolicyStore::load(&policy_engine::default_policy_store_path())?;
+            let os_filter = match os.as_deref().map(str::to_ascii_lowercase).as_deref() {
+                Some("linux") => Some(OsKind::Linux),
+                Some("windows") => Some(OsKind::Windows),
+                Some("macos") => Some(OsKind::MacOs),
+                Some(other) => return Err(format!("Unsupported --os '{other}'")),
+                None => None,
+            };
+            let list = store.list_policies(os_filter);
+            println!(
+                "=== GPO POLICIES [{}] (Revision {}, {} Policies) ===",
+                store.domain.cyan().bold(),
+                store.revision,
+                list.len()
+            );
+            for p in list {
+                println!(
+                    "  {:<24} v{:<3} rules={:<2} name={}",
+                    p.id.yellow(),
+                    p.version,
+                    p.rules.len(),
+                    p.name
+                );
+            }
+            Ok(())
+        }
+        PolicyCommands::Bundle { ttl_hours, out } => {
+            let store =
+                policy_engine::PolicyStore::load(&policy_engine::default_policy_store_path())?;
+            let key = policy_engine::ensure_policy_authority_keypair(
+                &policy_engine::default_policy_authority_key_path(),
+                &policy_engine::default_policy_authority_pub_path(),
+            )?;
+            let bundle = store.sign_bundle(ttl_hours, &key)?;
+            let json = serde_json::to_string_pretty(&bundle)
+                .map_err(|e| format!("Failed to serialize bundle: {e}"))?;
+            if let Some(path) = out {
+                fs::write(&path, &json)
+                    .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+                println!(
+                    "{} Signiertes GPO-Bundle geschrieben nach {}",
+                    "✓".green().bold(),
+                    path.display()
+                );
+            } else {
+                println!("{json}");
+            }
+            Ok(())
+        }
+        PolicyCommands::Apply {
+            domain,
+            dc,
+            dry_run,
+            root,
+        } => {
+            let cache_path = policy_engine::default_cached_bundle_path();
+            let bundle = if let Some(dc_addr) = dc {
+                match domain_join::fetch_remote_policy_bundle(dc_addr).await {
+                    Ok(b) => b,
+                    Err(remote_err) => {
+                        if cache_path.exists() {
+                            eprintln!(
+                                "  {} DC nicht erreichbar ({remote_err}) — nutze signierten Offline-Cache.",
+                                "!".yellow().bold()
+                            );
+                            let raw = fs::read_to_string(&cache_path)
+                                .map_err(|e| format!("Offline cache read failed: {e}"))?;
+                            serde_json::from_str(&raw)
+                                .map_err(|e| format!("Invalid offline cached bundle: {e}"))?
+                        } else {
+                            return Err(remote_err);
+                        }
+                    }
+                }
+            } else if policy_engine::default_policy_store_path().exists() {
+                let store =
+                    policy_engine::PolicyStore::load(&policy_engine::default_policy_store_path())?;
+                let key = policy_engine::ensure_policy_authority_keypair(
+                    &policy_engine::default_policy_authority_key_path(),
+                    &policy_engine::default_policy_authority_pub_path(),
+                )?;
+                store.sign_bundle(24, &key)?
+            } else if cache_path.exists() {
+                let raw = fs::read_to_string(&cache_path)
+                    .map_err(|e| format!("Offline cache read failed: {e}"))?;
+                serde_json::from_str(&raw)
+                    .map_err(|e| format!("Invalid offline cached bundle: {e}"))?
+            } else {
+                return Err(
+                    "Kein lokaler Policy-Store und kein Offline-Cache vorhanden (--dc angeben)."
+                        .into(),
+                );
+            };
+
+            let pub_b64 = fs::read_to_string(policy_engine::default_policy_authority_pub_path())
+                .map_err(|e| format!("Missing policy_authority.pub: {e}"))?;
+            let state_path = policy_engine::default_applied_state_path();
+            let min_rev = if state_path.exists() {
+                let raw = fs::read_to_string(&state_path).unwrap_or_default();
+                serde_json::from_str::<policy_engine::AppliedPolicyState>(&raw)
+                    .map(|s| s.last_applied_revision)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+
+            policy_engine::verify_policy_bundle(&bundle, &domain, &pub_b64, min_rev)?;
+            let sys_root =
+                root.unwrap_or_else(|| sb_core::domain::local_domain_dir().join("rendered"));
+            let report = policy_engine::apply_policy_bundle(
+                &bundle,
+                "local-machine",
+                OsKind::current(),
+                &sys_root,
+                dry_run,
+            )?;
+            if !dry_run {
+                let new_state = policy_engine::AppliedPolicyState {
+                    domain: bundle.domain.clone(),
+                    last_applied_revision: bundle.revision,
+                    last_applied_at: chrono::Utc::now().to_rfc3339(),
+                };
+                if let Some(parent) = state_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = fs::write(
+                    &state_path,
+                    serde_json::to_string_pretty(&new_state).unwrap_or_default(),
+                );
+                if let Ok(bundle_json) = serde_json::to_string_pretty(&bundle) {
+                    let _ = fs::write(&cache_path, bundle_json);
+                }
+            }
+            println!(
+                "{} GPO-Bundle Rev {} (dry_run={}): {} angewendet, {} übersprungen.",
+                "✓".green().bold(),
+                report.bundle_revision,
+                report.dry_run,
+                report.applied.len(),
+                report.skipped.len()
+            );
+            Ok(())
+        }
+        PolicyCommands::Delete { id } => {
+            let store_path = policy_engine::default_policy_store_path();
+            let mut store = policy_engine::PolicyStore::load(&store_path)?;
+            if store.delete_policy(&id)? {
+                store.save(&store_path)?;
+                println!(
+                    "{} Policy '{}' gelöscht (Bundle Rev {}).",
+                    "✓".green().bold(),
+                    id.yellow(),
+                    store.revision
+                );
+            } else {
+                return Err(format!("Policy '{id}' nicht gefunden"));
+            }
+            Ok(())
+        }
+        PolicyCommands::Status => {
+            let state_path = policy_engine::default_applied_state_path();
+            if !state_path.exists() {
+                println!("Noch kein GPO-Bundle lokal angewendet.");
+                return Ok(());
+            }
+            let raw = fs::read_to_string(&state_path)
+                .map_err(|e| format!("Cannot read {}: {e}", state_path.display()))?;
+            let state: policy_engine::AppliedPolicyState = serde_json::from_str(&raw)
+                .map_err(|e| format!("Invalid applied policy state: {e}"))?;
+            println!("=== LOCAL GPO STATUS ===");
+            println!("  ► Domain:         {}", state.domain.cyan().bold());
+            println!("  ► Revision:       {}", state.last_applied_revision);
+            println!("  ► Applied at:     {}", state.last_applied_at);
+            let cache_path = policy_engine::default_cached_bundle_path();
+            if cache_path.exists() {
+                if let Ok(cache_raw) = fs::read_to_string(&cache_path) {
+                    if let Ok(bundle) =
+                        serde_json::from_str::<sb_core::policy::SignedPolicyBundle>(&cache_raw)
+                    {
+                        println!(
+                            "  ► Offline Cache:  Rev {} (gültig bis {})",
+                            bundle.revision, bundle.expires_at
+                        );
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 fn handle_member_commands(sub: MemberCommands) {

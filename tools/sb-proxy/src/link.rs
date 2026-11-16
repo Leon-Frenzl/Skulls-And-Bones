@@ -22,8 +22,8 @@
 //! sb proxy link myapp.example.com 8080 --node hostinger-node --callsign my-laptop
 //! ```
 
-use colored::Colorize;
 use crate::escape::SovereignTunnelClient;
+use colored::Colorize;
 use std::process::Command as StdCommand;
 use std::sync::atomic::Ordering;
 use std::time::Duration;

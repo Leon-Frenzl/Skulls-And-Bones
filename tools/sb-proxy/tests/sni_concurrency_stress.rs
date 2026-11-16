@@ -5,8 +5,8 @@
 //! - Conforms to IETF RFC 8446 (TLS 1.3)
 //! - Conforms to IETF RFC 5280 (Internet X.509 PKI Profile)
 
-use sb_proxy::escape::EscapeSpaceStore;
 use sb_proxy::ca::DeveloperCa;
+use sb_proxy::escape::EscapeSpaceStore;
 use sb_proxy::proxy::DynamicSniResolver;
 use std::sync::{Arc, Barrier, RwLock};
 use std::time::Instant;

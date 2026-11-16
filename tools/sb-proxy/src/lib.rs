@@ -3,6 +3,7 @@ pub mod ca;
 pub mod config;
 pub mod discovery;
 pub mod escape;
+pub mod graph_api;
 pub mod http_server;
 pub mod ipc;
 pub mod link;

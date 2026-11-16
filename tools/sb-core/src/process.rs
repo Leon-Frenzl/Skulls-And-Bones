@@ -145,7 +145,10 @@ pub fn is_pid_alive(pid: u32) -> bool {
                 for line in content.lines() {
                     if let Some(state_part) = line.strip_prefix("State:") {
                         let trimmed = state_part.trim_start();
-                        if trimmed.starts_with('Z') || trimmed.starts_with('X') || trimmed.starts_with('x') {
+                        if trimmed.starts_with('Z')
+                            || trimmed.starts_with('X')
+                            || trimmed.starts_with('x')
+                        {
                             return false;
                         }
                         return true;

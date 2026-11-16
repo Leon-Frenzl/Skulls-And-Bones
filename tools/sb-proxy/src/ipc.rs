@@ -118,9 +118,7 @@ pub async fn run_ipc_server(
                                 let active_count = if let Ok(r) = routes_clone.read() {
                                     r.spaces
                                         .iter()
-                                        .filter(|s| {
-                                            s.status == crate::escape::EscapeStatus::Active
-                                        })
+                                        .filter(|s| s.status == crate::escape::EscapeStatus::Active)
                                         .count()
                                 } else {
                                     0
