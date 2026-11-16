@@ -824,6 +824,20 @@ async fn handle_join_http_connection(
         let audit_path = base_dir.join("audit.jsonl");
 
         if method == "GET" && path == "/v1/packages" {
+            let Some(token) = extract_bearer_token(&header_lines) else {
+                return write_http_json(
+                    stream,
+                    401,
+                    "Unauthorized",
+                    r#"{"error":"missing bearer token"}"#,
+                )
+                .await;
+            };
+            if let Err(e) = verifier.verify_token(token) {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
             let store = crate::fleet::FleetStore::load(&fleet_path).unwrap_or_default();
             let list = if let Some(mid) = query_param(query, "machine_id") {
                 store.packages_for_machine(mid)
@@ -1187,6 +1201,20 @@ async fn handle_join_http_connection(
     }
 
     if method == "GET" && path == "/v1/policies" {
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        if let Err(e) = verifier.verify_token(token) {
+            let msg =
+                serde_json::json!({ "error": format!("authentication failed: {e}") }).to_string();
+            return write_http_json(stream, 401, "Unauthorized", &msg).await;
+        }
         let store_path = registry_path
             .and_then(|p| p.parent())
             .map(|d| d.join("policies.json"))

@@ -84,6 +84,8 @@ export default function App() {
   const [refreshToken, setRefreshToken] = useState<string>(() => localStorage.getItem("sb_refresh_token") || "");
   const [loginUser, setLoginUser] = useState<string>("leon.admin");
   const [loginPass, setLoginPass] = useState<string>("");
+  const [loginMode, setLoginMode] = useState<"password" | "code">("password");
+  const [authError, setAuthError] = useState<string>("");
   const [meNewPass, setMeNewPass] = useState<string>("");
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [machines, setMachines] = useState<MachineRecord[]>([]);
@@ -175,87 +177,83 @@ export default function App() {
     return null;
   };
 
-  const refreshAll = async () => {
+  const refreshAll = async (overrideToken?: string) => {
+    const activeToken = (overrideToken ?? token).trim();
+    if (!activeToken) return;
     setStatusMsg("");
     try {
-      const [h, p, d, c, r, ipm] = await Promise.all([
+      let headers: Record<string, string> = { Authorization: `Bearer ${activeToken}` };
+      let meRes = await fetch("/v1/me", { headers });
+      if (meRes.status === 401 && refreshToken) {
+        const refreshed = await tryRefreshSession();
+        if (refreshed) {
+          headers = { Authorization: `Bearer ${refreshed}` };
+          meRes = await fetch("/v1/me", { headers });
+        }
+      }
+      if (meRes.status === 401 || meRes.status === 403) {
+        saveSession("", "");
+        setAuthError("Sitzung abgelaufen — bitte erneut anmelden.");
+        return;
+      }
+
+      const [h, p, d, c, r, ipm, mRes, uRes, aRes, vRes, tvRes, appRes, fhRes] = await Promise.all([
         fetch("/v1/health").then((x) => x.json()),
-        fetch("/v1/policies").then((x) => x.json()).catch(() => ({ policies: [] })),
-        fetch("/v1/dns/records").then((x) => x.json()),
-        fetch("/v1/ca/status").then((x) => x.json()),
-        fetch("/v1/proxy/routes").then((x) => x.json()),
-        fetch("/v1/ipam/subnets").then((x) => x.json()),
+        fetch("/v1/policies", { headers }).then((x) => x.json()).catch(() => ({ policies: [] })),
+        fetch("/v1/dns/records", { headers }).then((x) => x.json()).catch(() => null),
+        fetch("/v1/ca/status", { headers }).then((x) => x.json()).catch(() => null),
+        fetch("/v1/proxy/routes", { headers }).then((x) => x.json()).catch(() => ({ routes: [] })),
+        fetch("/v1/ipam/subnets", { headers }).then((x) => x.json()).catch(() => null),
+        fetch("/v1/machines", { headers }),
+        fetch("/v1/users", { headers }),
+        fetch("/v1/audit/events?limit=50", { headers }),
+        fetch("/v1/me/vault", { headers }),
+        fetch(`/v1/vault/team?group=${encodeURIComponent(teamGroup)}`, { headers }),
+        fetch("/v1/apps", { headers }),
+        fetch("/v1/fleet/health", { headers }),
       ]);
       setHealth(h);
-      setPolicies(Array.isArray(p.policies) ? p.policies : []);
+      setPolicies(Array.isArray(p?.policies) ? p.policies : []);
       setDnsRecords(d);
       setCaStatus(c);
-      setRoutes(Array.isArray(r.routes) ? r.routes : []);
+      setRoutes(Array.isArray(r?.routes) ? r.routes : []);
       setIpamData(ipm);
 
-      if (token.trim()) {
-        let [mRes, uRes, aRes, meRes, vRes, tvRes, appRes, fhRes] = await Promise.all([
-          fetch("/v1/machines", { headers: authHeaders() }),
-          fetch("/v1/users", { headers: authHeaders() }),
-          fetch("/v1/audit/events?limit=50", { headers: authHeaders() }),
-          fetch("/v1/me", { headers: authHeaders() }),
-          fetch("/v1/me/vault", { headers: authHeaders() }),
-          fetch(`/v1/vault/team?group=${encodeURIComponent(teamGroup)}`, { headers: authHeaders() }),
-          fetch("/v1/apps", { headers: authHeaders() }),
-          fetch("/v1/fleet/health", { headers: authHeaders() }),
-        ]);
-        if (mRes.status === 401 && refreshToken) {
-          const newTok = await tryRefreshSession();
-          if (newTok) {
-            const h2 = { Authorization: `Bearer ${newTok}` };
-            [mRes, uRes, aRes, meRes, vRes, tvRes, appRes, fhRes] = await Promise.all([
-              fetch("/v1/machines", { headers: h2 }),
-              fetch("/v1/users", { headers: h2 }),
-              fetch("/v1/audit/events?limit=50", { headers: h2 }),
-              fetch("/v1/me", { headers: h2 }),
-              fetch("/v1/me/vault", { headers: h2 }),
-              fetch(`/v1/vault/team?group=${encodeURIComponent(teamGroup)}`, { headers: h2 }),
-              fetch("/v1/apps", { headers: h2 }),
-              fetch("/v1/fleet/health", { headers: h2 }),
-            ]);
-          }
+      if (meRes.ok) {
+        const meJson = await meRes.json();
+        setMeUser(meJson.user ?? null);
+        setMeMachines(Array.isArray(meJson.machines) ? meJson.machines : []);
+        if (meJson.user?.ssh_public_key) {
+          setMeSshPubkey(meJson.user.ssh_public_key);
         }
-        if (mRes.ok) {
-          const mJson = await mRes.json();
-          setMachines(Array.isArray(mJson.machines) ? mJson.machines : []);
-        }
-        if (uRes.ok) {
-          const uJson = await uRes.json();
-          setUsers(Array.isArray(uJson.users) ? uJson.users : []);
-        }
-        if (aRes.ok) {
-          const aJson = await aRes.json();
-          setAuditEvents(Array.isArray(aJson.events) ? aJson.events : []);
-          setAuditValid(typeof aJson.chain_valid === "boolean" ? aJson.chain_valid : null);
-        }
-        if (meRes.ok) {
-          const meJson = await meRes.json();
-          setMeUser(meJson.user ?? null);
-          setMeMachines(Array.isArray(meJson.machines) ? meJson.machines : []);
-          if (meJson.user?.ssh_public_key) {
-            setMeSshPubkey(meJson.user.ssh_public_key);
-          }
-        }
-        if (vRes.ok) {
-          const vJson = await vRes.json();
-          setVaultEntries(Array.isArray(vJson.entries) ? vJson.entries : []);
-        }
-        if (tvRes.ok) {
-          const tvJson = await tvRes.json();
-          setTeamEntries(Array.isArray(tvJson.entries) ? tvJson.entries : []);
-        }
-        if (appRes.ok) {
-          const appJson = await appRes.json();
-          setApps(Array.isArray(appJson.apps) ? appJson.apps : []);
-        }
-        if (fhRes.ok) {
-          setFleetHealth(await fhRes.json());
-        }
+      }
+      if (mRes.ok) {
+        const mJson = await mRes.json();
+        setMachines(Array.isArray(mJson.machines) ? mJson.machines : []);
+      }
+      if (uRes.ok) {
+        const uJson = await uRes.json();
+        setUsers(Array.isArray(uJson.users) ? uJson.users : []);
+      }
+      if (aRes.ok) {
+        const aJson = await aRes.json();
+        setAuditEvents(Array.isArray(aJson.events) ? aJson.events : []);
+        setAuditValid(typeof aJson.chain_valid === "boolean" ? aJson.chain_valid : null);
+      }
+      if (vRes.ok) {
+        const vJson = await vRes.json();
+        setVaultEntries(Array.isArray(vJson.entries) ? vJson.entries : []);
+      }
+      if (tvRes.ok) {
+        const tvJson = await tvRes.json();
+        setTeamEntries(Array.isArray(tvJson.entries) ? tvJson.entries : []);
+      }
+      if (appRes.ok) {
+        const appJson = await appRes.json();
+        setApps(Array.isArray(appJson.apps) ? appJson.apps : []);
+      }
+      if (fhRes.ok) {
+        setFleetHealth(await fhRes.json());
       }
     } catch (err) {
       setStatusMsg(`API-Verbindung fehlgeschlagen: ${String(err)}`);
@@ -263,7 +261,9 @@ export default function App() {
   };
 
   useEffect(() => {
-    void refreshAll();
+    if (token.trim()) {
+      void refreshAll();
+    }
   }, []);
 
   const runExplorer = async () => {
@@ -342,6 +342,122 @@ export default function App() {
     }
   };
 
+  if (!token.trim()) {
+    return (
+      <div className="login-shell">
+        <div className="login-card">
+          <div className="login-header">
+            <ShieldCheck size={32} color="#52c7bd" />
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 18 }}>Skulls &amp; Bones</div>
+              <div style={{ fontSize: 12, color: "var(--accent)" }}>Sovereign Control Console</div>
+            </div>
+          </div>
+
+          <div className="login-tabs">
+            <button
+              className={`btn ${loginMode === "password" ? "btn-primary" : ""}`}
+              onClick={() => { setLoginMode("password"); setAuthError(""); }}
+            >
+              Passwort-Login
+            </button>
+            <button
+              className={`btn ${loginMode === "code" ? "btn-primary" : ""}`}
+              onClick={() => { setLoginMode("code"); setAuthError(""); }}
+            >
+              Einmal-Code
+            </button>
+          </div>
+
+          {authError && <div className="login-error">{authError}</div>}
+
+          {loginMode === "password" ? (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setAuthError("");
+                const res = await fetch("/v1/auth/login", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ username: loginUser, password: loginPass }),
+                });
+                if (res.ok) {
+                  const data = await res.json();
+                  saveSession(data.access_token, data.refresh_token || "");
+                  setLoginPass("");
+                  await refreshAll(data.access_token);
+                } else {
+                  setAuthError(`Anmeldung fehlgeschlagen (${res.status})`);
+                }
+              }}
+            >
+              <div className="login-field">
+                <label>Domänen-Benutzer</label>
+                <input
+                  className="input"
+                  placeholder="leon.admin"
+                  value={loginUser}
+                  onChange={(e) => setLoginUser(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="login-field">
+                <label>Passwort</label>
+                <input
+                  className="input"
+                  type="password"
+                  placeholder="••••••••••••"
+                  value={loginPass}
+                  onChange={(e) => setLoginPass(e.target.value)}
+                  required
+                />
+              </div>
+              <button className="btn btn-primary" type="submit" style={{ width: "100%", justifyContent: "center", padding: "10px 14px" }}>
+                Anmelden
+              </button>
+            </form>
+          ) : (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setAuthError("");
+                const res = await fetch("/v1/auth/exchange", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ code: loginCode }),
+                });
+                if (res.ok) {
+                  const data = await res.json();
+                  if (data.access_token) {
+                    saveSession(data.access_token, data.refresh_token || "");
+                    setLoginCode("");
+                    await refreshAll(data.access_token);
+                  }
+                } else {
+                  setAuthError(`Ungültiger oder abgelaufener Code (${res.status})`);
+                }
+              }}
+            >
+              <div className="login-field">
+                <label>Einmal-Code (sbc_...)</label>
+                <input
+                  className="input"
+                  placeholder="sbc_..."
+                  value={loginCode}
+                  onChange={(e) => setLoginCode(e.target.value)}
+                  required
+                />
+              </div>
+              <button className="btn btn-primary" type="submit" style={{ width: "100%", justifyContent: "center", padding: "10px 14px" }}>
+                Mit Code anmelden
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -400,81 +516,17 @@ export default function App() {
             {tab === "explorer" && "Open Graph API Explorer (/v1/*)"}
           </h1>
 
-          <div className="token-box" style={{ flexWrap: "wrap" }}>
-            {!token.trim() ? (
-              <>
-                <input
-                  className="input"
-                  placeholder="Benutzer (leon.admin)"
-                  value={loginUser}
-                  onChange={(e) => setLoginUser(e.target.value)}
-                  style={{ width: 140 }}
-                />
-                <input
-                  className="input"
-                  type="password"
-                  placeholder="Passwort"
-                  value={loginPass}
-                  onChange={(e) => setLoginPass(e.target.value)}
-                  style={{ width: 130 }}
-                />
-                <button
-                  className="btn btn-primary"
-                  onClick={async () => {
-                    const res = await fetch("/v1/auth/login", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ username: loginUser, password: loginPass }),
-                    });
-                    if (res.ok) {
-                      const data = await res.json();
-                      saveSession(data.access_token, data.refresh_token || "");
-                      setLoginPass("");
-                      await refreshAll();
-                    } else {
-                      setStatusMsg(`Login fehlgeschlagen (${res.status}): ${await res.text()}`);
-                    }
-                  }}
-                >
-                  Login
-                </button>
-                <input
-                  className="input"
-                  placeholder="oder Code (sbc_...)"
-                  value={loginCode}
-                  onChange={(e) => setLoginCode(e.target.value)}
-                  style={{ width: 140 }}
-                />
-                <button
-                  className="btn"
-                  onClick={async () => {
-                    const res = await fetch("/v1/auth/exchange", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ code: loginCode }),
-                    });
-                    if (res.ok) {
-                      const data = await res.json();
-                      if (data.access_token) {
-                        saveSession(data.access_token, data.refresh_token || "");
-                        setLoginCode("");
-                        await refreshAll();
-                      }
-                    } else {
-                      setStatusMsg(`Code-Login fehlgeschlagen (${res.status}): ${await res.text()}`);
-                    }
-                  }}
-                >
-                  Code
-                </button>
-              </>
-            ) : (
-              <button className="btn" onClick={() => saveSession("", "")}>
-                Abmelden
-              </button>
+          <div className="token-box">
+            {meUser && (
+              <span className="badge badge-ok" style={{ padding: "6px 10px" }}>
+                {meUser.username} ({meUser.groups.join(", ")})
+              </span>
             )}
             <button className="btn" onClick={() => void refreshAll()}>
               <RefreshCw size={14} /> Refresh
+            </button>
+            <button className="btn btn-danger" onClick={() => { saveSession("", ""); setMeUser(null); }}>
+              Abmelden
             </button>
           </div>
         </div>

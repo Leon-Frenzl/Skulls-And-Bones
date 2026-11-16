@@ -125,8 +125,11 @@ async fn handle_graph_request(
         return Ok(json_response(StatusCode::OK, &spec.to_string()));
     }
 
-    // 2. Local Read-Only Aggregations (DNS, CA, Proxy Routes)
+    // 2. Local Read-Only Aggregations (Authenticated: DNS, CA, Proxy Routes, IPAM)
     if method == Method::GET && uri_path == "/v1/dns/records" {
+        if let Err(resp) = require_auth_claims(verifier.as_deref(), auth_header.as_deref()) {
+            return Ok(resp);
+        }
         let body = read_dns_records_json().to_string();
         return Ok(json_response(StatusCode::OK, &body));
     }
@@ -208,17 +211,26 @@ async fn handle_graph_request(
     }
 
     if method == Method::GET && uri_path == "/v1/ca/status" {
+        if let Err(resp) = require_auth_claims(verifier.as_deref(), auth_header.as_deref()) {
+            return Ok(resp);
+        }
         let body = read_ca_status_json().to_string();
         return Ok(json_response(StatusCode::OK, &body));
     }
 
     if method == Method::GET && uri_path == "/v1/proxy/routes" {
+        if let Err(resp) = require_auth_claims(verifier.as_deref(), auth_header.as_deref()) {
+            return Ok(resp);
+        }
         let routes = ProxyConfig::load_spaces();
         let body = serde_json::json!({ "routes": routes }).to_string();
         return Ok(json_response(StatusCode::OK, &body));
     }
 
     if method == Method::GET && uri_path == "/v1/ipam/subnets" {
+        if let Err(resp) = require_auth_claims(verifier.as_deref(), auth_header.as_deref()) {
+            return Ok(resp);
+        }
         let body = read_ipam_json().to_string();
         return Ok(json_response(StatusCode::OK, &body));
     }
@@ -707,6 +719,35 @@ pub fn build_openapi_spec() -> serde_json::Value {
             "description": "Developer-friendly, sovereign domain, DNS, CA, GPO & mesh management API."
         },
         "paths": paths
+    })
+}
+
+fn require_auth_claims(
+    verifier: Option<&AuthVerifier>,
+    auth_header: Option<&str>,
+) -> Result<sb_auth::claims::SovereignClaims, Response<Full<Bytes>>> {
+    let Some(ver) = verifier else {
+        return Err(json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"error":"sb-auth verifier not configured"}"#,
+        ));
+    };
+    let Some(token) = auth_header
+        .and_then(|h| {
+            h.strip_prefix("Bearer ")
+                .or_else(|| h.strip_prefix("bearer "))
+        })
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    else {
+        return Err(json_response(
+            StatusCode::UNAUTHORIZED,
+            r#"{"error":"missing bearer token"}"#,
+        ));
+    };
+    ver.verify_token(token).map_err(|e| {
+        let msg = serde_json::json!({ "error": format!("authentication failed: {e}") }).to_string();
+        json_response(StatusCode::UNAUTHORIZED, &msg)
     })
 }
 
