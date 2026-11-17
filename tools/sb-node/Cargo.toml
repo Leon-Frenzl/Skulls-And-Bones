@@ -1,0 +1,49 @@
+[package]
+name = "sb-node"
+version = "0.1.0"
+edition = "2021"
+description = "S&B Server Agent (sb-node) — Headless Server Daemon, Multi-Tenant Relay Anchor & Port Watchdog"
+authors = ["Skulls & Bones Lab <dev@skulls-and-bones.org>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://skulls-and-bones.org"
+keywords = ["server", "daemon", "mesh", "wireguard", "sovereign"]
+categories = ["command-line-utilities", "network-programming"]
+
+[[bin]]
+name = "sb-node"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1.43", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+colored = "3.0"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6.0"
+which = "7.0"
+sha2 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+rand = "0.8"
+ed25519-dalek = "2.2"
+x25519-dalek = "2.0"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1.0"
+rustls-pki-types = "1.11"
+sb-core = { version = "0.2.0", path = "../sb-core" }
+sb-mesh = { version = "0.3.0", path = "../sb-mesh" }
+sb-auth = { version = "0.2.0", path = "../sb-auth" }
+sb-ca = { version = "0.1.0", path = "../sb-ca" }
+sb-dns = { version = "0.2.0", path = "../sb-dns" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_NetManagement",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Services",
+    "Win32_System_Threading",
+] }
