@@ -1,0 +1,21 @@
+[mesh]
+name = "sb"
+version = "0.1.0"
+topic = "sbm:code:sb-cli"
+channel = "main"
+description = "S&B Suite Master CLI — Unified Command Center for Sovereign Developer Tools"
+
+[swarm]
+replication_factor = 1
+preferred_anchors = ["hostinger-node"]
+
+[lifecycle]
+pre_publish = "sb-forge run check"
+post_subscribe = "cargo check"
+
+[ignore]
+exclude = [
+  "target/",
+  "*.tar.gz"
+]
+

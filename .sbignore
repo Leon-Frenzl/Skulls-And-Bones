@@ -1,0 +1,41 @@
+# .sbignore – gemeinsamer Filter für Tracking, Sync und Analysen in sb-code
+#
+# Gitignore-Syntax: *, ?, Verzeichnisse mit "/" am Ende, Negation mit "!".
+# Gefilterte Dateien werden weder versioniert noch synchronisiert und erscheinen
+# nicht in heatmap/coupling. Kernel-Ausschlüsse bleiben immer aktiv.
+# Mit --all wird der Filter nur für die jeweilige Analyse umgangen.
+
+# Build outputs and caches
+target/
+node_modules/
+dist/
+build/
+out/
+**/*.pdb
+**/*.exe
+**/*.msi
+*.log
+*.local
+*.tsbuildinfo
+.cache/
+.vscode/
+.idea/
+.DS_Store
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Local workspace and secret material
+.sb/
+.sb-forge/
+.env
+.env.*
+*.env
+*.sbkey
+identity.sbkey
+lease.json
+forge-secrets.local.toml
+*.sbbundle
+
+# Planning notes that accompany routine code changes
+brain/

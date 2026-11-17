@@ -1,0 +1,11 @@
+{
+  "name": "skulls-and-bones",
+  "private": true,
+  "scripts": {
+    "install:verify-deps": "node scripts/install-verification-deps.mjs",
+    "verify:suite": "node scripts/verify-suite.mjs",
+    "dev:website": "npm --prefix website run dev",
+    "build:website": "npm --prefix website run build",
+    "preview:website": "npm --prefix website run preview"
+  }
+}
