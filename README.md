@@ -1,100 +1,136 @@
-# Skulls & Bones — Souveräne Entwicklungs- und Infrastrukturwerkzeuge
+# Skulls & Bones — Sovereign Domain Controller & Mesh Suite
 
-> **Souveräne Werkzeuge. Klare Grenzen. Nachprüfbare Sicherheit.**
-> // MODULAR DEVELOPER & INFRASTRUCTURE TOOLING
+> **Souveräne Identitäten. Signierte Policies. Null Cloud-Zwang.**  
+> Modulare Rust-Infrastruktur-Suite für selbstgehostete Active-Directory-Alternativen, Zero-Trust-Mesh-Networking, X.509/OpenSSH-PKI und Cross-Platform-Geräteverwaltung.
 
-Skulls & Bones entwickelt modulare Werkzeuge für Entwicklungs- und Infrastruktur-Workflows. Die Suite besteht aus eigenständigen Tools, nicht aus einem Monolithen. Ziel ist, dass Einzelpersonen und Teams Quellcode, Identitäten, Secrets und Betriebsabläufe selbst kontrollieren können. Sicherheits- und Reifegrad-Aussagen sind an konkrete Implementierungen und Tests gebunden; Markenbegriffe sind keine Garantie.
+[![Version](https://img.shields.io/badge/release-v0.2.1-blue.svg)](https://github.com/Leon-Frenzl/Skulls-And-Bones/releases/tag/v0.2.1)
+[![Rust](https://img.shields.io/badge/rust-2021-orange.svg)](https://www.rust-lang.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-## Architektur und Projektstruktur
+---
+
+## Überblick
+
+**Skulls & Bones** ersetzt klassische On-Premise-Domain-Controller und verstreute SSH-/VPN-Skripte durch eine kompakte, auditierbare Rust-Suite ohne Docker-Abhängigkeit:
+
+- **Sovereign Domain Controller (`sb-node dc up`)**: Bootstrapt Authentifizierung (Argon2id + Ed25519-Tokens), X.509 Root/Leaf CA, OpenSSH User/Host CA, Split-DNS, GPO-Authority, Graph API und Web-Konsole in einem einzigen Binary.
+- **Einzeiliger Client-Join (`sb join <domain>`)**: Nimmt Windows- und Linux-Rechner per Token oder Benutzername/Passwort auf, sichert das Root-CA-Zertifikat, wendet signierte GPOs an und richtet den Hintergrunddienst ein.
+- **Cross-Platform GPOs (`policy_engine`)**: Ed25519-signierte Policy-Bundles mit Anti-Rollback-Schutz:
+  - **Linux:** `sshd_config.d`, `sysctl.d`, `systemd-resolved` Split-DNS, Firewall-Baseline & ScreenLock.
+  - **Windows:** NRPT Split-DNS, Windows Defender Firewall (`sb-gpo-`-Präfix), ScreenLock-Policies & OpenSSH-Hardening.
+- **Cross-Platform LAPS (`laps`)**: Pro-Maschine-Notfall-Admin-Passwörter (`OsRng`), Argon2id + AES-256-GCM verschlüsselt, mit automatischer `rotate_pending`-Markierung nach Abruf — nativ auf Linux (`chpasswd`) und Windows (Win32 `NetUserSetInfo` / `NetUserAdd` + lokalisierte `S-1-5-32-544` Administratoren-Gruppe).
+- **Echter Hintergrunddienst (`sb-node service install`)**: Registriert `sb-node-agent` als gehärtete `systemd`-Unit unter Linux bzw. nativen Windows Service (SCM) mit automatischem Policy-Pull und LAPS-Rotation-Timer.
+
+---
+
+## Architektur & Workspace-Struktur
 
 ```text
 Skulls-And-Bones/
-├── brain/              # KI-freundliche Wissensbasis und Entscheidungsregister
-├── docs/               # Zielarchitektur, Produktspezifikationen und Release-Dokumente
-├── packaging/          # Installer und Release-Bundler
-├── website/            # Web-Präsenz
+├── scripts/
+│   └── install-dc.sh       # 1-Befehl-Server-Installer (Ubuntu/Debian + Caddy TLS + UFW + systemd)
+├── console/                # Web-Konsole & Self-Service Enrollment UI
+├── docs/                   # Architektur- und Produktspezifikationen
+├── website/                # Web-Präsenz
 └── tools/
-    ├── sb/             # Modularer Suite-Launcher und Tool-Manager (CLI)
-    ├── sb-core/        # Gemeinsame Bibliothek, Domain-Typen und Service-Verträge (Library)
-    ├── sb-app-contract/# SB-MAP Manifest- und Operations-Grants (Library)
-    ├── sb-app-protocol/# SB-MAP Protokoll-Framing und Objekt-Transfer (Library)
-    ├── sb-auth/        # Sovereign Identity, Tokens und Authentifizierung (CLI)
-    ├── sb-code/        # Code Engine, AST-Scopes und Mesh-Synchronisation (CLI)
-    ├── sb-db/          # Embedded Document-KV Store mit MVCC (CLI)
-    ├── sb-dns/         # Sovereign DNS-Resolver und Mesh-Router (CLI)
-    ├── sb-drive/       # Peer-Filesystem und Mesh-Storage (CLI)
-    ├── sb-forge/       # CI/CD Pipeline-Runner und Secret-Engine (CLI)
-    ├── sb-key/         # Root-Identity und Ephemeral Lease Engine (CLI)
-    ├── sb-mesh/        # P2P-Overlay-Netzwerk und Mesh-Routing (CLI)
-    ├── sb-node/        # Headless Mesh-Anchor und Server-Daemon (CLI)
-    └── sb-proxy/       # Reverse Proxy, Auto-TLS und Edge Gateway (CLI)
+    ├── sb/                 # Master-CLI (sb join, sb status, Delegation an Suite-Tools)
+    ├── sb-node/            # Domain Controller, Client-Agent, GPO Engine, LAPS & Service Manager
+    ├── sb-core/            # Gemeinsame Domain-, Policy-, Vault- und Service-Verträge
+    ├── sb-auth/            # Ed25519-Token-Auth, Argon2id-Passwörter, TOTP & Revocation
+    ├── sb-ca/              # X.509 mTLS & OpenSSH User/Host Certificate Authority
+    ├── sb-mesh/            # P2P-Overlay-Netzwerk & Mesh-Routing
+    ├── sb-dns/             # Sovereign Split-DNS Resolver
+    ├── sb-proxy/           # Reverse Proxy & Auto-TLS Edge Gateway
+    ├── sb-db/              # Embedded MVCC Document-KV Store
+    ├── sb-key/             # Root-Identity & Ephemeral Lease Engine
+    ├── sb-code/            # Code Engine & Mesh-Synchronisation
+    ├── sb-drive/           # Peer-Filesystem & Mesh-Storage
+    ├── sb-forge/           # CI/CD Pipeline-Runner
+    ├── sb-app-contract/    # SB-MAP Manifest- & Operations-Grants
+    └── sb-app-protocol/    # SB-MAP Protokoll-Framing
 ```
 
-`sb` verwaltet die separaten Tools. `sb-core` enthält gemeinsame Verträge und Service-Schnittstellen; der lokale Daemon bietet diese über versionierte IPC an. Die Suite fokussiert sich auf autarke, hochsichere CLI-Werkzeuge, Daemons und Vertragslaufzeiten. Frühere Desktop-Frontends (`sb-desktop`, `sb-studio`, `sb-workbench`, `netgrid`), Web-UI-Pakete (`sb-ui`, `skel`) sowie separate Terminal-/Shell-Prototypen (`sb-shell`, `skully`) wurden aus der Core-Suite ausgegliedert.
+---
 
-Das kanonische [Produktinventar](./product-inventory.json) führt die 14 konsolidierten Kern-Tools (11 CLI-Tools/Binaries und 3 Bibliotheken/Vertragscrates) mit Paketversion, Binary-/Release-Zielen, Abhängigkeiten, Prüfpfad und Reifegrad. `sb status` zeigt die Reifegrade; `sb catalog` liest dasselbe Inventar über `suite.catalog` (API v1) vom authentisierten lokalen Daemon. Aufgeführte Release-Ziele sind die deklarierten Build-Ziele und Validierungsergebnisse.
+## Schnellstart
 
-Das langfristige Ziel ist die Entwicklung und Code-Versionierung im eigenen Sovereign Dev Mesh mit `sb-code`. Jedes Tool soll einen eigenen Projekt-Working-Space erhalten; Topologie und Replikationsmodell sind noch offen. Die [Zielarchitektur](./docs/ARCHITECTURE.md) und das [KI-freundliche Dokumentenregister](./brain/README.md) halten Entscheidungen, Status und bekannte Abweichungen fest.
+### 1. Domain Controller auf einem frischen Ubuntu/Debian-Server einrichten
 
-## Schnellstart: CLI aus dem lokalen Quellcode
+Das Installationsskript richtet Firewall (`ufw`), `fail2ban`, `caddy` (automatisches Let's-Encrypt-TLS), `sb-dc.service`, Admin-Account und eine initiale Baseline-GPO in einem Durchlauf ein:
 
-Voraussetzung: eine installierte Rust-Toolchain. Führe die Befehle im bereits
-vorhandenen Suite-Workspace aus; die CLI benötigt zur Installation und Laufzeit
-keinen Git-Client:
-
-```text
-cargo install --path tools/sb --bin sb
-sb --help
-sb status
+```bash
+curl -fsSL https://raw.githubusercontent.com/Leon-Frenzl/Skulls-And-Bones/main/scripts/install-dc.sh | sudo bash -s -- \
+  --domain skulls-and-bones.sb \
+  --console-host console.skulls-and-bones.org \
+  --enroll-host enroll.skulls-and-bones.org \
+  --admin leon.admin \
+  --tarball-url https://github.com/Leon-Frenzl/Skulls-And-Bones/releases/download/v0.2.1/sb-v0.2.1-linux-x86_64.tar.gz
 ```
 
-Damit wird der Suite-Launcher lokal aus dem Quellcode gebaut und in Cargos
-Binary-Verzeichnis installiert. `sb status` zeigt installierte Tools und ihren
-Reifegrad; es startet keine Mesh-Dienste automatisch.
+Voraussetzung sind gesetzte DNS A-Records für `--console-host` und `--enroll-host` auf die IP des Servers (Ports `80/tcp` und `443/tcp` erreichbar).
 
-Für einzelne Suite-Tools kann der Launcher signierte Release-Artefakte beziehen:
+---
 
-```text
-sb install --help
-sb install <tool>
+### 2. Client-Rechner der Domäne beitreten lassen (Windows & Linux)
+
+Lade das passende Release-Paket aus den [GitHub Releases](https://github.com/Leon-Frenzl/Skulls-And-Bones/releases) herunter (`sb` und `sb-node` gehören in denselben Ordner).
+
+**Mit Benutzername & Passwort (in einer Administrator-PowerShell bzw. mit `sudo` für systemweite GPOs & Dienst):**
+
+```powershell
+sb join skulls-and-bones.sb --dc https://console.skulls-and-bones.org --username leon.admin
 ```
 
-Dieser Installationsweg setzt voraus, dass signiertes Manifest und Artefakt für
-das eigene Plattformziel unter dem konfigurierten Release-Hosting verfügbar
-sind. Automatisierte CI-Releases und ein separater Bootstrap-Installer sind derzeit
-nicht Teil des Projekts.
+**Oder mit einem Enrollment-/Join-Token:**
 
-## Suite-Verifikation und Tests
-
-Die gesamte Suite wird über das zentrale Verifikationsskript geprüft:
-
-```text
-npm run verify:suite
+```powershell
+sb join skulls-and-bones.sb --dc https://console.skulls-and-bones.org --token <JOIN_TOKEN>
 ```
 
-Dieser Prüflauf verifiziert:
-- Rust-Code-Formatierung (`cargo fmt --all -- --check`)
-- Vollständige Cargo-Workspace-Kompilierung über alle 14 Crates (`cargo check --workspace`)
-- Alle Workspace-Unit- und Integrationstests (`cargo test --workspace`)
-- Konsistenz des Produktinventars (`product-inventory.json` gegen Crate-Manifeste)
-- Build der öffentlichen Website (`npm --prefix website run build`)
-- Sicherheitsaudit der Website-Abhängigkeiten (`npm --prefix website audit`)
+Was dabei automatisch passiert:
+1. Authentifizierung am DC und Erzeugung eines lokalen Ed25519-Maschinenschlüssels (`~/.sb/domain/machine.key`).
+2. Ausstellung von Mesh-IP (`10.42.0.x`), X.509-Gerätezertifikat und Sicherung der Root-CA (`~/.sb/domain/root_ca.crt`).
+3. Abruf, Ed25519-Signaturprüfung (HTTPS-TOFU-Pinning) und Anwendung des GPO-Bundles.
+4. Einrichtung des Hintergrunddienstes `sb-node-agent` (`systemd` bzw. Windows Service).
 
-Für die gezielte Entwicklung einzelner Crates kann direkt Cargo genutzt werden:
+---
 
-```text
-cargo test -p sb-core
-cargo test -p sb-auth
+## Wichtige Befehle im Alltag
+
+| Aufgabe | Befehl |
+| :--- | :--- |
+| Lokalen Domänenstatus prüfen | `sb-node domain status` |
+| GPO-Sync manuell testen (Dry-Run) | `sb-node policy apply --domain skulls-and-bones.sb --dc https://console.skulls-and-bones.org --dry-run` |
+| LAPS-Passwort lokal rotieren | `sb-node laps rotate --machine-id <id> --passphrase "<secret>" --apply` |
+| LAPS-Passwort abrufen (markiert Rotation) | `sb-node laps reveal --machine-id <id> --passphrase "<secret>"` |
+| Hintergrunddienst-Status prüfen | `sb-node service status` |
+| Verschlüsseltes DC-Backup erstellen | `sb-node dc backup --out dc-backup.sb-bak --passphrase "<secret>"` |
+| Benutzer inkl. Maschinen offboarden | `sb-node user offboard <username>` |
+
+---
+
+## Aus dem Quellcode bauen & testen
+
+Voraussetzung: Rust-Toolchain (`rustup` / Cargo, Edition 2021).
+
+```bash
+# Release-Binaries bauen
+cargo build --release -p sb-cli -p sb-node
+
+# Gesamten Workspace testen
+cargo test --workspace
 ```
 
-## Website lokal entwickeln
+---
 
-```text
-cd website
-npm install
-npm run dev
-```
+## Sicherheitshinweise
 
-Website im Browser: [http://localhost:3000](http://localhost:3000). Dies startet
-nur die Website-Entwicklungsumgebung, nicht die S&B-CLI, den Suite-Daemon oder
-das Mesh.
+- Alle GPO-Bundles sind Ed25519-signiert und gegen Rollbacks (`revision`) sowie Manipulation geschützt.
+- LAPS-Passwörter werden im Speicher über `OsRng` erzeugt, mit Argon2id + AES-256-GCM verschlüsselt und unter Windows ohne Shell-/Kommandozeilen-Weitergabe direkt über die Win32-API (`NetUserSetInfo` / `NetUserAdd`) gesetzt.
+- Produktive Passwörter, `.sb-enroll`-Dateien, Vaults und private CA-Schlüssel gehören niemals ins Git-Repository.
+
+---
+
+## Lizenz
+
+MIT — siehe [LICENSE](./LICENSE).
