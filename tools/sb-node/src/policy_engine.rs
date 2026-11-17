@@ -354,7 +354,10 @@ pub fn apply_policy_bundle_for_target(
     let mut dns_domains: Vec<String> = Vec::new();
     let mut dns_servers: Vec<String> = Vec::new();
     let mut firewall_rules: Vec<serde_json::Value> = Vec::new();
+    let mut firewall_default_deny: Option<bool> = None;
+    let mut firewall_allow_ports: Vec<u16> = Vec::new();
     let mut screen_locks: Vec<serde_json::Value> = Vec::new();
+    let mut screen_lock_cfg: Option<(u32, bool)> = None;
 
     let mut applied = Vec::new();
     let mut skipped = Vec::new();
@@ -399,7 +402,12 @@ pub fn apply_policy_bundle_for_target(
                         if *permit_root_login { "yes" } else { "no" }
                     ));
                     if *trusted_user_ca_keys {
-                        ssh_lines.push("TrustedUserCAKeys /etc/ssh/sb_user_ca.pub".into());
+                        let ca_path = if target_os == OsKind::Windows {
+                            "C:/ProgramData/ssh/sb_user_ca.pub"
+                        } else {
+                            "/etc/ssh/sb_user_ca.pub"
+                        };
+                        ssh_lines.push(format!("TrustedUserCAKeys {ca_path}"));
                     }
                     applied.push(PolicyRuleResult {
                         policy_id: policy.id.clone(),
@@ -451,6 +459,13 @@ pub fn apply_policy_bundle_for_target(
                     default_deny_inbound,
                     allow_ports,
                 } => {
+                    firewall_default_deny =
+                        Some(firewall_default_deny.unwrap_or(false) || *default_deny_inbound);
+                    for port in allow_ports {
+                        if *port > 0 && !firewall_allow_ports.contains(port) {
+                            firewall_allow_ports.push(*port);
+                        }
+                    }
                     firewall_rules.push(serde_json::json!({
                         "policy_id": policy.id,
                         "default_deny_inbound": default_deny_inbound,
@@ -460,13 +475,20 @@ pub fn apply_policy_bundle_for_target(
                         policy_id: policy.id.clone(),
                         rule_kind: "firewall_baseline".into(),
                         action: format!("firewall default_deny={default_deny_inbound}"),
-                        target_path: Some("etc/sb-gpo/firewall-baseline.json".into()),
+                        target_path: Some(match target_os {
+                            OsKind::Windows => {
+                                "ProgramData/SkullsAndBones/gpo/sb-gpo-windows.json".into()
+                            }
+                            _ => "etc/sb-gpo/firewall-baseline.json".into(),
+                        }),
                     });
                 }
                 PolicyRule::ScreenLock {
                     idle_timeout_seconds,
                     require_password,
                 } => {
+                    let clamped = (*idle_timeout_seconds).clamp(30, 86400);
+                    screen_lock_cfg = Some((clamped, *require_password));
                     screen_locks.push(serde_json::json!({
                         "policy_id": policy.id,
                         "idle_timeout_seconds": idle_timeout_seconds,
@@ -547,6 +569,30 @@ pub fn apply_policy_bundle_for_target(
                     &sys_root.join("ProgramData/SkullsAndBones/gpo/sb-gpo-windows.json"),
                     &json,
                 )?;
+                if ssh_lines.len() > 2 {
+                    write_rendered(
+                        &sys_root.join("ProgramData/ssh/sshd_config.d/90-sb-gpo.conf"),
+                        &(ssh_lines.join("\n") + "\n"),
+                    )?;
+                }
+                let ps_script = render_windows_gpo_ps(
+                    &bundle.domain,
+                    bundle.revision,
+                    &dns_domains,
+                    &dns_servers,
+                    firewall_default_deny,
+                    &firewall_allow_ports,
+                    screen_lock_cfg,
+                    ssh_lines.len() > 2,
+                )?;
+                write_rendered(
+                    &sys_root.join("ProgramData/SkullsAndBones/gpo/apply-sb-gpo.ps1"),
+                    &ps_script,
+                )?;
+                #[cfg(target_os = "windows")]
+                if is_live_windows_root(sys_root) {
+                    execute_windows_gpo_ps(&ps_script)?;
+                }
             }
             OsKind::MacOs => {
                 let domain_esc = escape_xml(&bundle.domain);
@@ -623,6 +669,139 @@ fn write_rendered(path: &Path, content: &str) -> Result<(), String> {
     }
     fs::write(path, content)
         .map_err(|e| format!("Failed to write GPO artifact {}: {e}", path.display()))
+}
+
+/// Renders an idempotent, injection-safe PowerShell script that applies Windows GPOs:
+/// NRPT Split-DNS, Windows Defender Firewall (`sb-gpo-` prefix), ScreenLock registry policies,
+/// and OpenSSH `sshd` reload.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** PowerShell command injection via untrusted domain names, DNS IPs,
+///   or firewall parameters inside a signed policy bundle.
+/// - **CVE / CWE Mapping:** CWE-78 (OS Command Injection), CWE-20 (Improper Input Validation).
+/// - **Likelihood & Exploitability:** High (8/10) if unvalidated policy strings are interpolated.
+/// - **Applied Mitigation:** Validates every domain via `validate_domain_name`, parses every
+///   nameserver via `std::net::IpAddr`, bounds ports to `1..=65535` (`u16`) and lock timeouts
+///   to `30..=86400`, and executes via stdin without shell interpolation.
+#[allow(clippy::too_many_arguments)]
+pub fn render_windows_gpo_ps(
+    domain: &str,
+    revision: u64,
+    dns_domains: &[String],
+    dns_servers: &[String],
+    firewall_default_deny: Option<bool>,
+    firewall_allow_ports: &[u16],
+    screen_lock: Option<(u32, bool)>,
+    has_ssh_hardening: bool,
+) -> Result<String, String> {
+    let clean_domain = validate_domain_name(domain)?;
+    let mut lines = vec![
+        "# Managed by Skulls & Bones GPO Engine (Ed25519 verified)".to_string(),
+        format!("# Domain: {clean_domain} | Revision: {revision}"),
+        "$ErrorActionPreference = 'Stop'".to_string(),
+    ];
+
+    if !dns_domains.is_empty() && !dns_servers.is_empty() {
+        let mut valid_ips = Vec::with_capacity(dns_servers.len());
+        for ip in dns_servers {
+            let parsed: std::net::IpAddr = ip
+                .trim()
+                .parse()
+                .map_err(|e| format!("Invalid DNS server IP '{ip}': {e}"))?;
+            valid_ips.push(format!("'{parsed}'"));
+        }
+        let servers_array = format!("@({})", valid_ips.join(", "));
+        lines.push("Get-DnsClientNrptRule | Where-Object { $_.Comment -like 'sb-gpo-*' } | Remove-DnsClientNrptRule -Force -ErrorAction SilentlyContinue".to_string());
+        for d in dns_domains {
+            let clean_d = validate_domain_name(d)?;
+            lines.push(format!(
+                "Add-DnsClientNrptRule -Namespace '.{clean_d}' -NameServers {servers_array} -Comment 'sb-gpo-split-dns' | Out-Null"
+            ));
+        }
+    }
+
+    if firewall_default_deny.is_some() || !firewall_allow_ports.is_empty() {
+        lines.push("Get-NetFirewallRule -DisplayName 'sb-gpo-*' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue".to_string());
+        if firewall_default_deny == Some(true) {
+            lines.push(
+                "Set-NetFirewallProfile -Profile Domain,Private,Public -DefaultInboundAction Block"
+                    .to_string(),
+            );
+        }
+        for port in firewall_allow_ports {
+            if *port > 0 {
+                lines.push(format!(
+                    "New-NetFirewallRule -DisplayName 'sb-gpo-allow-tcp-{port}' -Direction Inbound -Protocol TCP -LocalPort {port} -Action Allow -Profile Any | Out-Null"
+                ));
+            }
+        }
+    }
+
+    if let Some((timeout_secs, require_pw)) = screen_lock {
+        let clamped = timeout_secs.clamp(30, 86400);
+        let secure_flag = if require_pw { "1" } else { "0" };
+        lines.push("New-Item -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System' -Force | Out-Null".to_string());
+        lines.push(format!(
+            "Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System' -Name 'InactivityTimeoutSecs' -Type DWord -Value {clamped}"
+        ));
+        lines.push("Set-ItemProperty -Path 'HKCU:\\Control Panel\\Desktop' -Name 'ScreenSaveActive' -Type String -Value '1'".to_string());
+        lines.push(format!(
+            "Set-ItemProperty -Path 'HKCU:\\Control Panel\\Desktop' -Name 'ScreenSaveTimeOut' -Type String -Value '{clamped}'"
+        ));
+        lines.push(format!(
+            "Set-ItemProperty -Path 'HKCU:\\Control Panel\\Desktop' -Name 'ScreenSaverIsSecure' -Type String -Value '{secure_flag}'"
+        ));
+    }
+
+    if has_ssh_hardening {
+        lines.push("if (Get-Service -Name 'sshd' -ErrorAction SilentlyContinue) { Restart-Service -Name 'sshd' -ErrorAction SilentlyContinue }".to_string());
+    }
+
+    Ok(lines.join("\n") + "\n")
+}
+
+#[cfg(target_os = "windows")]
+fn is_live_windows_root(sys_root: &Path) -> bool {
+    let raw = sys_root.to_string_lossy();
+    raw == "/" || raw == "\\" || raw.eq_ignore_ascii_case("C:\\") || raw.eq_ignore_ascii_case("C:/")
+}
+
+#[cfg(target_os = "windows")]
+fn execute_windows_gpo_ps(script: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn powershell.exe for Windows GPO: {e}"))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(script.as_bytes())
+            .map_err(|e| format!("Failed writing GPO script to powershell.exe stdin: {e}"))?;
+    }
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("powershell.exe wait failed: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "Windows GPO PowerShell execution failed ({}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -819,6 +998,86 @@ mod tests {
         // Delete policy
         assert!(store.delete_policy("eng-firewall").unwrap());
         assert!(!store.delete_policy("eng-firewall").unwrap());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn windows_gpo_renders_nrpt_firewall_screenlock_and_openssh() {
+        let dir = std::env::temp_dir().join(format!(
+            "sb_node_win_gpo_test_{}_{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let mut store = PolicyStore::load_or_create(&dir.join("policies.json"), "corp.eu").unwrap();
+        store
+            .upsert_policy(PolicyDocument {
+                id: "win-baseline".into(),
+                name: "Windows Baseline".into(),
+                description: "Windows NRPT, Firewall, ScreenLock and OpenSSH".into(),
+                target_os: vec![OsKind::Windows],
+                scope: PolicyScope::Domain,
+                version: 1,
+                updated_at: String::new(),
+                updated_by: "admin".into(),
+                rules: vec![
+                    PolicyRule::DnsSplitZone {
+                        domains: vec!["corp.eu".into()],
+                        nameservers: vec!["10.42.0.1".into()],
+                    },
+                    PolicyRule::FirewallBaseline {
+                        default_deny_inbound: true,
+                        allow_ports: vec![22, 443],
+                    },
+                    PolicyRule::ScreenLock {
+                        idle_timeout_seconds: 300,
+                        require_password: true,
+                    },
+                    PolicyRule::SshHardening {
+                        password_auth: false,
+                        permit_root_login: false,
+                        trusted_user_ca_keys: true,
+                    },
+                ],
+            })
+            .unwrap();
+
+        let bundle = store.sign_bundle(24, &signing_key).unwrap();
+        let win_root = dir.join("win_root");
+        let report = apply_policy_bundle_for_target(
+            &bundle,
+            PolicyTargetContext {
+                machine_id: "win-01",
+                fqdn: Some("win-01.corp.eu"),
+                ou: None,
+                os: OsKind::Windows,
+            },
+            &win_root,
+            false,
+        )
+        .unwrap();
+        assert_eq!(report.applied.len(), 4);
+
+        let ps =
+            fs::read_to_string(win_root.join("ProgramData/SkullsAndBones/gpo/apply-sb-gpo.ps1"))
+                .unwrap();
+        assert!(ps.contains("Add-DnsClientNrptRule -Namespace '.corp.eu' -NameServers @('10.42.0.1') -Comment 'sb-gpo-split-dns'"));
+        assert!(ps.contains("New-NetFirewallRule -DisplayName 'sb-gpo-allow-tcp-22'"));
+        assert!(ps.contains("New-NetFirewallRule -DisplayName 'sb-gpo-allow-tcp-443'"));
+        assert!(ps.contains(
+            "Set-NetFirewallProfile -Profile Domain,Private,Public -DefaultInboundAction Block"
+        ));
+        assert!(ps.contains("InactivityTimeoutSecs' -Type DWord -Value 300"));
+        assert!(ps.contains("Restart-Service -Name 'sshd'"));
+
+        let sshd =
+            fs::read_to_string(win_root.join("ProgramData/ssh/sshd_config.d/90-sb-gpo.conf"))
+                .unwrap();
+        assert!(sshd.contains("PasswordAuthentication no"));
+        assert!(sshd.contains("TrustedUserCAKeys C:/ProgramData/ssh/sb_user_ca.pub"));
 
         let _ = fs::remove_dir_all(&dir);
     }

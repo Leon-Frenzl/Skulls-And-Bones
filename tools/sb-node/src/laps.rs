@@ -1,8 +1,9 @@
-//! Linux Local Administrator Password Solution (LAPS) for `sb-node`.
+//! Cross-platform Local Administrator Password Solution (LAPS) for `sb-node`.
 //!
 //! Generates per-machine emergency local admin passwords using `OsRng`, stores them
-//! encrypted via `sb_core::vault` (Argon2id + AES-256-GCM), optionally applies the password
-//! locally on Linux via `chpasswd`, and flags `rotate_pending` after every admin reveal.
+//! encrypted via `sb_core::vault` (Argon2id + AES-256-GCM), applies the password
+//! locally on Linux (`chpasswd`) or Windows (`NetUserSetInfo` / `NetUserAdd` + local
+//! Administrators membership), and flags `rotate_pending` after every admin reveal.
 
 use chrono::{Duration, Utc};
 use rand::RngCore;
@@ -69,6 +70,58 @@ pub fn validate_linux_account(account: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
+/// Validates a Windows local SAM account name (`1..=20` safe ASCII characters).
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Malicious account names containing path/SAM delimiters or
+///   control characters passed to Win32 `NetUserAdd` / `NetUserSetInfo`.
+/// - **CVE / CWE Mapping:** CWE-20 (Improper Input Validation), CWE-287 (Improper Authentication).
+/// - **Likelihood & Exploitability:** Medium (5/10) if untrusted account strings reach Win32 APIs.
+/// - **Applied Mitigation:** Restricts to `1..=20` ASCII `[A-Za-z0-9._-]`, requires leading
+///   alphanumeric or `_`, forbids trailing `.` and NUL/control characters.
+pub fn validate_windows_account(account: &str) -> Result<String, String> {
+    let trimmed = account.trim();
+    if trimmed.is_empty() || trimmed.len() > 20 {
+        return Err("Windows SAM account name must be 1..=20 characters".into());
+    }
+    if trimmed.ends_with('.') {
+        return Err("Windows account name cannot end with '.'".into());
+    }
+    let first = trimmed.as_bytes()[0];
+    if !first.is_ascii_alphanumeric() && first != b'_' {
+        return Err("Windows account must start with ASCII letter, digit, or '_'".into());
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    {
+        return Err("Windows account contains invalid characters".into());
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Validates a LAPS local account name across Linux and Windows targets.
+pub fn validate_laps_account(account: &str) -> Result<String, String> {
+    let trimmed = account.trim();
+    if trimmed.is_empty() || trimmed.len() > 32 {
+        return Err("LAPS account name must be 1..=32 characters".into());
+    }
+    if trimmed.ends_with('.') {
+        return Err("LAPS account name cannot end with '.'".into());
+    }
+    let first = trimmed.as_bytes()[0];
+    if !first.is_ascii_alphanumeric() && first != b'_' {
+        return Err("LAPS account must start with ASCII letter, digit, or '_'".into());
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    {
+        return Err("LAPS account contains invalid characters".into());
+    }
+    Ok(trimmed.to_string())
+}
+
 pub fn default_laps_meta_path() -> PathBuf {
     sb_core::domain::local_domain_dir().join("laps_meta.json")
 }
@@ -114,7 +167,7 @@ pub fn store_laps_password(
     meta_path: &Path,
 ) -> Result<LapsMetadata, String> {
     let clean_id = validate_policy_id(machine_id)?;
-    let clean_acct = validate_linux_account(local_account)?;
+    let clean_acct = validate_laps_account(local_account)?;
     if passphrase.is_empty() || password.len() < 12 {
         return Err("LAPS passphrase cannot be empty and password must be >= 12 chars".into());
     }
@@ -245,6 +298,185 @@ pub fn apply_linux_chpasswd(account: &str, _password: &str, dry_run: bool) -> Re
     Err("apply_linux_chpasswd requires a Linux host (use --dry-run on non-Linux)".into())
 }
 
+/// Applies or rotates a LAPS emergency admin password natively on Windows using Win32
+/// `NetUserSetInfo` / `NetUserAdd` and ensures membership in the localized local
+/// Administrators group (`S-1-5-32-544`).
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Exposing plaintext LAPS passwords in process command lines
+///   (e.g. `net user ... <pw>`) or failing on non-English Windows group names (`Administratoren`).
+/// - **CVE / CWE Mapping:** CWE-214 (Invocation of Process Using Visible Sensitive Information),
+///   CWE-259 / CWE-798 (Password Management), CWE-20 (Improper Input Validation).
+/// - **Likelihood & Exploitability:** High (8/10) if `net user` CLI is spawned with secrets.
+/// - **Applied Mitigation:** Uses Win32 `NetUserSetInfo` / `NetUserAdd` directly in memory
+///   (no child process or command-line exposure), resolves `S-1-5-32-544` via `LookupAccountSidW`,
+///   and zeroes the UTF-16 password buffer immediately after the Win32 call.
+// Conforms to NIST SP 800-63B §5.1.1.2 (memorized secret length >= 12) and Microsoft MS-SAMR.
+#[cfg(target_os = "windows")]
+pub fn apply_windows_laps(account: &str, password: &str, dry_run: bool) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr::{null, null_mut};
+    use windows_sys::Win32::Foundation::{LocalFree, ERROR_MEMBER_IN_ALIAS};
+    use windows_sys::Win32::NetworkManagement::NetManagement::{
+        NERR_Success, NetLocalGroupAddMembers, NetUserAdd, NetUserSetInfo,
+        LOCALGROUP_MEMBERS_INFO_3, UF_DONT_EXPIRE_PASSWD, UF_SCRIPT, USER_INFO_1, USER_INFO_1003,
+        USER_PRIV_USER,
+    };
+    use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
+    use windows_sys::Win32::Security::{LookupAccountSidW, PSID, SID_NAME_USE};
+
+    let clean_acct = validate_windows_account(account)?;
+    if password.len() < 12 || password.contains('\0') {
+        return Err("Windows LAPS password must be >= 12 chars and NUL-free".into());
+    }
+    if dry_run {
+        return Ok(());
+    }
+
+    fn to_wide(s: &str) -> Vec<u16> {
+        OsStr::new(s).encode_wide().chain(Some(0)).collect()
+    }
+
+    const NERR_USER_NOT_FOUND: u32 = 2221;
+    let mut acct_w = to_wide(&clean_acct);
+    let mut pw_w = to_wide(password);
+
+    // SAFETY: `acct_w` and `pw_w` are valid NUL-terminated UTF-16 buffers alive across the call.
+    let status = unsafe {
+        let info = USER_INFO_1003 {
+            usri1003_password: pw_w.as_mut_ptr(),
+        };
+        NetUserSetInfo(
+            null(),
+            acct_w.as_ptr(),
+            1003,
+            (&info as *const USER_INFO_1003).cast::<u8>(),
+            null_mut(),
+        )
+    };
+
+    if status == NERR_USER_NOT_FOUND {
+        // SAFETY: `acct_w` and `pw_w` are valid NUL-terminated UTF-16 buffers alive across `NetUserAdd`.
+        let add_status = unsafe {
+            let mut comment_w = to_wide("Skulls & Bones LAPS Emergency Admin");
+            let user_info = USER_INFO_1 {
+                usri1_name: acct_w.as_mut_ptr(),
+                usri1_password: pw_w.as_mut_ptr(),
+                usri1_password_age: 0,
+                usri1_priv: USER_PRIV_USER,
+                usri1_home_dir: null_mut(),
+                usri1_comment: comment_w.as_mut_ptr(),
+                usri1_flags: UF_SCRIPT | UF_DONT_EXPIRE_PASSWD,
+                usri1_script_path: null_mut(),
+            };
+            let mut parm_err: u32 = 0;
+            NetUserAdd(
+                null(),
+                1,
+                (&user_info as *const USER_INFO_1).cast::<u8>(),
+                &mut parm_err,
+            )
+        };
+        if add_status != NERR_Success {
+            pw_w.fill(0);
+            return Err(format!("NetUserAdd failed with Win32 status {add_status}"));
+        }
+    } else if status != NERR_Success {
+        pw_w.fill(0);
+        return Err(format!("NetUserSetInfo failed with Win32 status {status}"));
+    }
+
+    // Zeroize UTF-16 password buffer immediately after NetUserAdd / NetUserSetInfo.
+    pw_w.fill(0);
+
+    // Ensure the LAPS account is a member of the localized local Administrators group (S-1-5-32-544).
+    let sid_str = to_wide("S-1-5-32-544");
+    let mut sid: PSID = null_mut();
+    // SAFETY: `sid_str` is a NUL-terminated UTF-16 SID literal; `sid` is freed with `LocalFree`.
+    let sid_ok = unsafe { ConvertStringSidToSidW(sid_str.as_ptr(), &mut sid) };
+    if sid_ok == 0 || sid.is_null() {
+        return Err("ConvertStringSidToSidW failed for S-1-5-32-544".into());
+    }
+
+    let mut name_buf = vec![0u16; 256];
+    let mut name_len = name_buf.len() as u32;
+    let mut dom_buf = vec![0u16; 256];
+    let mut dom_len = dom_buf.len() as u32;
+    let mut sid_use: SID_NAME_USE = 0;
+
+    // SAFETY: Buffers and lengths are valid; `sid` is freed right after `LookupAccountSidW`.
+    let lookup_ok = unsafe {
+        let ok = LookupAccountSidW(
+            null(),
+            sid,
+            name_buf.as_mut_ptr(),
+            &mut name_len,
+            dom_buf.as_mut_ptr(),
+            &mut dom_len,
+            &mut sid_use,
+        );
+        LocalFree(sid);
+        ok
+    };
+    if lookup_ok == 0 {
+        return Err("LookupAccountSidW failed for S-1-5-32-544".into());
+    }
+
+    // SAFETY: `name_buf` and `acct_w` are NUL-terminated UTF-16 strings.
+    let grp_status = unsafe {
+        let member = LOCALGROUP_MEMBERS_INFO_3 {
+            lgrmi3_domainandname: acct_w.as_mut_ptr(),
+        };
+        NetLocalGroupAddMembers(
+            null(),
+            name_buf.as_ptr(),
+            3,
+            (&member as *const LOCALGROUP_MEMBERS_INFO_3).cast::<u8>(),
+            1,
+        )
+    };
+    if grp_status != NERR_Success && grp_status != ERROR_MEMBER_IN_ALIAS {
+        return Err(format!(
+            "NetLocalGroupAddMembers failed with Win32 status {grp_status}"
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn apply_windows_laps(account: &str, password: &str, dry_run: bool) -> Result<(), String> {
+    let _ = validate_windows_account(account)?;
+    if password.len() < 12 || password.contains('\0') {
+        return Err("Windows LAPS password must be >= 12 chars and NUL-free".into());
+    }
+    if dry_run {
+        return Ok(());
+    }
+    Err("apply_windows_laps requires a Windows host (use --dry-run on non-Windows)".into())
+}
+
+/// Applies the LAPS password natively on the current host OS (Linux or Windows).
+pub fn apply_local_laps(account: &str, password: &str, dry_run: bool) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        apply_linux_chpasswd(account, password, dry_run)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        apply_windows_laps(account, password, dry_run)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (account, password);
+        if dry_run {
+            return Ok(());
+        }
+        Err("Local LAPS password application is supported on Linux and Windows only".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,9 +516,23 @@ mod tests {
         // Correct passphrase decrypts and sets rotate_pending = true
         let (revealed, updated_meta) =
             reveal_laps_password("m-app-01", "laps-master-secret", &vault_dir, &meta_path).unwrap();
-        assert_eq!(revealed, pw);
+        assert!(revealed == pw);
         assert!(updated_meta.rotate_pending);
 
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn windows_laps_validates_account_and_supports_dry_run() {
+        assert!(validate_windows_account("sb-rescue").is_ok());
+        assert!(validate_windows_account("Admin_01").is_ok());
+        assert!(validate_windows_account("too-long-sam-account-name").is_err());
+        assert!(validate_windows_account("bad.name.").is_err());
+        assert!(validate_windows_account("bad;name").is_err());
+
+        let pw = generate_laps_password();
+        assert!(apply_windows_laps("sb-rescue", &pw, true).is_ok());
+        assert!(apply_windows_laps("sb-rescue", "short", true).is_err());
+        assert!(apply_local_laps("sb-rescue", &pw, true).is_ok());
     }
 }

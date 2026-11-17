@@ -39,4 +39,10 @@ sb-ca = { version = "0.1.0", path = "../sb-ca" }
 sb-dns = { version = "0.2.0", path = "../sb-dns" }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_NetManagement",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+] }

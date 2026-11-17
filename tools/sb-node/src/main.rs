@@ -419,6 +419,11 @@ enum LapsCommands {
         #[arg(long)]
         apply_linux: bool,
         #[arg(long)]
+        apply_windows: bool,
+        /// Wendet das Passwort nativ auf dem aktuellen OS (Linux oder Windows) an
+        #[arg(long)]
+        apply: bool,
+        #[arg(long)]
         dry_run: bool,
     },
     /// Entschlüsselt das Notfall-Passwort einer Maschine (markiert rotate_pending=true)
@@ -4909,11 +4914,20 @@ fn handle_laps_commands(sub: LapsCommands) -> Result<(), String> {
             account,
             passphrase,
             apply_linux,
+            apply_windows,
+            apply,
             dry_run,
         } => {
             let pw = laps::generate_laps_password();
-            if apply_linux {
-                laps::apply_linux_chpasswd(&account, &pw, dry_run)?;
+            if apply {
+                laps::apply_local_laps(&account, &pw, dry_run)?;
+            } else {
+                if apply_linux {
+                    laps::apply_linux_chpasswd(&account, &pw, dry_run)?;
+                }
+                if apply_windows {
+                    laps::apply_windows_laps(&account, &pw, dry_run)?;
+                }
             }
             if dry_run {
                 println!("Dry-Run: neues LAPS-Passwort für '{machine_id}' ({account}) simuliert.");
