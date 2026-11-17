@@ -300,7 +300,9 @@ fn render_ssh_status(cfg_path: &PathBuf, install_include: bool) {
         servers.len()
     );
     if servers.is_empty() {
-        println!("    • hostinger-stealth / srv490042 -> root@145.223.83.235:22 (Default)");
+        println!(
+            "    • default-node -> root@<expected_node_ip>:22 (konfiguriere ~/.sb/config.toml)"
+        );
     } else {
         for s in &servers {
             println!(

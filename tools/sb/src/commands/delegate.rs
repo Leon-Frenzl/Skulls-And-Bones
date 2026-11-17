@@ -13,7 +13,7 @@ pub fn resolve_ssh_invocation(args: &[String]) -> (Vec<String>, bool) {
         .network
         .expected_node_ip
         .clone()
-        .unwrap_or_else(|| "145.223.83.235".to_string());
+        .unwrap_or_else(|| "192.0.2.1".to_string());
 
     let mut direct = false;
     let mut filtered_args = Vec::new();
@@ -315,7 +315,11 @@ mod tests {
 
     #[test]
     fn test_resolve_ssh_node_ip() {
-        let input = vec!["root@145.223.83.235".to_string(), "uptime".to_string()];
+        let cfg_ip = sb_core::config::SuiteConfig::load()
+            .network
+            .expected_node_ip
+            .unwrap_or_else(|| "192.0.2.1".to_string());
+        let input = vec![format!("root@{cfg_ip}"), "uptime".to_string()];
         let (args, stealth) = resolve_ssh_invocation(&input);
         assert!(stealth);
         assert_eq!(args[0], "-p");
@@ -326,10 +330,10 @@ mod tests {
 
     #[test]
     fn test_resolve_ssh_direct_flag() {
-        let input = vec!["--direct".to_string(), "root@145.223.83.235".to_string()];
+        let input = vec!["--direct".to_string(), "root@192.0.2.1".to_string()];
         let (args, stealth) = resolve_ssh_invocation(&input);
         assert!(!stealth);
-        assert_eq!(args, vec!["root@145.223.83.235"]);
+        assert_eq!(args, vec!["root@192.0.2.1"]);
     }
 
     #[test]

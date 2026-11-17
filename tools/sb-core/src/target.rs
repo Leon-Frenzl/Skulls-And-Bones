@@ -262,7 +262,7 @@ impl TargetResolver {
             .network
             .expected_node_ip
             .as_deref()
-            .unwrap_or("145.223.83.235");
+            .unwrap_or("192.0.2.1");
 
         let is_node_alias = matches!(
             stripped_sbm,

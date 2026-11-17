@@ -161,8 +161,8 @@ enum Commands {
     Check {
         /// Zu prüfende Domain
         domain: String,
-        /// Erwartete Node IP (Standard: 145.223.83.235)
-        #[arg(long, default_value = "145.223.83.235")]
+        /// Erwartete Node IP (Standard: 192.0.2.1)
+        #[arg(long, default_value = "192.0.2.1")]
         ip: String,
     },
 
@@ -457,7 +457,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     println!("\n{}", "DNS-Konfiguration bei deinem Registrar:".bold());
                     println!("  Typ:   A");
                     println!("  Host:  @");
-                    println!("  Ziel:  145.223.83.235\n");
+                    println!("  Ziel:  <DEINE_SERVER_IP>\n");
                 }
                 Err(err) => {
                     eprintln!("\n{} {}\n", "❌ Fehler beim Anlegen:".red().bold(), err);

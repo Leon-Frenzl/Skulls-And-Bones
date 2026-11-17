@@ -237,7 +237,7 @@ pub fn ensure_sovereign_ssh_config() -> Result<PathBuf, String> {
         .network
         .expected_node_ip
         .as_deref()
-        .unwrap_or("145.223.83.235");
+        .unwrap_or("192.0.2.1");
     cfg.push_str("Host hostinger-stealth srv490042 hostinger-node hostinger-prod stealth\n");
     cfg.push_str(&format!("    HostName {}\n", default_ip));
     cfg.push_str("    User root\n");

@@ -63,7 +63,7 @@ Build an interactive terminal user interface in `sb` (using `ratatui` or similar
 - Recent audit and access events.
 
 ### R4. Remote Target Integration & Live Verification
-Deploy and verify the updated toolchain on the remote target server `145.223.83.235` (root / `aKjn?KN@2t&G'2Bs`). Confirm that the new binaries run, services supervise properly, and workspace test suites execute with zero failures.
+Deploy and verify the updated toolchain on the remote target server `192.0.2.1` (root / `[REDACTED]`). Confirm that the new binaries run, services supervise properly, and workspace test suites execute with zero failures.
 
 ## Acceptance Criteria
 
