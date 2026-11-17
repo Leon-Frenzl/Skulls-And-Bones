@@ -291,6 +291,36 @@ pub enum Commands {
         args: Vec<String>,
     },
 
+    /// Domänen-Verwaltung (sb domain status | list | join | revoke) -> delegiert an sb-node
+    Domain {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Signierte Cross-Platform GPOs (sb policy apply | list | status) -> delegiert an sb-node
+    Policy {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Cross-Platform LAPS Notfall-Admin-Passwörter (sb laps rotate | reveal | status) -> delegiert an sb-node
+    Laps {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Domänen-Agent-Dienst (sb agent install | status | update | uninstall) -> delegiert an sb-node service
+    Agent {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Domänen-Benutzer & SSH-Zertifikate (sb user add | list | ssh-cert | offboard) -> delegiert an sb-node
+    User {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
     /// Veröffentlicht das aktuelle Projekt als P2P Code-Stream im Swarm (sb publish [project])
     Publish {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -315,9 +345,9 @@ pub enum Commands {
         action: InviteAction,
     },
 
-    /// Tritt einer Domäne (z. B. skulls-and-bones.sb) oder einem Mesh (sbm-pair://...) bei
+    /// Tritt einer Domäne (z. B. corp.example.sb) oder einem Mesh (sbm-pair://...) bei
     Join {
-        /// Domänenname (z. B. skulls-and-bones.sb) oder Pairing-Token (sbm-pair://...)
+        /// Domänenname (z. B. corp.example.sb) oder Pairing-Token (sbm-pair://...)
         target: String,
 
         /// Optionaler Name des Entwicklers (nur für sbm-pair:// Mesh-Pairing)
@@ -965,7 +995,7 @@ pub enum NodeAction {
 
 #[derive(Args, Debug, Clone)]
 pub struct BootstrapArgs {
-    /// Zielserver (z. B. 'root@145.223.83.235' oder '145.223.83.235')
+    /// Zielserver (z. B. 'root@192.0.2.1' oder '192.0.2.1')
     pub target: String,
 
     /// SSH-Port für den Initial-Connect (Standard: 22)

@@ -320,6 +320,31 @@ fn real_main() {
         Some(Commands::Auth { args }) => {
             delegate_to("auth", "sb-auth", &args);
         }
+        Some(Commands::Domain { args }) => {
+            let mut full = vec!["domain".to_string()];
+            full.extend(args);
+            delegate_to("domain", "sb-node", &full);
+        }
+        Some(Commands::Policy { args }) => {
+            let mut full = vec!["policy".to_string()];
+            full.extend(args);
+            delegate_to("policy", "sb-node", &full);
+        }
+        Some(Commands::Laps { args }) => {
+            let mut full = vec!["laps".to_string()];
+            full.extend(args);
+            delegate_to("laps", "sb-node", &full);
+        }
+        Some(Commands::Agent { args }) => {
+            let mut full = vec!["service".to_string()];
+            full.extend(args);
+            delegate_to("agent", "sb-node", &full);
+        }
+        Some(Commands::User { args }) => {
+            let mut full = vec!["user".to_string()];
+            full.extend(args);
+            delegate_to("user", "sb-node", &full);
+        }
         Some(Commands::Publish { args }) => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             if cwd.join("tools").is_dir() && args.is_empty() {
