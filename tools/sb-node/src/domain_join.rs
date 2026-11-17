@@ -29,15 +29,10 @@ pub struct DomainRegistry {
 }
 
 impl DomainRegistry {
-    /// Returns the registry path under `~/.sb-node/domain/<domain>/machines.json`.
+    /// Returns the unified domain registry path under `~/.sb/domain/machines.json`.
     pub fn path_for(domain: &str) -> Result<PathBuf, String> {
-        let clean = validate_domain_name(domain)?;
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        Ok(home
-            .join(".sb-node")
-            .join("domain")
-            .join(clean)
-            .join("machines.json"))
+        let _clean = validate_domain_name(domain)?;
+        Ok(local_domain_dir().join("machines.json"))
     }
 
     /// Loads an existing registry or creates an empty one for `domain`.
