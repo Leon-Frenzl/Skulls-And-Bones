@@ -1,6 +1,6 @@
 [package]
 name = "sb-cli"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "S&B Suite Master CLI — Unified Command Center for Skulls & Bones Sovereign Developer Tools"
 authors = ["Skulls & Bones Lab <dev@skulls-and-bones.org>"]

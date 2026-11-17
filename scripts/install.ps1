@@ -4,7 +4,7 @@
 # Usage (from local build):
 #   .\scripts\install.ps1 -LocalDir .\target\release
 param(
-    [string]$Version = "v0.2.1",
+    [string]$Version = "v0.2.2",
     [string]$Repo = "Leon-Frenzl/Skulls-And-Bones",
     [string]$InstallDir = "",
     [string]$LocalDir = "",
