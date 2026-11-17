@@ -16,6 +16,7 @@ pub struct ServiceConfig {
     pub interval_secs: u64,
     pub laps_rotate_days: u64,
     pub binary_path: PathBuf,
+    pub sb_home: Option<PathBuf>,
 }
 
 impl ServiceConfig {
@@ -51,11 +52,22 @@ impl ServiceConfig {
         {
             return Err(format!("Invalid binary path for service: '{bin_str}'"));
         }
+        if let Some(ref home) = self.sb_home {
+            let h_str = home.to_string_lossy();
+            if h_str.is_empty()
+                || h_str
+                    .chars()
+                    .any(|c| c.is_control() || matches!(c, '"' | '`'))
+            {
+                return Err(format!("Invalid --sb-home path for service: '{h_str}'"));
+            }
+        }
         Ok(Self {
             dc_url: dc.to_string(),
             interval_secs: self.interval_secs.clamp(10, 3600),
             laps_rotate_days: self.laps_rotate_days.clamp(1, 90),
             binary_path: self.binary_path.clone(),
+            sb_home: self.sb_home.clone(),
         })
     }
 }
@@ -63,6 +75,11 @@ impl ServiceConfig {
 /// Renders a hardened `systemd` unit file for `sb-node-agent.service`.
 pub fn render_systemd_unit(cfg: &ServiceConfig) -> Result<String, String> {
     let valid = cfg.validate()?;
+    let sb_home_arg = valid
+        .sb_home
+        .as_ref()
+        .map(|p| format!(" --sb-home \"{}\"", p.display()))
+        .unwrap_or_default();
     Ok(format!(
         "[Unit]\n\
          Description=Skulls & Bones Sovereign Node Agent (GPO Sync & LAPS)\n\
@@ -71,7 +88,7 @@ pub fn render_systemd_unit(cfg: &ServiceConfig) -> Result<String, String> {
          \n\
          [Service]\n\
          Type=simple\n\
-         ExecStart={} agent --dc {} --interval-secs {} --laps-rotate-days {}\n\
+         ExecStart={} agent --dc {} --interval-secs {} --laps-rotate-days {}{}\n\
          Restart=always\n\
          RestartSec=10\n\
          NoNewPrivileges=yes\n\
@@ -83,19 +100,26 @@ pub fn render_systemd_unit(cfg: &ServiceConfig) -> Result<String, String> {
         valid.binary_path.display(),
         valid.dc_url,
         valid.interval_secs,
-        valid.laps_rotate_days
+        valid.laps_rotate_days,
+        sb_home_arg
     ))
 }
 
 /// Builds the `binPath=` value for Windows `sc.exe create/config`.
 pub fn render_windows_bin_path(cfg: &ServiceConfig) -> Result<String, String> {
     let valid = cfg.validate()?;
+    let sb_home_arg = valid
+        .sb_home
+        .as_ref()
+        .map(|p| format!(" --sb-home \"{}\"", p.display()))
+        .unwrap_or_default();
     Ok(format!(
-        "\"{}\" agent --dc {} --interval-secs {} --laps-rotate-days {} --windows-service",
+        "\"{}\" agent --dc {} --interval-secs {} --laps-rotate-days {}{} --windows-service",
         valid.binary_path.display(),
         valid.dc_url,
         valid.interval_secs,
-        valid.laps_rotate_days
+        valid.laps_rotate_days,
+        sb_home_arg
     ))
 }
 
@@ -489,13 +513,15 @@ mod tests {
             interval_secs: 60,
             laps_rotate_days: 30,
             binary_path: PathBuf::from("/usr/local/bin/sb-node"),
+            sb_home: Some(PathBuf::from("/root/.sb")),
         };
         let unit = render_systemd_unit(&cfg).unwrap();
-        assert!(unit.contains("ExecStart=/usr/local/bin/sb-node agent --dc https://console.skulls-and-bones.org --interval-secs 60 --laps-rotate-days 30"));
+        assert!(unit.contains("ExecStart=/usr/local/bin/sb-node agent --dc https://console.skulls-and-bones.org --interval-secs 60 --laps-rotate-days 30 --sb-home \"/root/.sb\""));
         assert!(unit.contains("NoNewPrivileges=yes"));
 
         let win_bin = render_windows_bin_path(&cfg).unwrap();
         assert!(win_bin.contains("--windows-service"));
+        assert!(win_bin.contains("--sb-home"));
 
         // Injection attempt in DC URL must be rejected
         let bad = ServiceConfig {
@@ -503,6 +529,7 @@ mod tests {
             interval_secs: 60,
             laps_rotate_days: 30,
             binary_path: PathBuf::from("/usr/local/bin/sb-node"),
+            sb_home: None,
         };
         assert!(bad.validate().is_err());
     }

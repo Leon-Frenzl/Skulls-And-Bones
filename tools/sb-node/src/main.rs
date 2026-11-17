@@ -182,6 +182,9 @@ enum Commands {
         /// Intern: Ausführung als nativer Windows Service (SCM)
         #[arg(long, hide = true)]
         windows_service: bool,
+        /// Expliziter SB_HOME-Pfad (wird vom Service-Installer automatisch gesetzt)
+        #[arg(long)]
+        sb_home: Option<PathBuf>,
     },
 
     /// Hintergrunddienst-Verwaltung (systemd unter Linux, Windows Service unter Windows)
@@ -210,6 +213,9 @@ enum ServiceCommands {
         /// Optionales Ziel-Root-Verzeichnis (Standard: / bzw. C:\)
         #[arg(long)]
         root: Option<PathBuf>,
+        /// Expliziter SB_HOME-Pfad für den Dienst (Standard: aktuelles ~/.sb)
+        #[arg(long)]
+        sb_home: Option<PathBuf>,
     },
     /// Stoppt und deinstalliert den sb-node-agent Hintergrunddienst
     Uninstall {
@@ -2438,7 +2444,11 @@ async fn main() {
             once,
             dry_run,
             windows_service,
+            sb_home,
         }) => {
+            if let Some(ref home_path) = sb_home {
+                std::env::set_var("SB_HOME", home_path);
+            }
             if windows_service {
                 #[cfg(target_os = "windows")]
                 {
@@ -2483,6 +2493,7 @@ async fn main() {
                     laps_rotate_days,
                     dry_run,
                     root,
+                    sb_home,
                 } => {
                     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sb-node"));
                     let sys_root = root.unwrap_or_else(|| {
@@ -2492,11 +2503,13 @@ async fn main() {
                             PathBuf::from("/")
                         }
                     });
+                    let resolved_sb_home = sb_home.or_else(|| Some(sb_core::paths::sb_home()));
                     let cfg = service_mgr::ServiceConfig {
                         dc_url: dc,
                         interval_secs,
                         laps_rotate_days,
                         binary_path: exe,
+                        sb_home: resolved_sb_home,
                     };
                     service_mgr::install_service(&cfg, &sys_root, dry_run)
                 }
