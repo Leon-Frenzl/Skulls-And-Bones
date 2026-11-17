@@ -14,6 +14,7 @@ pub mod policy_engine;
 pub mod rbac;
 pub mod service_mgr;
 pub mod vault_manager;
+pub mod web_ssh;
 
 use base64::Engine;
 use clap::{Parser, Subcommand};

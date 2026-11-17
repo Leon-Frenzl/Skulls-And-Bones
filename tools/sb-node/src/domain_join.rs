@@ -2582,6 +2582,136 @@ async fn handle_join_http_connection(
         }
     }
 
+    if (method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/ssh/session"))
+        || path.starts_with("/v1/ssh/sessions/")
+    {
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let audit_path = base_dir.join("audit.jsonl");
+
+        if method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/ssh/session") {
+            let machine_id = path
+                .trim_start_matches("/v1/machines/")
+                .trim_end_matches("/ssh/session");
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            let ssh_user = payload.get("ssh_user").and_then(|v| v.as_str());
+            return match crate::web_ssh::open_web_ssh_session(
+                &claims, machine_id, ssh_user, &base_dir,
+            )
+            .await
+            {
+                Ok(info) => {
+                    let _ = crate::audit_log::append_audit_event(
+                        &audit_path,
+                        &claims.subject,
+                        "ssh.web_session_open",
+                        machine_id,
+                        "ok",
+                        serde_json::json!({
+                            "session_id": info.session_id,
+                            "ssh_user": info.ssh_user,
+                            "mesh_ip": info.mesh_ip,
+                        }),
+                    );
+                    let json = serde_json::to_string(&info).map_err(|e| e.to_string())?;
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err((code, err)) => {
+                    let _ = crate::audit_log::append_audit_event(
+                        &audit_path,
+                        &claims.subject,
+                        "ssh.web_session_open",
+                        machine_id,
+                        "denied",
+                        serde_json::json!({ "error": err }),
+                    );
+                    let msg = serde_json::json!({ "error": err }).to_string();
+                    write_http_json(
+                        stream,
+                        code,
+                        if code == 403 { "Forbidden" } else { "Error" },
+                        &msg,
+                    )
+                    .await
+                }
+            };
+        }
+
+        if method == "POST" && path.starts_with("/v1/ssh/sessions/") && path.ends_with("/exec") {
+            let sid = path
+                .trim_start_matches("/v1/ssh/sessions/")
+                .trim_end_matches("/exec");
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            let command = payload
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            return match crate::web_ssh::exec_web_ssh_command(&claims, sid, command).await {
+                Ok(res) => {
+                    let _ = crate::audit_log::append_audit_event(
+                        &audit_path,
+                        &claims.subject,
+                        "ssh.web_exec",
+                        sid,
+                        "ok",
+                        serde_json::json!({ "exit_code": res.exit_code }),
+                    );
+                    let json = serde_json::to_string(&res).map_err(|e| e.to_string())?;
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err((code, err)) => {
+                    let msg = serde_json::json!({ "error": err }).to_string();
+                    write_http_json(stream, code, "Error", &msg).await
+                }
+            };
+        }
+
+        if method == "DELETE" && path.starts_with("/v1/ssh/sessions/") {
+            let sid = path.trim_start_matches("/v1/ssh/sessions/");
+            return match crate::web_ssh::close_web_ssh_session(&claims, sid).await {
+                Ok(closed) => {
+                    let json = serde_json::json!({ "closed": closed }).to_string();
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err((code, err)) => {
+                    let msg = serde_json::json!({ "error": err }).to_string();
+                    write_http_json(stream, code, "Error", &msg).await
+                }
+            };
+        }
+    }
+
     if method != "POST" || (path != "/v1/machines/join" && path != "/v1/domain/join") {
         return write_http_json(stream, 404, "Not Found", r#"{"error":"not found"}"#).await;
     }
@@ -2862,17 +2992,6 @@ where
     Ok(resp_body.to_vec())
 }
 
-async fn send_http_request(dc_addr: SocketAddr, http_req: &str) -> Result<Vec<u8>, String> {
-    let stream = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        TcpStream::connect(dc_addr),
-    )
-    .await
-    .map_err(|_| format!("Timed out connecting to Domain Controller {dc_addr}"))?
-    .map_err(|e| format!("Failed to connect to Domain Controller {dc_addr}: {e}"))?;
-    read_http_response_from_stream(stream, http_req).await
-}
-
 /// Sends an HTTP/1.1 or HTTPS (TLS 1.2/1.3) request to `endpoint` (`https://host`, `http://host:port`, or `host:port`).
 ///
 /// # Security Audit
@@ -3057,6 +3176,14 @@ pub async fn upload_rotated_laps_to_dc(
     send_endpoint_request_with_bearer(dc_endpoint, "PUT", &path, Some(&body), Some(bearer_token))
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+async fn send_http_request(dc_addr: SocketAddr, http_req: &str) -> Result<Vec<u8>, String> {
+    let tcp = TcpStream::connect(dc_addr)
+        .await
+        .map_err(|e| format!("connect failed: {e}"))?;
+    read_http_response_from_stream(tcp, http_req).await
 }
 
 #[cfg(test)]

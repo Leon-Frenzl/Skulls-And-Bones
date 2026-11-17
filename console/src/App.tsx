@@ -144,6 +144,18 @@ export default function App() {
   const [pkgApt, setPkgApt] = useState<string>("");
   const [pkgRollout, setPkgRollout] = useState<number>(100);
   const [statusMsg, setStatusMsg] = useState<string>("");
+  const [sshSession, setSshSession] = useState<{
+    session_id: string;
+    fqdn: string;
+    mesh_ip: string;
+    ssh_user: string;
+    principals: string[];
+    expires_at: string;
+    cli_fallback: string;
+  } | null>(null);
+  const [sshCmd, setSshCmd] = useState<string>("");
+  const [sshLog, setSshLog] = useState<string>("");
+  const [sshBusy, setSshBusy] = useState<boolean>(false);
 
   // API Explorer state
   const [apiMethod, setApiMethod] = useState<string>("GET");
@@ -1169,6 +1181,33 @@ export default function App() {
                           >
                             LAPS rotieren
                           </button>
+                          <button
+                            className="btn"
+                            disabled={m.revoked}
+                            onClick={async () => {
+                              const targetUser = window.prompt("SSH-Benutzername (leer = eigener Account):", "");
+                              if (targetUser === null) return;
+                              const r = await fetch(`/v1/machines/${encodeURIComponent(m.machine_id)}/ssh/session`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json", ...authHeaders() },
+                                body: JSON.stringify(targetUser.trim() ? { ssh_user: targetUser.trim() } : {}),
+                              });
+                              const data = await r.json().catch(() => ({}));
+                              if (!r.ok) {
+                                setStatusMsg(data.error || `SSH-Fehler (${r.status})`);
+                                return;
+                              }
+                              setSshSession(data);
+                              setSshLog(
+                                `[Mesh-SSH autorisiert] ${data.ssh_user}@${data.fqdn} (${data.mesh_ip})\n` +
+                                `OpenSSH-Cert Principals: ${data.principals.join(", ")} | Gültig bis: ${data.expires_at}\n` +
+                                `Lokale CLI-Alternative: ${data.cli_fallback}\n` +
+                                `-------------------------------------------------------------------\n`
+                              );
+                            }}
+                          >
+                            SSH Terminal
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1184,6 +1223,105 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+
+            {sshSession && (
+              <div className="card" style={{ marginTop: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 8, flexWrap: "wrap" }}>
+                  <div>
+                    <div className="card-title" style={{ marginBottom: 2 }}>
+                      Mesh-SSH Terminal: {sshSession.ssh_user}@{sshSession.fqdn} ({sshSession.mesh_ip})
+                    </div>
+                    <div style={{ fontSize: "0.8rem", color: "var(--muted)" }}>
+                      Cert Principals: {sshSession.principals.join(", ")} · CLI: <code>{sshSession.cli_fallback}</code>
+                    </div>
+                  </div>
+                  <button
+                    className="btn"
+                    onClick={async () => {
+                      await fetch(`/v1/ssh/sessions/${encodeURIComponent(sshSession.session_id)}`, {
+                        method: "DELETE",
+                        headers: { ...authHeaders() },
+                      }).catch(() => {});
+                      setSshSession(null);
+                      setSshLog("");
+                    }}
+                  >
+                    Session schließen
+                  </button>
+                </div>
+
+                <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+                  {["whoami", "uname -a", "uptime", "sb-node domain status"].map((quick) => (
+                    <button
+                      key={quick}
+                      className="btn"
+                      disabled={sshBusy}
+                      onClick={() => setSshCmd(quick)}
+                    >
+                      {quick}
+                    </button>
+                  ))}
+                </div>
+
+                <pre
+                  style={{
+                    background: "#0b0f14",
+                    color: "#d9e6f2",
+                    padding: 12,
+                    borderRadius: 8,
+                    minHeight: 180,
+                    maxHeight: 340,
+                    overflowY: "auto",
+                    fontSize: "0.85rem",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    marginBottom: 10,
+                  }}
+                >
+                  {sshLog}
+                </pre>
+
+                <form
+                  style={{ display: "flex", gap: 8 }}
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const cmd = sshCmd.trim();
+                    if (!cmd || sshBusy) return;
+                    setSshBusy(true);
+                    setSshLog((prev) => `${prev}\n$ ${cmd}\n`);
+                    setSshCmd("");
+                    try {
+                      const r = await fetch(`/v1/ssh/sessions/${encodeURIComponent(sshSession.session_id)}/exec`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", ...authHeaders() },
+                        body: JSON.stringify({ command: cmd }),
+                      });
+                      const res = await r.json().catch(() => ({}));
+                      if (!r.ok) {
+                        setSshLog((prev) => `${prev}[Fehler ${r.status}] ${res.error || "Ausführung fehlgeschlagen"}\n`);
+                      } else {
+                        const out = [res.stdout, res.stderr].filter(Boolean).join("");
+                        setSshLog((prev) => `${prev}${out}${out.endsWith("\n") || !out ? "" : "\n"}[exit ${res.exit_code}]\n`);
+                      }
+                    } finally {
+                      setSshBusy(false);
+                    }
+                  }}
+                >
+                  <input
+                    className="input"
+                    style={{ flex: 1 }}
+                    placeholder="Befehl eingeben (z. B. uname -a) und Enter drücken..."
+                    value={sshCmd}
+                    onChange={(e) => setSshCmd(e.target.value)}
+                    disabled={sshBusy}
+                  />
+                  <button className="btn" type="submit" disabled={sshBusy}>
+                    {sshBusy ? "Läuft..." : "Ausführen"}
+                  </button>
+                </form>
+              </div>
+            )}
           </>
         )}
 
