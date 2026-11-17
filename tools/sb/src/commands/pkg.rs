@@ -207,6 +207,226 @@ fn verify_release_manifest_with_key(
         .map_err(|e| e.to_string())
 }
 
+const GITHUB_REPO: &str = "Leon-Frenzl/Skulls-And-Bones";
+
+fn validate_release_tag(tag: &str) -> Result<String, String> {
+    let clean = tag.trim();
+    if clean.is_empty()
+        || clean.len() > 32
+        || clean.contains("..")
+        || !clean
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    {
+        return Err(format!("Ungültiges Release-Tag: '{tag}'"));
+    }
+    Ok(clean.to_string())
+}
+
+fn expected_github_asset_name(tag: &str) -> Result<String, String> {
+    let clean_tag = validate_release_tag(tag)?;
+    if cfg!(target_os = "windows") {
+        Ok(format!("sb-{clean_tag}-windows-x86_64.zip"))
+    } else if cfg!(target_os = "linux") {
+        Ok(format!("sb-{clean_tag}-linux-x86_64.tar.gz"))
+    } else {
+        Err("GitHub Self-Update wird aktuell für Windows und Linux (x86_64) unterstützt.".into())
+    }
+}
+
+fn replace_binary_atomically(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    if !src.exists() {
+        return Err(format!("Extrahiertes Binary fehlt: {}", src.display()));
+    }
+    #[cfg(windows)]
+    {
+        let backup = dst.with_extension("exe.old");
+        let _ = std::fs::remove_file(&backup);
+        if dst.exists() {
+            std::fs::rename(dst, &backup)
+                .map_err(|e| format!("Konnte {} nicht umbenennen: {e}", dst.display()))?;
+        }
+        if let Err(e) = std::fs::copy(src, dst) {
+            let _ = std::fs::rename(&backup, dst);
+            return Err(format!("Konnte {} nicht schreiben: {e}", dst.display()));
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = dst.with_extension("tmp");
+        std::fs::copy(src, &tmp)
+            .map_err(|e| format!("Konnte {} nicht kopieren: {e}", tmp.display()))?;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755));
+        std::fs::rename(&tmp, dst)
+            .map_err(|e| format!("Konnte {} nicht ersetzen: {e}", dst.display()))?;
+        Ok(())
+    }
+}
+
+/// Self-updates `sb` and `sb-node` directly from GitHub Releases (`Leon-Frenzl/Skulls-And-Bones`).
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Archive path traversal (ZipSlip/TarSlip) or insecure HTTP downgrade
+///   during self-update.
+/// - **CVE / CWE Mapping:** CWE-22 (Path Traversal), CWE-494 (Download of Code Without Integrity Check).
+/// - **Likelihood & Exploitability:** Medium (6/10) on self-update pipelines.
+/// - **Applied Mitigation:** Enforces HTTPS-only GitHub API/Release URLs, validates release tag
+///   characters, rejects archive entries with `..` or absolute paths, only extracts `sb`/`sb-node`,
+///   and performs atomic/rollback-safe binary replacement.
+pub fn self_update_from_github(tag_override: Option<&str>) -> Result<(), String> {
+    print_banner();
+    let api_url = match tag_override {
+        Some(t) => {
+            let clean = validate_release_tag(t)?;
+            format!("https://api.github.com/repos/{GITHUB_REPO}/releases/tags/{clean}")
+        }
+        None => format!("https://api.github.com/repos/{GITHUB_REPO}/releases/latest"),
+    };
+
+    println!("  {} Prüfe GitHub Releases ({})...", "►".cyan(), api_url);
+    let resp = ureq::get(&api_url)
+        .set("User-Agent", "sb-cli-updater")
+        .set("Accept", "application/vnd.github+json")
+        .call()
+        .map_err(|e| format!("GitHub Release-Abfrage fehlgeschlagen: {e}"))?;
+    let meta: serde_json::Value = serde_json::from_reader(resp.into_reader())
+        .map_err(|e| format!("Ungültige GitHub-Release-Antwort: {e}"))?;
+
+    let tag = meta
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "GitHub Release enthält kein tag_name.".to_string())?;
+    let clean_tag = validate_release_tag(tag)?;
+    let asset_name = expected_github_asset_name(&clean_tag)?;
+
+    let download_url = meta
+        .get("assets")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .find(|a| a.get("name").and_then(|n| n.as_str()) == Some(asset_name.as_str()))
+        })
+        .and_then(|a| a.get("browser_download_url").and_then(|u| u.as_str()))
+        .ok_or_else(|| format!("Asset '{asset_name}' in Release '{clean_tag}' nicht gefunden."))?;
+    if !download_url.starts_with("https://") {
+        return Err("Unsichere Download-URL (nur HTTPS erlaubt).".into());
+    }
+
+    println!("  {} Lade {asset_name} ({clean_tag})...", "►".cyan());
+    let dl_resp = ureq::get(download_url)
+        .set("User-Agent", "sb-cli-updater")
+        .call()
+        .map_err(|e| format!("Download fehlgeschlagen: {e}"))?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut dl_resp.into_reader(), &mut bytes)
+        .map_err(|e| format!("Archiv-Lesefehler: {e}"))?;
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "sb_self_update_{}_{}",
+        std::process::id(),
+        rand::random::<u32>()
+    ));
+    std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
+
+    let extract_res: Result<(), String> = (|| {
+        if asset_name.ends_with(".zip") {
+            let cursor = std::io::Cursor::new(&bytes);
+            let mut archive =
+                zip::ZipArchive::new(cursor).map_err(|e| format!("Ungültiges ZIP: {e}"))?;
+            for i in 0..archive.len() {
+                let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+                let name = file
+                    .name()
+                    .map(|s| s.to_string())
+                    .map_err(|e| e.to_string())?;
+                if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {
+                    return Err(format!("Unsicherer Archivpfad abgelehnt: {name}"));
+                }
+                if name == "sb.exe" || name == "sb-node.exe" {
+                    let mut out =
+                        std::fs::File::create(temp_dir.join(&name)).map_err(|e| e.to_string())?;
+                    std::io::copy(&mut file, &mut out).map_err(|e| e.to_string())?;
+                }
+            }
+        } else {
+            let gz = flate2::read::GzDecoder::new(std::io::Cursor::new(&bytes));
+            let mut archive = tar::Archive::new(gz);
+            for entry in archive.entries().map_err(|e| e.to_string())? {
+                let mut entry = entry.map_err(|e| e.to_string())?;
+                let path = entry.path().map_err(|e| e.to_string())?.to_path_buf();
+                let name = path.to_string_lossy().to_string();
+                if name.contains("..") || path.is_absolute() {
+                    return Err(format!("Unsicherer Archivpfad abgelehnt: {name}"));
+                }
+                if name == "sb" || name == "sb-node" || name == "./sb" || name == "./sb-node" {
+                    let file_name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .ok_or_else(|| "Invalid tar entry".to_string())?;
+                    entry
+                        .unpack(temp_dir.join(file_name))
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+
+        let current_exe =
+            std::env::current_exe().map_err(|e| format!("current_exe fehlgeschlagen: {e}"))?;
+        let install_dir = current_exe
+            .parent()
+            .ok_or_else(|| "Installationsverzeichnis nicht ermittelbar".to_string())?;
+
+        // Falls Windows-Service läuft, kurz stoppen für sb-node.exe-Austausch
+        #[cfg(windows)]
+        let service_was_running = {
+            let q = std::process::Command::new("sc.exe")
+                .args(["query", "sb-node-agent"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains("RUNNING"))
+                .unwrap_or(false);
+            if q {
+                let _ = std::process::Command::new("sc.exe")
+                    .args(["stop", "sb-node-agent"])
+                    .output();
+                std::thread::sleep(std::time::Duration::from_millis(1200));
+            }
+            q
+        };
+
+        let sb_bin = if cfg!(windows) { "sb.exe" } else { "sb" };
+        let node_bin = if cfg!(windows) {
+            "sb-node.exe"
+        } else {
+            "sb-node"
+        };
+
+        replace_binary_atomically(&temp_dir.join(sb_bin), &install_dir.join(sb_bin))?;
+        if temp_dir.join(node_bin).exists() {
+            replace_binary_atomically(&temp_dir.join(node_bin), &install_dir.join(node_bin))?;
+        }
+
+        #[cfg(windows)]
+        if service_was_running {
+            let _ = std::process::Command::new("sc.exe")
+                .args(["start", "sb-node-agent"])
+                .output();
+        }
+
+        println!(
+            "\n  {} Skulls & Bones erfolgreich auf {} aktualisiert ({}).",
+            "✓".bright_green().bold(),
+            clean_tag.cyan().bold(),
+            install_dir.display()
+        );
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    extract_res
+}
+
 pub fn handle_identity() {
     print_banner();
     println!(

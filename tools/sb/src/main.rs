@@ -157,10 +157,20 @@ fn real_main() {
             from_dir,
             from_url,
             from_mesh,
+            github,
+            tag,
         }) => {
-            if let Err(error) =
+            let use_github = github
+                || (tools.is_empty()
+                    && from_dir.is_none()
+                    && from_url.is_none()
+                    && from_mesh.is_none());
+            let res = if use_github {
+                commands::pkg::self_update_from_github(tag.as_deref())
+            } else {
                 handle_update_with_options(&tools, allow_downgrade, from_dir, from_url, from_mesh)
-            {
+            };
+            if let Err(error) = res {
                 eprintln!("Update fehlgeschlagen: {error}");
                 std::process::exit(1);
             }
@@ -792,6 +802,7 @@ mod tests {
                 from_dir,
                 from_url,
                 from_mesh,
+                ..
             }) => {
                 assert_eq!(tools, vec!["mesh".to_string(), "code".to_string()]);
                 assert!(force);
@@ -818,6 +829,7 @@ mod tests {
                 from_dir,
                 from_url,
                 from_mesh,
+                ..
             }) => {
                 assert!(tools.is_empty());
                 assert!(allow_downgrade);

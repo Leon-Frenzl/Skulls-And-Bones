@@ -184,6 +184,14 @@ pub enum Commands {
         /// Update aus einem lokalen/verbundenen Mesh-Netzwerk (z.B. public oder dev)
         #[arg(long, value_name = "MESH")]
         from_mesh: Option<String>,
+
+        /// Selbst-Update direkt über GitHub Releases (Standard bei 'sb update' ohne Argumente)
+        #[arg(long)]
+        github: bool,
+
+        /// Bestimmtes Release-Tag für GitHub-Update (z. B. v0.2.2)
+        #[arg(long, value_name = "TAG")]
+        tag: Option<String>,
     },
 
     /// Erstellt und signiert verifizierbare S&B-Releases
