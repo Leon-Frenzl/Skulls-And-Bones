@@ -336,6 +336,67 @@ pub fn service_status() -> Result<String, String> {
     }
 }
 
+/// Stops the background service, rebuilds `sb-node` in release mode from `repo_dir`,
+/// updates the installed service binary if needed, and restarts the service.
+pub fn update_service(repo_dir: &Path, dry_run: bool) -> Result<String, String> {
+    if !repo_dir.join("Cargo.toml").exists() {
+        return Err(format!(
+            "Kein Cargo-Workspace unter {} gefunden (mit --repo-dir angeben).",
+            repo_dir.display()
+        ));
+    }
+    if dry_run {
+        return Ok(format!(
+            "Dry-Run: würde '{SERVICE_NAME}' stoppen, in {} 'cargo build --release -p sb-node' ausführen und Dienst neu starten.",
+            repo_dir.display()
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("sc.exe")
+            .args(["stop", SERVICE_NAME])
+            .output();
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("systemctl")
+            .args(["stop", &format!("{SERVICE_NAME}.service")])
+            .output();
+    }
+
+    let build_out = std::process::Command::new("cargo")
+        .args(["build", "--release", "-p", "sb-node"])
+        .current_dir(repo_dir)
+        .output()
+        .map_err(|e| format!("Failed to spawn cargo build: {e}"))?;
+    if !build_out.status.success() {
+        return Err(format!(
+            "cargo build --release -p sb-node failed ({}): {}",
+            build_out.status,
+            String::from_utf8_lossy(&build_out.stderr).trim()
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let built = repo_dir.join("target/release/sb-node");
+        if built.exists() && Path::new("/usr/local/bin/sb-node").exists() {
+            let _ = fs::copy(&built, "/usr/local/bin/sb-node");
+        }
+        run_cmd("systemctl", &["start", &format!("{SERVICE_NAME}.service")])?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        run_cmd("sc.exe", &["start", SERVICE_NAME])?;
+    }
+
+    Ok(format!(
+        "Service '{SERVICE_NAME}' erfolgreich aktualisiert und neu gestartet."
+    ))
+}
+
 fn run_cmd(program: &str, args: &[&str]) -> Result<(), String> {
     let out = std::process::Command::new(program)
         .args(args)

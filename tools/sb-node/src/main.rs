@@ -226,6 +226,15 @@ enum ServiceCommands {
     },
     /// Zeigt den Status des sb-node-agent Hintergrunddienstes
     Status,
+    /// Stoppt den Dienst, baut sb-node neu und startet den Dienst automatisch wieder
+    Update {
+        /// Pfad zum Skulls-And-Bones-Workspace (Standard: aktuelles Verzeichnis)
+        #[arg(long)]
+        repo_dir: Option<PathBuf>,
+        /// Trockenlauf ohne Systemänderungen
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -2525,6 +2534,12 @@ async fn main() {
                 }
                 ServiceCommands::Status => service_mgr::service_status()
                     .map(|s| format!("Service '{}' status: {}", service_mgr::SERVICE_NAME, s)),
+                ServiceCommands::Update { repo_dir, dry_run } => {
+                    let dir = repo_dir.unwrap_or_else(|| {
+                        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+                    });
+                    service_mgr::update_service(&dir, dry_run)
+                }
             };
             match result {
                 Ok(msg) => println!("  {} {}", "✓".green().bold(), msg),
