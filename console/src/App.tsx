@@ -1137,21 +1137,39 @@ export default function App() {
                         </span>
                       </td>
                       <td>
-                        <button
-                          className="btn"
-                          onClick={async () => {
-                            const pass = window.prompt("LAPS Master-Passphrase eingeben:") || "";
-                            if (!pass) return;
-                            const r = await fetch(`/v1/machines/${encodeURIComponent(m.machine_id)}/laps/reveal`, {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json", ...authHeaders() },
-                              body: JSON.stringify({ passphrase: pass }),
-                            });
-                            setStatusMsg(await r.text());
-                          }}
-                        >
-                          Notfall-PW
-                        </button>
+                        <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                          <button
+                            className="btn"
+                            onClick={async () => {
+                              const pass = window.prompt("LAPS Master-Passphrase eingeben:") || "";
+                              if (!pass) return;
+                              const r = await fetch(`/v1/machines/${encodeURIComponent(m.machine_id)}/laps/reveal`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json", ...authHeaders() },
+                                body: JSON.stringify({ passphrase: pass }),
+                              });
+                              setStatusMsg(await r.text());
+                            }}
+                          >
+                            Notfall-PW
+                          </button>
+                          <button
+                            className="btn"
+                            onClick={async () => {
+                              const r = await fetch(`/v1/machines/${encodeURIComponent(m.machine_id)}/laps/rotate-request`, {
+                                method: "POST",
+                                headers: { ...authHeaders() },
+                              });
+                              if (r.ok) {
+                                setStatusMsg(`LAPS-Rotation für ${m.fqdn} angefordert — Agent führt sie beim nächsten Sync (≤60s) aus.`);
+                              } else {
+                                setStatusMsg(await r.text());
+                              }
+                            }}
+                          >
+                            LAPS rotieren
+                          </button>
+                        </div>
                       </td>
                     </tr>
                     );

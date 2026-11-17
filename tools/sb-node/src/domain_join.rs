@@ -929,7 +929,21 @@ async fn handle_join_http_connection(
             let mut store = crate::fleet::FleetStore::load(&fleet_path).unwrap_or_default();
             store.record_heartbeat(hb);
             let _ = store.save(&fleet_path);
-            return write_http_json(stream, 200, "OK", r#"{"status":"recorded"}"#).await;
+
+            let laps_meta = crate::laps::LapsMetaStore::load(&base_dir.join("laps_meta.json"))
+                .unwrap_or_default();
+            let mut actions: Vec<&str> = Vec::new();
+            if let Some(entry) = laps_meta.entries.get(machine_id) {
+                if entry.rotate_requested || entry.rotate_pending {
+                    actions.push("laps_rotate");
+                }
+            }
+            let resp = serde_json::json!({
+                "status": "recorded",
+                "actions": actions,
+            })
+            .to_string();
+            return write_http_json(stream, 200, "OK", &resp).await;
         }
 
         if method == "PUT" && path.starts_with("/v1/packages/") {
@@ -986,7 +1000,9 @@ async fn handle_join_http_connection(
     }
 
     if path.starts_with("/v1/machines/")
-        && (path.ends_with("/laps") || path.ends_with("/laps/reveal"))
+        && (path.ends_with("/laps")
+            || path.ends_with("/laps/reveal")
+            || path.ends_with("/laps/rotate-request"))
     {
         let Some(token) = extract_bearer_token(&header_lines) else {
             return write_http_json(
@@ -1044,6 +1060,43 @@ async fn handle_join_http_connection(
                         r#"{"error":"no LAPS entry for machine"}"#,
                     )
                     .await
+                }
+            };
+        }
+
+        if method == "POST" && path.ends_with("/laps/rotate-request") {
+            let machine_id = path
+                .trim_start_matches("/v1/machines/")
+                .trim_end_matches("/laps/rotate-request");
+            if !claims
+                .capabilities
+                .iter()
+                .any(|c| c == "laps:write" || c == "domain:admin")
+            {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"token lacks laps:write or domain:admin"}"#,
+                )
+                .await;
+            }
+            return match crate::laps::mark_rotate_requested(machine_id, &meta_path) {
+                Ok(meta) => {
+                    let _ = crate::audit_log::append_audit_event(
+                        &audit_path,
+                        &claims.subject,
+                        "laps.rotate_request",
+                        machine_id,
+                        "ok",
+                        serde_json::json!({ "rotate_requested": meta.rotate_requested }),
+                    );
+                    let json = serde_json::to_string(&meta).map_err(|e| e.to_string())?;
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": e }).to_string();
+                    write_http_json(stream, 400, "Bad Request", &msg).await
                 }
             };
         }
@@ -2953,15 +3006,55 @@ pub async fn fetch_remote_policy_bundle(
 }
 
 /// Posts a machine compliance heartbeat (GPO revision, LAPS rotation timestamp, service state)
-/// to `POST /v1/machines/<machine_id>/heartbeat`.
+/// to `POST /v1/machines/<machine_id>/heartbeat` and returns pending remote actions.
 pub async fn send_remote_heartbeat(
     dc_endpoint: &str,
     bearer_token: &str,
     hb: &crate::fleet::MachineHeartbeat,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let body = serde_json::to_string(hb).map_err(|e| format!("Serialize heartbeat error: {e}"))?;
     let path = format!("/v1/machines/{}/heartbeat", hb.machine_id);
-    send_endpoint_request_with_bearer(dc_endpoint, "POST", &path, Some(&body), Some(bearer_token))
+    let resp_bytes = send_endpoint_request_with_bearer(
+        dc_endpoint,
+        "POST",
+        &path,
+        Some(&body),
+        Some(bearer_token),
+    )
+    .await?;
+    let val: serde_json::Value = serde_json::from_slice(&resp_bytes).unwrap_or_default();
+    let actions = val
+        .get("actions")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(actions)
+}
+
+/// Uploads a newly rotated LAPS password to the Domain Controller (`PUT /v1/machines/<id>/laps`)
+/// so admins can reveal it from the Web Console.
+pub async fn upload_rotated_laps_to_dc(
+    dc_endpoint: &str,
+    bearer_token: &str,
+    machine_id: &str,
+    local_account: &str,
+    password: &str,
+    passphrase: &str,
+    ttl_days: i64,
+) -> Result<(), String> {
+    let path = format!("/v1/machines/{machine_id}/laps");
+    let body = serde_json::json!({
+        "local_account": local_account,
+        "password": password,
+        "passphrase": passphrase,
+        "ttl_days": ttl_days,
+    })
+    .to_string();
+    send_endpoint_request_with_bearer(dc_endpoint, "PUT", &path, Some(&body), Some(bearer_token))
         .await?;
     Ok(())
 }

@@ -5111,6 +5111,36 @@ fn handle_laps_commands(sub: LapsCommands) -> Result<(), String> {
                 &vault_dir,
                 &meta_path,
             )?;
+            if apply || apply_linux || apply_windows {
+                let agent_pw_path = laps::default_laps_agent_passphrase_path();
+                if let Some(parent) = agent_pw_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = fs::write(&agent_pw_path, &passphrase);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(&agent_pw_path, fs::Permissions::from_mode(0o600));
+                }
+                if let Some((dc_url, token)) = load_dc_session_credentials() {
+                    let dc_sync = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(
+                            domain_join::upload_rotated_laps_to_dc(
+                                &dc_url,
+                                &token,
+                                &machine_id,
+                                &account,
+                                &pw,
+                                &passphrase,
+                                30,
+                            ),
+                        )
+                    });
+                    if let Err(err) = dc_sync {
+                        eprintln!("  {} LAPS DC-Sync Warnung: {err}", "!".yellow());
+                    }
+                }
+            }
             println!(
                 "{} LAPS-Passwort für '{}' (Account '{}', v{}) rotiert und verschlüsselt gespeichert.",
                 "✓".green().bold(),
@@ -5187,6 +5217,7 @@ async fn run_agent_loop(
             dc,
             dry_run
         );
+        let mut remote_rotate_requested = false;
         match domain_join::fetch_remote_policy_bundle(&dc).await {
             Ok(bundle) => {
                 let pub_path = policy_engine::default_policy_authority_pub_path();
@@ -5219,12 +5250,17 @@ async fn run_agent_loop(
                                     bundle.revision
                                 );
                                 if !dry_run {
-                                    let _ = send_compliance_heartbeat(
+                                    if let Ok(actions) = send_compliance_heartbeat(
                                         &dc,
                                         bundle.revision,
                                         "agent-running",
                                     )
-                                    .await;
+                                    .await
+                                    {
+                                        if actions.iter().any(|a| a == "laps_rotate") {
+                                            remote_rotate_requested = true;
+                                        }
+                                    }
                                 }
                             }
                             Err(err) => eprintln!(
@@ -5243,8 +5279,16 @@ async fn run_agent_loop(
             }
         }
 
-        // LAPS-Rotation-Timer: rotiert bei `rotate_pending` oder Ablauf von `expires_at`
-        if let Err(err) = check_and_rotate_laps(&state.machine_id, clamped_laps_days, dry_run) {
+        // LAPS-Rotation-Timer: rotiert bei Remote-Request aus Web-UI, `rotate_pending` oder Ablauf
+        if let Err(err) = check_and_rotate_laps(
+            &dc,
+            &state.machine_id,
+            clamped_laps_days,
+            remote_rotate_requested,
+            dry_run,
+        )
+        .await
+        {
             eprintln!("  {} LAPS-Timer: {err}", "!".yellow());
         }
 
@@ -5263,33 +5307,39 @@ async fn run_agent_loop(
     Ok(())
 }
 
-fn check_and_rotate_laps(machine_id: &str, ttl_days: i64, dry_run: bool) -> Result<(), String> {
+async fn check_and_rotate_laps(
+    dc_endpoint: &str,
+    machine_id: &str,
+    ttl_days: i64,
+    force_remote_request: bool,
+    dry_run: bool,
+) -> Result<(), String> {
     let meta_path = laps::default_laps_meta_path();
     let vault_dir = laps::default_laps_vault_dir();
     let store = laps::LapsMetaStore::load(&meta_path)?;
     let now = chrono::Utc::now();
 
-    let needs_rotation = match store.entries.get(machine_id) {
-        Some(entry) => {
-            if entry.rotate_pending {
-                true
-            } else {
-                chrono::DateTime::parse_from_rfc3339(&entry.expires_at)
-                    .map(|exp| exp.with_timezone(&chrono::Utc) <= now)
-                    .unwrap_or(true)
+    let needs_rotation = force_remote_request
+        || match store.entries.get(machine_id) {
+            Some(entry) => {
+                if entry.rotate_pending || entry.rotate_requested {
+                    true
+                } else {
+                    chrono::DateTime::parse_from_rfc3339(&entry.expires_at)
+                        .map(|exp| exp.with_timezone(&chrono::Utc) <= now)
+                        .unwrap_or(true)
+                }
             }
-        }
-        None => false,
-    };
+            None => false,
+        };
 
     if !needs_rotation {
         return Ok(());
     }
 
-    let passphrase = std::env::var("SB_LAPS_PASSPHRASE").unwrap_or_default();
-    if passphrase.is_empty() {
-        return Err("Rotation fällig, aber SB_LAPS_PASSPHRASE ist nicht gesetzt.".into());
-    }
+    let passphrase = laps::resolve_agent_laps_passphrase().ok_or_else(|| {
+        "Rotation fällig, aber weder SB_LAPS_PASSPHRASE noch laps_agent.pass gesetzt.".to_string()
+    })?;
     let account = store
         .entries
         .get(machine_id)
@@ -5307,9 +5357,21 @@ fn check_and_rotate_laps(machine_id: &str, ttl_days: i64, dry_run: bool) -> Resu
             &vault_dir,
             &meta_path,
         )?;
+        if let Some((_, token)) = load_dc_session_credentials() {
+            domain_join::upload_rotated_laps_to_dc(
+                dc_endpoint,
+                &token,
+                machine_id,
+                &account,
+                &new_pw,
+                &passphrase,
+                ttl_days,
+            )
+            .await?;
+        }
     }
     println!(
-        "  {} LAPS-Passwort für '{}' ({}) automatisch rotiert.",
+        "  {} LAPS-Passwort für '{}' ({}) automatisch rotiert & zum DC synchronisiert.",
         "✓".green(),
         machine_id,
         account
@@ -5317,11 +5379,24 @@ fn check_and_rotate_laps(machine_id: &str, ttl_days: i64, dry_run: bool) -> Resu
     Ok(())
 }
 
+fn load_dc_session_credentials() -> Option<(String, String)> {
+    let domain_dir = sb_core::domain::local_domain_dir();
+    let sess_raw = fs::read_to_string(domain_dir.join("session.json")).ok()?;
+    let sess: serde_json::Value = serde_json::from_str(&sess_raw).ok()?;
+    let dc_url = sess.get("dc_url")?.as_str()?.to_string();
+    let token = if let Ok(env_tok) = std::env::var("SB_DC_TOKEN") {
+        env_tok
+    } else {
+        sess.get("access_token")?.as_str()?.to_string()
+    };
+    Some((dc_url, token))
+}
+
 async fn send_compliance_heartbeat(
     dc_endpoint: &str,
     gpo_revision: u64,
     service_state: &str,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let domain_dir = sb_core::domain::local_domain_dir();
     let raw_state =
         fs::read_to_string(domain_dir.join("machine.json")).map_err(|e| e.to_string())?;

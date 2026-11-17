@@ -22,6 +22,8 @@ pub struct LapsMetadata {
     pub rotated_at: String,
     pub expires_at: String,
     pub rotate_pending: bool,
+    #[serde(default)]
+    pub rotate_requested: bool,
     pub version: u32,
 }
 
@@ -214,11 +216,52 @@ pub fn store_laps_password(
         rotated_at,
         expires_at,
         rotate_pending: false,
+        rotate_requested: false,
         version: next_ver,
     };
     meta_store.entries.insert(clean_id, meta.clone());
     meta_store.save(meta_path)?;
     Ok(meta)
+}
+
+/// Marks a machine's LAPS password for remote rotation on the next agent heartbeat.
+pub fn mark_rotate_requested(machine_id: &str, meta_path: &Path) -> Result<LapsMetadata, String> {
+    let clean_id = validate_policy_id(machine_id)?;
+    let mut meta_store = LapsMetaStore::load(meta_path)?;
+    let entry = meta_store
+        .entries
+        .entry(clean_id.clone())
+        .or_insert_with(|| LapsMetadata {
+            machine_id: clean_id,
+            local_account: "sb-rescue".to_string(),
+            rotated_at: String::new(),
+            expires_at: String::new(),
+            rotate_pending: false,
+            rotate_requested: true,
+            version: 0,
+        });
+    entry.rotate_requested = true;
+    let updated = entry.clone();
+    meta_store.save(meta_path)?;
+    Ok(updated)
+}
+
+/// Path to the local agent's LAPS vault passphrase file (`~/.sb/domain/laps_agent.pass`).
+pub fn default_laps_agent_passphrase_path() -> PathBuf {
+    sb_core::domain::local_domain_dir().join("laps_agent.pass")
+}
+
+/// Resolves the agent's LAPS passphrase from `SB_LAPS_PASSPHRASE` or `laps_agent.pass`.
+pub fn resolve_agent_laps_passphrase() -> Option<String> {
+    if let Ok(env_pw) = std::env::var("SB_LAPS_PASSPHRASE") {
+        if !env_pw.trim().is_empty() {
+            return Some(env_pw);
+        }
+    }
+    fs::read_to_string(default_laps_agent_passphrase_path())
+        .ok()
+        .map(|s| s.trim_end_matches(['\r', '\n']).to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Decrypts a machine's LAPS password and marks `rotate_pending = true` so it rotates next.
