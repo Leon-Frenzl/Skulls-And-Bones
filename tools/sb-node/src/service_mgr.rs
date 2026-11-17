@@ -208,7 +208,8 @@ pub fn install_service(
                     &[
                         "config",
                         SERVICE_NAME,
-                        &format!("binPath= {bin_path}"),
+                        "binPath=",
+                        &bin_path,
                         "start=",
                         "auto",
                     ],
@@ -219,7 +220,8 @@ pub fn install_service(
                     &[
                         "create",
                         SERVICE_NAME,
-                        &format!("binPath= {bin_path}"),
+                        "binPath=",
+                        &bin_path,
                         "start=",
                         "auto",
                         "DisplayName=",
