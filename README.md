@@ -60,10 +60,10 @@ Das Installationsskript richtet Firewall (`ufw`), `fail2ban`, `caddy` (automatis
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Leon-Frenzl/Skulls-And-Bones/main/scripts/install-dc.sh | sudo bash -s -- \
-  --domain skulls-and-bones.sb \
-  --console-host console.skulls-and-bones.org \
-  --enroll-host enroll.skulls-and-bones.org \
-  --admin leon.admin \
+  --domain corp.example.sb \
+  --console-host console.example.org \
+  --enroll-host enroll.example.org \
+  --admin sb.admin \
   --tarball-url https://github.com/Leon-Frenzl/Skulls-And-Bones/releases/download/v0.2.1/sb-v0.2.1-linux-x86_64.tar.gz
 ```
 
@@ -78,13 +78,13 @@ Lade das passende Release-Paket aus den [GitHub Releases](https://github.com/Leo
 **Mit Benutzername & Passwort (in einer Administrator-PowerShell bzw. mit `sudo` für systemweite GPOs & Dienst):**
 
 ```powershell
-sb join skulls-and-bones.sb --dc https://console.skulls-and-bones.org --username leon.admin
+sb join corp.example.sb --dc https://console.example.org --username sb.admin
 ```
 
 **Oder mit einem Enrollment-/Join-Token:**
 
 ```powershell
-sb join skulls-and-bones.sb --dc https://console.skulls-and-bones.org --token <JOIN_TOKEN>
+sb join corp.example.sb --dc https://console.example.org --token <JOIN_TOKEN>
 ```
 
 Was dabei automatisch passiert:
@@ -100,7 +100,7 @@ Was dabei automatisch passiert:
 | Aufgabe | Befehl |
 | :--- | :--- |
 | Lokalen Domänenstatus prüfen | `sb-node domain status` |
-| GPO-Sync manuell testen (Dry-Run) | `sb-node policy apply --domain skulls-and-bones.sb --dc https://console.skulls-and-bones.org --dry-run` |
+| GPO-Sync manuell testen (Dry-Run) | `sb-node policy apply --domain corp.example.sb --dc https://console.example.org --dry-run` |
 | LAPS-Passwort lokal rotieren | `sb-node laps rotate --machine-id <id> --passphrase "<secret>" --apply` |
 | LAPS-Passwort abrufen (markiert Rotation) | `sb-node laps reveal --machine-id <id> --passphrase "<secret>"` |
 | Hintergrunddienst-Status prüfen | `sb-node service status` |
