@@ -2836,6 +2836,24 @@ pub async fn send_endpoint_request(
     path: &str,
     body: Option<&str>,
 ) -> Result<Vec<u8>, String> {
+    send_endpoint_request_with_bearer(endpoint, method, path, body, None).await
+}
+
+/// Sends an HTTP/1.1 or HTTPS (TLS 1.3 WebPKI) request with optional Bearer token.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Header injection (`\r`/`\n`) via untrusted bearer token.
+/// - **CVE / CWE Mapping:** CWE-113 (HTTP Response/Request Splitting).
+/// - **Likelihood & Exploitability:** Medium (5/10).
+/// - **Applied Mitigation:** Rejects `\r`, `\n`, and NUL in bearer tokens before constructing
+///   the `Authorization` header.
+pub async fn send_endpoint_request_with_bearer(
+    endpoint: &str,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    bearer_token: Option<&str>,
+) -> Result<Vec<u8>, String> {
     let trimmed = endpoint.trim().trim_end_matches('/');
     let (use_tls, authority) = if let Some(rest) = trimmed.strip_prefix("https://") {
         (true, rest.split('/').next().unwrap_or(rest))
@@ -2866,6 +2884,13 @@ pub async fn send_endpoint_request(
 
     let mut http_req =
         format!("{method} {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n");
+    if let Some(tok) = bearer_token {
+        let clean = tok.trim();
+        if clean.contains('\r') || clean.contains('\n') || clean.contains('\0') {
+            return Err("Invalid bearer token characters".into());
+        }
+        http_req.push_str(&format!("Authorization: Bearer {clean}\r\n"));
+    }
     if let Some(b) = body {
         http_req.push_str(&format!(
             "Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
@@ -2925,6 +2950,20 @@ pub async fn fetch_remote_policy_bundle(
     let resp_body = send_endpoint_request(dc_endpoint, "GET", "/v1/policies/bundle", None).await?;
     serde_json::from_slice(&resp_body)
         .map_err(|e| format!("Failed to parse SignedPolicyBundle: {e}"))
+}
+
+/// Posts a machine compliance heartbeat (GPO revision, LAPS rotation timestamp, service state)
+/// to `POST /v1/machines/<machine_id>/heartbeat`.
+pub async fn send_remote_heartbeat(
+    dc_endpoint: &str,
+    bearer_token: &str,
+    hb: &crate::fleet::MachineHeartbeat,
+) -> Result<(), String> {
+    let body = serde_json::to_string(hb).map_err(|e| format!("Serialize heartbeat error: {e}"))?;
+    let path = format!("/v1/machines/{}/heartbeat", hb.machine_id);
+    send_endpoint_request_with_bearer(dc_endpoint, "POST", &path, Some(&body), Some(bearer_token))
+        .await?;
+    Ok(())
 }
 
 #[cfg(test)]

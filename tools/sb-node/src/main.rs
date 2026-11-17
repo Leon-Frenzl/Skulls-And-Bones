@@ -4542,6 +4542,11 @@ async fn handle_domain_commands(sub: DomainCommands) -> Result<(), String> {
         }
         DomainCommands::List { domain } => {
             let registry = domain_join::DomainRegistry::load_or_create(&domain)?;
+            let fleet_store =
+                fleet::FleetStore::load(&sb_core::domain::local_domain_dir().join("fleet.json"))
+                    .unwrap_or_default();
+            let laps_meta =
+                laps::LapsMetaStore::load(&laps::default_laps_meta_path()).unwrap_or_default();
             println!(
                 "=== DOMAIN MACHINES [{}] ({}) ===",
                 registry.domain.cyan().bold(),
@@ -4553,13 +4558,25 @@ async fn handle_domain_commands(sub: DomainCommands) -> Result<(), String> {
                 } else {
                     "ACTIVE".green().bold()
                 };
+                let gpo_rev = fleet_store
+                    .heartbeats
+                    .get(&m.machine_id)
+                    .map(|h| format!("gpo=rev{}", h.gpo_revision))
+                    .unwrap_or_else(|| "gpo=-".into());
+                let laps_info = laps_meta
+                    .entries
+                    .get(&m.machine_id)
+                    .map(|l| format!("laps=v{}", l.version))
+                    .unwrap_or_else(|| "laps=-".into());
                 println!(
-                    "  {:<20} {:<24} {:<15} {:<8} [{}] (by {})",
+                    "  {:<20} {:<24} {:<15} {:<8} [{}] {:<10} {:<8} (by {})",
                     m.machine_id.yellow(),
                     m.fqdn.white().bold(),
                     m.mesh_ip.cyan(),
                     m.os.to_string(),
                     status,
+                    gpo_rev,
+                    laps_info,
                     m.joined_by
                 );
             }
@@ -4828,6 +4845,10 @@ async fn handle_policy_commands(sub: PolicyCommands) -> Result<(), String> {
                 );
                 if let Ok(bundle_json) = serde_json::to_string_pretty(&bundle) {
                     let _ = fs::write(&cache_path, bundle_json);
+                }
+                if let Some(ref dc_endpoint) = dc {
+                    let _ =
+                        send_compliance_heartbeat(dc_endpoint, bundle.revision, "cli-apply").await;
                 }
             }
             println!(
@@ -5178,11 +5199,21 @@ async fn run_agent_loop(
                             &sys_root,
                             dry_run,
                         ) {
-                            Ok(_) => println!(
-                                "  {} GPO Bundle Rev {} synchronisiert.",
-                                "✓".green(),
-                                bundle.revision
-                            ),
+                            Ok(_) => {
+                                println!(
+                                    "  {} GPO Bundle Rev {} synchronisiert.",
+                                    "✓".green(),
+                                    bundle.revision
+                                );
+                                if !dry_run {
+                                    let _ = send_compliance_heartbeat(
+                                        &dc,
+                                        bundle.revision,
+                                        "agent-running",
+                                    )
+                                    .await;
+                                }
+                            }
                             Err(err) => eprintln!(
                                 "  {} GPO-Apply fehlgeschlagen (ggf. Admin-Rechte nötig): {err}",
                                 "!".yellow()
@@ -5271,6 +5302,50 @@ fn check_and_rotate_laps(machine_id: &str, ttl_days: i64, dry_run: bool) -> Resu
         account
     );
     Ok(())
+}
+
+async fn send_compliance_heartbeat(
+    dc_endpoint: &str,
+    gpo_revision: u64,
+    service_state: &str,
+) -> Result<(), String> {
+    let domain_dir = sb_core::domain::local_domain_dir();
+    let raw_state =
+        fs::read_to_string(domain_dir.join("machine.json")).map_err(|e| e.to_string())?;
+    let state: sb_core::domain::JoinedMachineState =
+        serde_json::from_str(&raw_state).map_err(|e| e.to_string())?;
+
+    let token = if let Ok(env_tok) = std::env::var("SB_DC_TOKEN") {
+        env_tok
+    } else {
+        let sess_raw =
+            fs::read_to_string(domain_dir.join("session.json")).map_err(|e| e.to_string())?;
+        let sess: serde_json::Value = serde_json::from_str(&sess_raw).map_err(|e| e.to_string())?;
+        sess.get("access_token")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing access_token in session.json".to_string())?
+            .to_string()
+    };
+
+    let laps_rotated_at = laps::LapsMetaStore::load(&laps::default_laps_meta_path())
+        .ok()
+        .and_then(|s| {
+            s.entries
+                .get(&state.machine_id)
+                .map(|e| e.rotated_at.clone())
+        });
+
+    let hb = fleet::MachineHeartbeat {
+        machine_id: state.machine_id,
+        fqdn: state.fqdn,
+        uptime_secs: 0,
+        gpo_revision,
+        installed_packages: Vec::new(),
+        laps_rotated_at,
+        service_status: Some(service_state.to_string()),
+        last_seen_at: chrono::Utc::now().to_rfc3339(),
+    };
+    domain_join::send_remote_heartbeat(dc_endpoint, &token, &hb).await
 }
 
 fn handle_member_commands(sub: MemberCommands) {

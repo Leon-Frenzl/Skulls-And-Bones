@@ -1287,6 +1287,29 @@ pub fn login_for_join_token(
         .ok_or_else(|| "DC-Login lieferte kein access_token.".to_string())
 }
 
+fn save_dc_session(dc_url: &str, username: Option<&str>, access_token: &str) {
+    let dir = sb_core::domain::local_domain_dir();
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let sess_path = dir.join("session.json");
+    let payload = serde_json::json!({
+        "dc_url": dc_url,
+        "username": username.unwrap_or("token-user"),
+        "access_token": access_token,
+        "saved_at": chrono::Utc::now().to_rfc3339(),
+    });
+    if let Ok(json) = serde_json::to_string_pretty(&payload) {
+        if fs::write(&sess_path, json).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&sess_path, fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+}
+
 fn is_elevated_process() -> bool {
     #[cfg(windows)]
     {
@@ -1415,6 +1438,7 @@ pub fn handle_domain_bootstrap(
     }
 
     let sb_node = find_sb_node_binary();
+    save_dc_session(&dc_url, username_opt, &join_token);
 
     // 1. Domain Join
     println!(

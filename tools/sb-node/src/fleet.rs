@@ -22,6 +22,10 @@ pub struct MachineHeartbeat {
     pub gpo_revision: u64,
     #[serde(default)]
     pub installed_packages: Vec<String>,
+    #[serde(default)]
+    pub laps_rotated_at: Option<String>,
+    #[serde(default)]
+    pub service_status: Option<String>,
     pub last_seen_at: String,
 }
 
@@ -205,6 +209,8 @@ mod tests {
             uptime_secs: 3600,
             gpo_revision: 3,
             installed_packages: vec!["git".into()],
+            laps_rotated_at: None,
+            service_status: Some("running".into()),
             last_seen_at: String::new(),
         });
         assert_eq!(store.heartbeats["m-01"].gpo_revision, 3);

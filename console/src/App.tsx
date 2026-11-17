@@ -128,7 +128,17 @@ export default function App() {
   const [appName, setAppName] = useState<string>("");
   const [appUrl, setAppUrl] = useState<string>("");
   const [appGroups, setAppGroups] = useState<string>("all");
-  const [fleetHealth, setFleetHealth] = useState<{ heartbeats: unknown[]; laps_rotate_pending: number; package_count: number } | null>(null);
+  const [fleetHealth, setFleetHealth] = useState<{
+    heartbeats: Array<{
+      machine_id: string;
+      gpo_revision: number;
+      laps_rotated_at?: string | null;
+      service_status?: string | null;
+      last_seen_at: string;
+    }>;
+    laps_rotate_pending: number;
+    package_count: number;
+  } | null>(null);
   const [pkgId, setPkgId] = useState<string>("");
   const [pkgName, setPkgName] = useState<string>("");
   const [pkgApt, setPkgApt] = useState<string>("");
@@ -1096,17 +1106,31 @@ export default function App() {
                     <th>OS</th>
                     <th>Mesh IP</th>
                     <th>Joined By</th>
+                    <th>GPO / LAPS-Sync</th>
                     <th>Status</th>
                     <th>LAPS</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {machines.map((m) => (
+                  {machines.map((m) => {
+                    const hb = fleetHealth?.heartbeats.find((h) => h.machine_id === m.machine_id);
+                    return (
                     <tr key={m.machine_id}>
                       <td>{m.fqdn}</td>
                       <td>{m.os}</td>
                       <td>{m.mesh_ip}</td>
                       <td>{m.joined_by}</td>
+                      <td>
+                        {hb ? (
+                          <span style={{ fontSize: "0.82rem" }}>
+                            Rev {hb.gpo_revision}
+                            {hb.service_status ? ` · ${hb.service_status}` : ""}
+                            {hb.laps_rotated_at ? ` · LAPS ${hb.laps_rotated_at.slice(0, 10)}` : ""}
+                          </span>
+                        ) : (
+                          <span style={{ color: "var(--muted)", fontSize: "0.82rem" }}>Kein Sync</span>
+                        )}
+                      </td>
                       <td>
                         <span className={`badge ${m.revoked ? "badge-err" : "badge-ok"}`}>
                           {m.revoked ? "REVOKED" : "ACTIVE"}
@@ -1130,10 +1154,11 @@ export default function App() {
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {machines.length === 0 && (
                     <tr>
-                      <td colSpan={6} style={{ color: "var(--muted)" }}>
+                      <td colSpan={7} style={{ color: "var(--muted)" }}>
                         Keine Maschinen geladen (Bearer Token mit <code>domain:read</code> oben eintragen &amp; Refresh).
                       </td>
                     </tr>

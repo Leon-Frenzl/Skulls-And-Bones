@@ -54,40 +54,81 @@ pub fn ensure_ephemeral_ssh_user_cert() -> Option<PathBuf> {
     }
 
     if !sb_pub.is_file() {
-        return None;
+        let _ = std::process::Command::new("ssh-keygen")
+            .args([
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-q",
+                "-f",
+                &sb_priv.to_string_lossy(),
+            ])
+            .status();
     }
 
-    if !sb_ca::SshCa::status().initialized {
+    if !sb_pub.is_file() {
         return None;
     }
 
     let pubkey_str = fs::read_to_string(&sb_pub).ok()?;
-    let identity = SovereignIdentity::load_or_create();
-    let principals = vec![
-        "root".to_string(),
-        "sbadmin".to_string(),
-        identity.callsign.clone(),
-    ];
 
-    if let Ok(cert_str) = sb_ca::SshCa::issue_user_certificate(
-        pubkey_str.trim(),
-        &format!("sb-operator-{}", identity.callsign),
-        &principals,
-        28_800,
-        None,
-    ) {
-        if fs::write(&sb_cert, cert_str.as_bytes()).is_ok() {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = fs::set_permissions(&sb_cert, fs::Permissions::from_mode(0o600));
-            }
-            let _ = sb_core::ssh_transport::ensure_sovereign_ssh_config();
-            return Some(sb_cert);
+    let cert_str = if sb_ca::SshCa::status().initialized {
+        let identity = SovereignIdentity::load_or_create();
+        let principals = vec![
+            "root".to_string(),
+            "sbadmin".to_string(),
+            identity.callsign.clone(),
+        ];
+        sb_ca::SshCa::issue_user_certificate(
+            pubkey_str.trim(),
+            &format!("sb-operator-{}", identity.callsign),
+            &principals,
+            28_800,
+            None,
+        )
+        .ok()?
+    } else {
+        request_remote_ssh_user_cert(pubkey_str.trim())?
+    };
+
+    if fs::write(&sb_cert, cert_str.as_bytes()).is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&sb_cert, fs::Permissions::from_mode(0o600));
         }
+        let _ = sb_core::ssh_transport::ensure_sovereign_ssh_config();
+        return Some(sb_cert);
     }
 
     None
+}
+
+/// Fetches a short-lived OpenSSH user certificate from the Domain Controller (`POST /v1/me/ssh-cert`)
+/// using the persisted DC session (`~/.sb/domain/session.json`).
+fn request_remote_ssh_user_cert(pubkey: &str) -> Option<String> {
+    let sess_path = sb_core::domain::local_domain_dir().join("session.json");
+    let raw = fs::read_to_string(sess_path).ok()?;
+    let sess: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let dc_url = sess.get("dc_url")?.as_str()?.trim_end_matches('/');
+    let token = sess.get("access_token")?.as_str()?;
+
+    let endpoint = format!("{dc_url}/v1/me/ssh-cert");
+    let payload = serde_json::json!({
+        "ssh_public_key": pubkey,
+        "ttl_seconds": 28_800u64,
+    })
+    .to_string();
+    let resp = ureq::post(&endpoint)
+        .set("Content-Type", "application/json")
+        .set("Authorization", &format!("Bearer {token}"))
+        .send_string(&payload)
+        .ok()?;
+    let body: serde_json::Value = serde_json::from_reader(resp.into_reader()).ok()?;
+    body.get("certificate_openssh")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
 }
 
 /// Primary handler for `sb ssh <args...>`.
