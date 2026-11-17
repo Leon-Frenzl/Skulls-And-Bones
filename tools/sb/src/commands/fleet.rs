@@ -1287,6 +1287,27 @@ pub fn login_for_join_token(
         .ok_or_else(|| "DC-Login lieferte kein access_token.".to_string())
 }
 
+fn is_elevated_process() -> bool {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("net")
+            .arg("session")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0")
+            .unwrap_or(false)
+    }
+}
+
 fn find_sb_node_binary() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -1448,33 +1469,61 @@ pub fn handle_domain_bootstrap(
         }
     }
 
+    let elevated = is_elevated_process();
+    let live_root = if cfg!(windows) { "C:\\" } else { "/" };
+
     // 3. Erste signierte GPO anwenden
     println!(
         "  {} [3/4] Erste signierte GPO (DNS, Firewall, SSH) anwenden...",
         "►".cyan()
     );
+    let mut gpo_args = vec!["policy", "apply", "--domain", domain, "--dc", &dc_url];
+    if elevated {
+        gpo_args.extend(["--root", live_root]);
+    }
     let gpo_status = std::process::Command::new(&sb_node)
-        .args(["policy", "apply", "--domain", domain, "--dc", &dc_url])
+        .args(&gpo_args)
         .status();
     if !matches!(gpo_status, Ok(s) if s.success()) {
         eprintln!(
             "  {} GPO-Apply meldete Warnung (ggf. Admin-Rechte erforderlich).",
             "!".yellow()
         );
+    } else if !elevated {
+        println!(
+            "  {} Keine Admin/Root-Rechte: GPO nur unter ~/.sb/domain/rendered erzeugt (noch nicht systemweit aktiv).",
+            "!".yellow().bold()
+        );
+        println!(
+            "    Für systemweite Aktivierung als Administrator ausführen:\n      {} policy apply --domain {} --dc {} --root {}",
+            sb_node.display(),
+            domain,
+            dc_url,
+            live_root
+        );
     }
 
     // 4. Hintergrunddienst einrichten
     if !no_service {
         println!("  {} [4/4] Hintergrunddienst einrichten...", "►".cyan());
-        let svc_status = std::process::Command::new(&sb_node)
-            .args(["service", "install", "--dc", &dc_url])
-            .status();
-        if !matches!(svc_status, Ok(s) if s.success()) {
-            eprintln!(
-                "  {} Dienst-Installation erfordert Admin/Root-Rechte — später mit 'sb-node service install --dc {}' nachholen.",
-                "!".yellow(),
+        if !elevated {
+            println!(
+                "  {} Dienst-Installation übersprungen (Admin/Root-Rechte nötig). Nachholen mit:\n      {} service install --dc {}",
+                "!".yellow().bold(),
+                sb_node.display(),
                 dc_url
             );
+        } else {
+            let svc_status = std::process::Command::new(&sb_node)
+                .args(["service", "install", "--dc", &dc_url])
+                .status();
+            if !matches!(svc_status, Ok(s) if s.success()) {
+                eprintln!(
+                    "  {} Dienst-Installation fehlgeschlagen — später mit 'sb-node service install --dc {}' nachholen.",
+                    "!".yellow(),
+                    dc_url
+                );
+            }
         }
     }
 

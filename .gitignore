@@ -58,3 +58,6 @@ dummy.txt
 # Scripts output
 scripts/*.log
 scripts/output.*
+
+# Local release bundles
+dist/
