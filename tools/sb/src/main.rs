@@ -22,8 +22,8 @@ use commands::delegate::delegate_to;
 use commands::doctor::{handle_completions, handle_doctor};
 use commands::env::handle_sb_env;
 use commands::fleet::{
-    handle_approve, handle_invite_client, handle_invite_list, handle_join, handle_revoke,
-    handle_server_init, handle_server_list, handle_server_token,
+    handle_approve, handle_domain_bootstrap, handle_invite_client, handle_invite_list, handle_join,
+    handle_revoke, handle_server_init, handle_server_list, handle_server_token,
 };
 use commands::init::handle_sb_init;
 use commands::logs::handle_logs_cmd;
@@ -413,8 +413,29 @@ fn real_main() {
         }) => {
             handle_approve(&request_id, approver.as_deref());
         }
-        Some(Commands::Join { token, name }) => {
-            handle_join(&token, name);
+        Some(Commands::Join {
+            target,
+            name,
+            dc,
+            token,
+            username,
+            password,
+            no_service,
+            dry_run,
+        }) => {
+            if target.starts_with("sbm-pair://") {
+                handle_join(&target, name);
+            } else {
+                handle_domain_bootstrap(
+                    &target,
+                    dc.as_deref(),
+                    token.as_deref(),
+                    username.as_deref(),
+                    password.as_deref(),
+                    no_service,
+                    dry_run,
+                );
+            }
         }
         Some(Commands::Revoke { name, reason }) => {
             handle_revoke(&name, &reason);

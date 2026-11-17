@@ -12,6 +12,7 @@ pub mod laps;
 pub mod oidc;
 pub mod policy_engine;
 pub mod rbac;
+pub mod service_mgr;
 pub mod vault_manager;
 
 use base64::Engine;
@@ -161,7 +162,7 @@ enum Commands {
         sub: LapsCommands,
     },
 
-    /// Linux Client-Agent: Sync von GPOs, Software-Paketen, LAPS-Rotation & Heartbeat
+    /// Client-Agent: Sync von GPOs, Software-Paketen, LAPS-Rotation & Heartbeat
     Agent {
         /// Adresse des Domain Controllers (z. B. https://console.skulls-and-bones.org oder 127.0.0.1:8443)
         #[arg(long, default_value = "https://console.skulls-and-bones.org")]
@@ -169,13 +170,56 @@ enum Commands {
         /// Intervall in Sekunden (Standard: 60s)
         #[arg(long, default_value_t = 60)]
         interval_secs: u64,
+        /// LAPS-Rotationsintervall in Tagen (Standard: 30)
+        #[arg(long, default_value_t = 30)]
+        laps_rotate_days: u64,
         /// Nur einen einzigen Sync-Durchlauf ausführen und beenden
         #[arg(long)]
         once: bool,
         /// Trockenlauf ohne Dateisystem-/Paket-Änderungen
         #[arg(long)]
         dry_run: bool,
+        /// Intern: Ausführung als nativer Windows Service (SCM)
+        #[arg(long, hide = true)]
+        windows_service: bool,
     },
+
+    /// Hintergrunddienst-Verwaltung (systemd unter Linux, Windows Service unter Windows)
+    Service {
+        #[command(subcommand)]
+        sub: ServiceCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ServiceCommands {
+    /// Installiert und startet sb-node-agent als Hintergrunddienst
+    Install {
+        /// Adresse des Domain Controllers
+        #[arg(long, default_value = "https://console.skulls-and-bones.org")]
+        dc: String,
+        /// Sync-Intervall in Sekunden
+        #[arg(long, default_value_t = 60)]
+        interval_secs: u64,
+        /// LAPS-Rotationsintervall in Tagen
+        #[arg(long, default_value_t = 30)]
+        laps_rotate_days: u64,
+        /// Trockenlauf ohne Systemänderungen
+        #[arg(long)]
+        dry_run: bool,
+        /// Optionales Ziel-Root-Verzeichnis (Standard: / bzw. C:\)
+        #[arg(long)]
+        root: Option<PathBuf>,
+    },
+    /// Stoppt und deinstalliert den sb-node-agent Hintergrunddienst
+    Uninstall {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        root: Option<PathBuf>,
+    },
+    /// Zeigt den Status des sb-node-agent Hintergrunddienstes
+    Status,
 }
 
 #[derive(Subcommand, Debug)]
@@ -2390,12 +2434,94 @@ async fn main() {
         Some(Commands::Agent {
             dc,
             interval_secs,
+            laps_rotate_days,
             once,
             dry_run,
+            windows_service,
         }) => {
-            if let Err(error) = run_linux_agent_loop(dc, interval_secs, once, dry_run).await {
-                eprintln!("  {} Linux agent failed: {error}", "✗".bright_red().bold());
+            if windows_service {
+                #[cfg(target_os = "windows")]
+                {
+                    let dc_c = dc.clone();
+                    if let Err(error) =
+                        service_mgr::run_windows_service_dispatcher(move |stop_flag| {
+                            let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+                            rt.block_on(run_agent_loop(
+                                dc_c,
+                                interval_secs,
+                                laps_rotate_days,
+                                once,
+                                dry_run,
+                                Some(stop_flag),
+                            ))
+                        })
+                    {
+                        eprintln!(
+                            "  {} Windows service failed: {error}",
+                            "✗".bright_red().bold()
+                        );
+                        std::process::exit(1);
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    eprintln!("--windows-service is only supported on Windows.");
+                    std::process::exit(1);
+                }
+            } else if let Err(error) =
+                run_agent_loop(dc, interval_secs, laps_rotate_days, once, dry_run, None).await
+            {
+                eprintln!("  {} Agent failed: {error}", "✗".bright_red().bold());
                 std::process::exit(1);
+            }
+        }
+        Some(Commands::Service { sub }) => {
+            let result = match sub {
+                ServiceCommands::Install {
+                    dc,
+                    interval_secs,
+                    laps_rotate_days,
+                    dry_run,
+                    root,
+                } => {
+                    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sb-node"));
+                    let sys_root = root.unwrap_or_else(|| {
+                        if cfg!(target_os = "windows") {
+                            PathBuf::from("C:\\")
+                        } else {
+                            PathBuf::from("/")
+                        }
+                    });
+                    let cfg = service_mgr::ServiceConfig {
+                        dc_url: dc,
+                        interval_secs,
+                        laps_rotate_days,
+                        binary_path: exe,
+                    };
+                    service_mgr::install_service(&cfg, &sys_root, dry_run)
+                }
+                ServiceCommands::Uninstall { dry_run, root } => {
+                    let sys_root = root.unwrap_or_else(|| {
+                        if cfg!(target_os = "windows") {
+                            PathBuf::from("C:\\")
+                        } else {
+                            PathBuf::from("/")
+                        }
+                    });
+                    service_mgr::uninstall_service(&sys_root, dry_run)
+                }
+                ServiceCommands::Status => service_mgr::service_status()
+                    .map(|s| format!("Service '{}' status: {}", service_mgr::SERVICE_NAME, s)),
+            };
+            match result {
+                Ok(msg) => println!("  {} {}", "✓".green().bold(), msg),
+                Err(error) => {
+                    eprintln!(
+                        "  {} Service command failed: {error}",
+                        "✗".bright_red().bold()
+                    );
+                    std::process::exit(1);
+                }
             }
         }
         Some(Commands::Status) | None => {
@@ -4985,11 +5111,13 @@ fn handle_laps_commands(sub: LapsCommands) -> Result<(), String> {
     }
 }
 
-async fn run_linux_agent_loop(
+async fn run_agent_loop(
     dc: String,
     interval_secs: u64,
+    laps_rotate_days: u64,
     once: bool,
     dry_run: bool,
+    stop_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), String> {
     let state_path = sb_core::domain::local_domain_dir().join("machine.json");
     let raw_state = fs::read_to_string(&state_path).map_err(|e| {
@@ -5001,8 +5129,14 @@ async fn run_linux_agent_loop(
     let state: sb_core::domain::JoinedMachineState =
         serde_json::from_str(&raw_state).map_err(|e| format!("Invalid machine.json: {e}"))?;
     let clamped_interval = interval_secs.clamp(10, 3600);
+    let clamped_laps_days = laps_rotate_days.clamp(1, 90) as i64;
 
     loop {
+        if let Some(ref flag) = stop_flag {
+            if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
+        }
         println!(
             "{} [sb-node agent] Sync für '{}' gegen DC {} (dry_run={})...",
             "►".cyan(),
@@ -5018,19 +5152,28 @@ async fn run_linux_agent_loop(
                     if policy_engine::verify_policy_bundle(&bundle, &state.domain, &pub_b64, 0)
                         .is_ok()
                     {
-                        let sys_root = sb_core::domain::local_domain_dir().join("rendered");
-                        let _ = policy_engine::apply_policy_bundle(
+                        let sys_root = if cfg!(target_os = "windows") {
+                            PathBuf::from("C:\\")
+                        } else {
+                            PathBuf::from("/")
+                        };
+                        match policy_engine::apply_policy_bundle(
                             &bundle,
                             &state.machine_id,
                             sb_core::domain::OsKind::current(),
                             &sys_root,
                             dry_run,
-                        );
-                        println!(
-                            "  {} GPO Bundle Rev {} synchronisiert.",
-                            "✓".green(),
-                            bundle.revision
-                        );
+                        ) {
+                            Ok(_) => println!(
+                                "  {} GPO Bundle Rev {} synchronisiert.",
+                                "✓".green(),
+                                bundle.revision
+                            ),
+                            Err(err) => eprintln!(
+                                "  {} GPO-Apply fehlgeschlagen (ggf. Admin-Rechte nötig): {err}",
+                                "!".yellow()
+                            ),
+                        }
                     }
                 }
             }
@@ -5041,11 +5184,78 @@ async fn run_linux_agent_loop(
                 );
             }
         }
+
+        // LAPS-Rotation-Timer: rotiert bei `rotate_pending` oder Ablauf von `expires_at`
+        if let Err(err) = check_and_rotate_laps(&state.machine_id, clamped_laps_days, dry_run) {
+            eprintln!("  {} LAPS-Timer: {err}", "!".yellow());
+        }
+
         if once {
             break;
         }
-        tokio::time::sleep(Duration::from_secs(clamped_interval)).await;
+        for _ in 0..clamped_interval {
+            if let Some(ref flag) = stop_flag {
+                if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Ok(());
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }
+    Ok(())
+}
+
+fn check_and_rotate_laps(machine_id: &str, ttl_days: i64, dry_run: bool) -> Result<(), String> {
+    let meta_path = laps::default_laps_meta_path();
+    let vault_dir = laps::default_laps_vault_dir();
+    let store = laps::LapsMetaStore::load(&meta_path)?;
+    let now = chrono::Utc::now();
+
+    let needs_rotation = match store.entries.get(machine_id) {
+        Some(entry) => {
+            if entry.rotate_pending {
+                true
+            } else {
+                chrono::DateTime::parse_from_rfc3339(&entry.expires_at)
+                    .map(|exp| exp.with_timezone(&chrono::Utc) <= now)
+                    .unwrap_or(true)
+            }
+        }
+        None => false,
+    };
+
+    if !needs_rotation {
+        return Ok(());
+    }
+
+    let passphrase = std::env::var("SB_LAPS_PASSPHRASE").unwrap_or_default();
+    if passphrase.is_empty() {
+        return Err("Rotation fällig, aber SB_LAPS_PASSPHRASE ist nicht gesetzt.".into());
+    }
+    let account = store
+        .entries
+        .get(machine_id)
+        .map(|e| e.local_account.clone())
+        .unwrap_or_else(|| "sb-rescue".to_string());
+    let new_pw = laps::generate_laps_password();
+    laps::apply_local_laps(&account, &new_pw, dry_run)?;
+    if !dry_run {
+        laps::store_laps_password(
+            machine_id,
+            &account,
+            &new_pw,
+            &passphrase,
+            ttl_days,
+            &vault_dir,
+            &meta_path,
+        )?;
+    }
+    println!(
+        "  {} LAPS-Passwort für '{}' ({}) automatisch rotiert.",
+        "✓".green(),
+        machine_id,
+        account
+    );
     Ok(())
 }
 

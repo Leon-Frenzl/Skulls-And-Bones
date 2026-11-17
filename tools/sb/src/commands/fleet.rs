@@ -1178,6 +1178,313 @@ pub fn handle_revoke(name: &str, reason: &str) {
     println!("    ► Sämtliche OpenSSH-Zertifikate sind unwiderruflich invalidiert.");
 }
 
+/// Resolves the Domain Controller HTTPS URL from an explicit `--dc` flag or domain name.
+pub fn resolve_dc_url(domain: &str, dc_override: Option<&str>) -> Result<String, String> {
+    let clean_domain = sb_core::domain::validate_domain_name(domain)?;
+    if let Some(raw) = dc_override {
+        let trimmed = raw.trim().trim_end_matches('/');
+        if !trimmed.starts_with("https://") && !trimmed.starts_with("http://") {
+            return Err(format!("Ungültige DC-URL '{trimmed}' (https:// erwartet)"));
+        }
+        return Ok(trimmed.to_string());
+    }
+    if clean_domain == "skulls-and-bones.sb" {
+        return Ok("https://console.skulls-and-bones.org".to_string());
+    }
+    Ok(format!("https://console.{clean_domain}"))
+}
+
+fn read_password_hidden(prompt: &str) -> Result<String, String> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use crossterm::terminal;
+    use std::io::Write;
+
+    print!("{prompt}");
+    std::io::stdout().flush().map_err(|e| e.to_string())?;
+
+    if !crossterm::tty::IsTty::is_tty(&std::io::stdin()) {
+        let mut line = String::new();
+        std::io::stdin()
+            .read_line(&mut line)
+            .map_err(|e| format!("Passwort konnte nicht gelesen werden: {e}"))?;
+        println!();
+        return Ok(line.trim_end_matches(['\r', '\n']).to_string());
+    }
+
+    terminal::enable_raw_mode().map_err(|e| format!("Raw-Mode fehlgeschlagen: {e}"))?;
+    let mut pw = String::new();
+    let res = loop {
+        match event::read() {
+            Ok(Event::Key(k)) if k.kind == KeyEventKind::Press => match k.code {
+                KeyCode::Enter => {
+                    println!();
+                    break Ok(pw.clone());
+                }
+                KeyCode::Backspace => {
+                    pw.pop();
+                }
+                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                    println!();
+                    break Err("Eingabe abgebrochen.".to_string());
+                }
+                KeyCode::Char(c) => pw.push(c),
+                _ => {}
+            },
+            Ok(_) => {}
+            Err(e) => break Err(format!("Tastatur-Lesefehler: {e}")),
+        }
+    };
+    let _ = terminal::disable_raw_mode();
+    use zeroize::Zeroize;
+    pw.zeroize();
+    res
+}
+
+/// Authenticates against `POST <dc_url>/v1/auth/login` with username/password and returns an
+/// access token suitable for `sb-node domain join`.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Exposing domain credentials via CLI args/logs or transmitting
+///   credentials over unencrypted HTTP.
+/// - **CVE / CWE Mapping:** CWE-319 (Cleartext Transmission of Sensitive Information), CWE-214
+///   (Process Visible Sensitive Information).
+/// - **Likelihood & Exploitability:** High (8/10) if plaintext passwords appear in shell history
+///   or unencrypted HTTP requests.
+/// - **Applied Mitigation:** Uses hidden terminal input when `--password` is omitted, enforces
+///   HTTPS (except explicit localhost dev), and zeroizes the password string immediately after
+///   the JSON POST request.
+// Conforms to RFC 9110 (HTTP Semantics) and OAuth 2.0 Bearer Token Usage (RFC 6750).
+pub fn login_for_join_token(
+    dc_url: &str,
+    username: &str,
+    password: &str,
+) -> Result<String, String> {
+    let clean_user = username.trim();
+    if clean_user.is_empty() || password.is_empty() {
+        return Err("Benutzername und Passwort dürfen nicht leer sein.".into());
+    }
+    let is_local_http =
+        dc_url.starts_with("http://127.0.0.1") || dc_url.starts_with("http://localhost");
+    if !dc_url.starts_with("https://") && !is_local_http {
+        return Err("Login über Benutzername/Passwort erfordert HTTPS.".into());
+    }
+    let endpoint = format!("{}/v1/auth/login", dc_url.trim_end_matches('/'));
+    let payload = serde_json::json!({
+        "username": clean_user,
+        "password": password,
+    })
+    .to_string();
+    let resp = ureq::post(&endpoint)
+        .set("Content-Type", "application/json")
+        .send_string(&payload)
+        .map_err(|e| format!("DC-Login fehlgeschlagen ({endpoint}): {e}"))?;
+
+    let body: serde_json::Value = serde_json::from_reader(resp.into_reader())
+        .map_err(|e| format!("Ungültige Login-Antwort vom DC: {e}"))?;
+    body.get("access_token")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "DC-Login lieferte kein access_token.".to_string())
+}
+
+fn find_sb_node_binary() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.join(if cfg!(windows) {
+                "sb-node.exe"
+            } else {
+                "sb-node"
+            });
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+    PathBuf::from("sb-node")
+}
+
+/// One-line domain bootstrap flow (`sb join <domain> [--token ... | --username ...]`).
+/// Joins the domain, persists Root CA, applies the initial signed GPO, and installs the
+/// background `sb-node` service.
+pub fn handle_domain_bootstrap(
+    domain: &str,
+    dc_override: Option<&str>,
+    token_opt: Option<&str>,
+    username_opt: Option<&str>,
+    password_opt: Option<&str>,
+    no_service: bool,
+    dry_run: bool,
+) {
+    use std::io::Write;
+    use zeroize::Zeroize;
+
+    print_banner();
+    println!(
+        "  {} {}\n",
+        "► DOMÄNEN-BOOTSTRAP".bold(),
+        format!("[{domain}]").bright_green()
+    );
+
+    let dc_url = match resolve_dc_url(domain, dc_override) {
+        Ok(u) => u,
+        Err(e) => {
+            eprintln!("  {} {e}", "✗".bright_red().bold());
+            std::process::exit(1);
+        }
+    };
+    println!("  {} Domain Controller: {}", "►".cyan(), dc_url.bold());
+
+    let mut join_token = if let Some(tok) = token_opt {
+        tok.trim().to_string()
+    } else {
+        let user = match username_opt {
+            Some(u) if !u.trim().is_empty() => u.trim().to_string(),
+            _ => {
+                print!("  Benutzername ({domain}): ");
+                let _ = std::io::stdout().flush();
+                let mut input = String::new();
+                if std::io::stdin().read_line(&mut input).is_err() {
+                    eprintln!(
+                        "  {} Benutzername konnte nicht gelesen werden.",
+                        "✗".bright_red()
+                    );
+                    std::process::exit(1);
+                }
+                input.trim().to_string()
+            }
+        };
+        let mut pw = match password_opt {
+            Some(p) => p.to_string(),
+            None => match read_password_hidden(&format!("  Passwort für {user}@{domain}: ")) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("  {} {e}", "✗".bright_red());
+                    std::process::exit(1);
+                }
+            },
+        };
+        let tok_res = if dry_run {
+            Ok("dry-run-token".to_string())
+        } else {
+            login_for_join_token(&dc_url, &user, &pw)
+        };
+        pw.zeroize();
+        match tok_res {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("  {} {e}", "✗".bright_red().bold());
+                std::process::exit(1);
+            }
+        }
+    };
+
+    if dry_run {
+        println!(
+            "  {} Dry-Run: würde '{}', CA-Export, 'policy apply' und {} ausführen.",
+            "✓".green().bold(),
+            format!("sb-node domain join {domain} --dc {dc_url}"),
+            if no_service {
+                "keinen Dienst"
+            } else {
+                "'sb-node service install'"
+            }
+        );
+        join_token.zeroize();
+        return;
+    }
+
+    let sb_node = find_sb_node_binary();
+
+    // 1. Domain Join
+    println!(
+        "  {} [1/4] Maschine der Domäne '{}' beitreten...",
+        "►".cyan(),
+        domain
+    );
+    let join_status = std::process::Command::new(&sb_node)
+        .args([
+            "domain",
+            "join",
+            domain,
+            "--dc",
+            &dc_url,
+            "--token",
+            &join_token,
+        ])
+        .status();
+    join_token.zeroize();
+    match join_status {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            eprintln!(
+                "  {} sb-node domain join beendet mit {s}",
+                "✗".bright_red().bold()
+            );
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!(
+                "  {} sb-node nicht gefunden ({}): {e}",
+                "✗".bright_red().bold(),
+                sb_node.display()
+            );
+            std::process::exit(1);
+        }
+    }
+
+    // 2. Root-CA lokal exportieren
+    println!("  {} [2/4] Root-CA-Zertifikat sichern...", "►".cyan());
+    let state_path = sb_core::domain::local_domain_dir().join("machine.json");
+    if let Ok(raw) = fs::read_to_string(&state_path) {
+        if let Ok(state) = serde_json::from_str::<sb_core::domain::JoinedMachineState>(&raw) {
+            let ca_path = sb_core::domain::local_domain_dir().join("root_ca.crt");
+            if fs::write(&ca_path, &state.root_ca_pem).is_ok() {
+                println!(
+                    "    {} Root CA gespeichert: {}",
+                    "✓".green(),
+                    ca_path.display()
+                );
+            }
+        }
+    }
+
+    // 3. Erste signierte GPO anwenden
+    println!(
+        "  {} [3/4] Erste signierte GPO (DNS, Firewall, SSH) anwenden...",
+        "►".cyan()
+    );
+    let gpo_status = std::process::Command::new(&sb_node)
+        .args(["policy", "apply", "--domain", domain, "--dc", &dc_url])
+        .status();
+    if !matches!(gpo_status, Ok(s) if s.success()) {
+        eprintln!(
+            "  {} GPO-Apply meldete Warnung (ggf. Admin-Rechte erforderlich).",
+            "!".yellow()
+        );
+    }
+
+    // 4. Hintergrunddienst einrichten
+    if !no_service {
+        println!("  {} [4/4] Hintergrunddienst einrichten...", "►".cyan());
+        let svc_status = std::process::Command::new(&sb_node)
+            .args(["service", "install", "--dc", &dc_url])
+            .status();
+        if !matches!(svc_status, Ok(s) if s.success()) {
+            eprintln!(
+                "  {} Dienst-Installation erfordert Admin/Root-Rechte — später mit 'sb-node service install --dc {}' nachholen.",
+                "!".yellow(),
+                dc_url
+            );
+        }
+    }
+
+    println!(
+        "\n  {} Domänen-Bootstrap für '{}' abgeschlossen!",
+        "✓".bright_green().bold(),
+        domain
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1216,5 +1523,23 @@ mod tests {
         assert!(encode_openssh_ed25519_wire(&short_key).is_err());
         let long_key = [1u8; 64];
         assert!(encode_openssh_ed25519_wire(&long_key).is_err());
+    }
+
+    #[test]
+    fn test_resolve_dc_url_and_login_validation() {
+        assert_eq!(
+            resolve_dc_url("skulls-and-bones.sb", None).unwrap(),
+            "https://console.skulls-and-bones.org"
+        );
+        assert_eq!(
+            resolve_dc_url("corp.eu", None).unwrap(),
+            "https://console.corp.eu"
+        );
+        assert_eq!(
+            resolve_dc_url("corp.eu", Some("https://dc.corp.eu/")).unwrap(),
+            "https://dc.corp.eu"
+        );
+        assert!(resolve_dc_url("corp.eu", Some("ftp://bad")).is_err());
+        assert!(login_for_join_token("http://remote.example.com", "admin", "pw").is_err());
     }
 }

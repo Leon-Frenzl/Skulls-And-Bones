@@ -315,14 +315,38 @@ pub enum Commands {
         action: InviteAction,
     },
 
-    /// Tritt einem Sovereign Mesh via Einladungs-Token bei (sb join <token>)
+    /// Tritt einer Domäne (z. B. skulls-and-bones.sb) oder einem Mesh (sbm-pair://...) bei
     Join {
-        /// Pairing-Token (sbm-pair://...)
-        token: String,
+        /// Domänenname (z. B. skulls-and-bones.sb) oder Pairing-Token (sbm-pair://...)
+        target: String,
 
-        /// Optionaler Name des Entwicklers (Standard: im Token kodiert)
+        /// Optionaler Name des Entwicklers (nur für sbm-pair:// Mesh-Pairing)
         #[arg(short, long)]
         name: Option<String>,
+
+        /// Adresse des Domain Controllers (z. B. https://console.skulls-and-bones.org)
+        #[arg(long)]
+        dc: Option<String>,
+
+        /// Join-/Access-Token für den Domänenbeitritt
+        #[arg(long)]
+        token: Option<String>,
+
+        /// Domänen-Benutzername (wie bei Windows-Domänenbeitritt)
+        #[arg(short, long)]
+        username: Option<String>,
+
+        /// Domänen-Passwort (ohne Angabe erfolgt verdeckte Eingabe)
+        #[arg(short, long)]
+        password: Option<String>,
+
+        /// Hintergrunddienst (sb-node service install) nicht automatisch einrichten
+        #[arg(long)]
+        no_service: bool,
+
+        /// Trockenlauf ohne Systemänderungen
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// 4-Augen-Prinzip: Gibt eine ausstehende Beitrittsanfrage frei (sb approve <request_id>)
