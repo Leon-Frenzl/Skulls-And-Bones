@@ -4782,7 +4782,16 @@ async fn handle_policy_commands(sub: PolicyCommands) -> Result<(), String> {
                 );
             };
 
-            let pub_b64 = fs::read_to_string(policy_engine::default_policy_authority_pub_path())
+            let pub_path = policy_engine::default_policy_authority_pub_path();
+            if !pub_path.exists() && dc.is_some() && !bundle.authority_pubkey_b64.trim().is_empty()
+            {
+                if let Some(parent) = pub_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                fs::write(&pub_path, bundle.authority_pubkey_b64.trim())
+                    .map_err(|e| format!("Failed to pin policy_authority.pub: {e}"))?;
+            }
+            let pub_b64 = fs::read_to_string(&pub_path)
                 .map_err(|e| format!("Missing policy_authority.pub: {e}"))?;
             let state_path = policy_engine::default_applied_state_path();
             let min_rev = if state_path.exists() {
@@ -5146,9 +5155,14 @@ async fn run_agent_loop(
         );
         match domain_join::fetch_remote_policy_bundle(&dc).await {
             Ok(bundle) => {
-                if let Ok(pub_b64) =
-                    fs::read_to_string(policy_engine::default_policy_authority_pub_path())
-                {
+                let pub_path = policy_engine::default_policy_authority_pub_path();
+                if !pub_path.exists() && !bundle.authority_pubkey_b64.trim().is_empty() {
+                    if let Some(parent) = pub_path.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+                    let _ = fs::write(&pub_path, bundle.authority_pubkey_b64.trim());
+                }
+                if let Ok(pub_b64) = fs::read_to_string(&pub_path) {
                     if policy_engine::verify_policy_bundle(&bundle, &state.domain, &pub_b64, 0)
                         .is_ok()
                     {
