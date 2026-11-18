@@ -2704,13 +2704,16 @@ async fn handle_join_http_connection(
     }
 
     if (method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/ssh/session"))
+        || (method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/ssh/pty"))
         || (method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/tunnel/open"))
         || (method == "GET" && path.starts_with("/v1/machines/") && path.ends_with("/relay/poll"))
         || (method == "POST"
             && path.starts_with("/v1/machines/")
             && path.ends_with("/relay/result"))
         || (path.starts_with("/v1/machines/") && path.contains("/relay/tunnel/"))
+        || (path.starts_with("/v1/machines/") && path.contains("/relay/pty/"))
         || path.starts_with("/v1/ssh/sessions/")
+        || path.starts_with("/v1/ssh/pty/")
         || path.starts_with("/v1/tunnels/")
     {
         let Some(token) = extract_bearer_token(&header_lines) else {
@@ -2904,6 +2907,230 @@ async fn handle_join_http_connection(
                     write_http_json(stream, code, "Error", &msg).await
                 }
             };
+        }
+
+        if method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/ssh/pty") {
+            let machine_id = path
+                .trim_start_matches("/v1/machines/")
+                .trim_end_matches("/ssh/pty");
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            let ssh_user = payload.get("ssh_user").and_then(|v| v.as_str());
+            let cols = payload
+                .get("cols")
+                .and_then(|v| v.as_u64())
+                .and_then(|n| u16::try_from(n).ok())
+                .unwrap_or(100);
+            let rows = payload
+                .get("rows")
+                .and_then(|v| v.as_u64())
+                .and_then(|n| u16::try_from(n).ok())
+                .unwrap_or(30);
+            return match crate::web_ssh::open_pty_session(
+                &claims, machine_id, ssh_user, cols, rows, &base_dir,
+            )
+            .await
+            {
+                Ok(info) => {
+                    let _ = crate::audit_log::append_audit_event(
+                        &audit_path,
+                        &claims.subject,
+                        "ssh.pty_open",
+                        machine_id,
+                        "ok",
+                        serde_json::json!({
+                            "pty_id": info.pty_id,
+                            "ssh_user": info.ssh_user,
+                            "cols": info.cols,
+                            "rows": info.rows,
+                        }),
+                    );
+                    let json = serde_json::to_string(&info).map_err(|e| e.to_string())?;
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err((code, err)) => {
+                    let msg = serde_json::json!({ "error": err }).to_string();
+                    write_http_json(
+                        stream,
+                        code,
+                        if code == 403 { "Forbidden" } else { "Error" },
+                        &msg,
+                    )
+                    .await
+                }
+            };
+        }
+
+        if path.starts_with("/v1/ssh/pty/") {
+            let tail = path.trim_start_matches("/v1/ssh/pty/");
+            if method == "POST" && tail.ends_with("/input") {
+                let pid = tail.trim_end_matches("/input");
+                let body =
+                    match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                        .await?
+                    {
+                        Some(b) => b,
+                        None => return Ok(()),
+                    };
+                let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+                let data_b64 = payload
+                    .get("data_b64")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let bytes = if data_b64.is_empty() {
+                    Vec::new()
+                } else {
+                    match base64::engine::general_purpose::STANDARD.decode(data_b64) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            let msg =
+                                serde_json::json!({ "error": format!("invalid base64: {e}") })
+                                    .to_string();
+                            return write_http_json(stream, 400, "Bad Request", &msg).await;
+                        }
+                    }
+                };
+                let resize = match (
+                    payload
+                        .get("cols")
+                        .and_then(|v| v.as_u64())
+                        .and_then(|n| u16::try_from(n).ok()),
+                    payload
+                        .get("rows")
+                        .and_then(|v| v.as_u64())
+                        .and_then(|n| u16::try_from(n).ok()),
+                ) {
+                    (Some(c), Some(r)) => Some((c, r)),
+                    _ => None,
+                };
+                let close = payload
+                    .get("close")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                return match crate::web_ssh::push_pty_input(&claims, pid, bytes, resize, close)
+                    .await
+                {
+                    Ok(()) => write_http_json(stream, 200, "OK", r#"{"ok":true}"#).await,
+                    Err((code, err)) => {
+                        let msg = serde_json::json!({ "error": err }).to_string();
+                        write_http_json(stream, code, "Error", &msg).await
+                    }
+                };
+            }
+            if method == "GET" && tail.ends_with("/output") {
+                let pid = tail.trim_end_matches("/output");
+                let wait_secs = query_param(query, "wait")
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(15)
+                    .min(25);
+                return match crate::web_ssh::pull_pty_output(&claims, pid, wait_secs).await {
+                    Ok((data, closed)) => {
+                        let data_b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                        let json = serde_json::json!({
+                            "data_b64": data_b64,
+                            "closed": closed,
+                        })
+                        .to_string();
+                        write_http_json(stream, 200, "OK", &json).await
+                    }
+                    Err((code, err)) => {
+                        let msg = serde_json::json!({ "error": err }).to_string();
+                        write_http_json(stream, code, "Error", &msg).await
+                    }
+                };
+            }
+            if method == "DELETE" && !tail.contains('/') {
+                return match crate::web_ssh::close_pty_session(&claims, tail).await {
+                    Ok(closed) => {
+                        let json = serde_json::json!({ "closed": closed }).to_string();
+                        write_http_json(stream, 200, "OK", &json).await
+                    }
+                    Err((code, err)) => {
+                        let msg = serde_json::json!({ "error": err }).to_string();
+                        write_http_json(stream, code, "Error", &msg).await
+                    }
+                };
+            }
+        }
+
+        if path.starts_with("/v1/machines/") && path.contains("/relay/pty/") {
+            let rest = path.trim_start_matches("/v1/machines/");
+            let Some((machine_id, tail)) = rest.split_once("/relay/pty/") else {
+                return write_http_json(stream, 404, "Not Found", r#"{"error":"not found"}"#).await;
+            };
+            let expected_subject = format!("machine:{machine_id}");
+            if claims.subject != expected_subject && !claims.has_role("admin") {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"agent pty relay forbidden for subject"}"#,
+                )
+                .await;
+            }
+            if method == "POST" && tail.ends_with("/output") {
+                let pid = tail.trim_end_matches("/output");
+                let body =
+                    match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                        .await?
+                    {
+                        Some(b) => b,
+                        None => return Ok(()),
+                    };
+                let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+                let data_b64 = payload
+                    .get("data_b64")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let eof = payload
+                    .get("eof")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let bytes = if data_b64.is_empty() {
+                    Vec::new()
+                } else {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(data_b64)
+                        .unwrap_or_default()
+                };
+                return match crate::web_ssh::push_pty_output(&claims, pid, bytes, eof).await {
+                    Ok(()) => write_http_json(stream, 200, "OK", r#"{"ok":true}"#).await,
+                    Err((code, err)) => {
+                        let msg = serde_json::json!({ "error": err }).to_string();
+                        write_http_json(stream, code, "Error", &msg).await
+                    }
+                };
+            }
+            if method == "GET" && tail.ends_with("/input") {
+                let pid = tail.trim_end_matches("/input");
+                let wait_secs = query_param(query, "wait")
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(15)
+                    .min(25);
+                return match crate::web_ssh::pull_pty_input(&claims, pid, wait_secs).await {
+                    Ok((data, resize, closed)) => {
+                        let data_b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                        let resize_json =
+                            resize.map(|(c, r)| serde_json::json!({ "cols": c, "rows": r }));
+                        let json = serde_json::json!({
+                            "data_b64": data_b64,
+                            "resize": resize_json,
+                            "closed": closed,
+                        })
+                        .to_string();
+                        write_http_json(stream, 200, "OK", &json).await
+                    }
+                    Err((code, err)) => {
+                        let msg = serde_json::json!({ "error": err }).to_string();
+                        write_http_json(stream, code, "Error", &msg).await
+                    }
+                };
+            }
         }
 
         if method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/tunnel/open") {
@@ -3665,6 +3892,76 @@ pub async fn agent_pull_tunnel_data(
         .decode(data_b64)
         .map_err(|e| format!("Invalid tunnel base64: {e}"))?;
     Ok((data, closed))
+}
+
+/// Pushes raw PTY stdout/stderr bytes from the agent to the DC buffer.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Cross-machine PTY output injection.
+/// - **CWE Mapping:** CWE-284 (Improper Access Control).
+/// - **Likelihood & Exploitability:** Low (2/10); requires valid `machine:<id>` bearer token.
+/// - **Applied Mitigation:** Authenticates via `machine.key` bearer token over TLS.
+pub async fn agent_push_pty_output(
+    dc_endpoint: &str,
+    bearer_token: &str,
+    machine_id: &str,
+    pty_id: &str,
+    data: &[u8],
+    eof: bool,
+) -> Result<(), String> {
+    let path = format!("/v1/machines/{machine_id}/relay/pty/{pty_id}/output");
+    let data_b64 = base64::engine::general_purpose::STANDARD.encode(data);
+    let body = serde_json::json!({
+        "data_b64": data_b64,
+        "eof": eof,
+    })
+    .to_string();
+    send_endpoint_request_with_bearer(dc_endpoint, "POST", &path, Some(&body), Some(bearer_token))
+        .await?;
+    Ok(())
+}
+
+/// Pulls queued browser keystrokes and resize events from the DC PTY buffer.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Cross-machine keystroke interception.
+/// - **CWE Mapping:** CWE-284 (Improper Access Control).
+/// - **Likelihood & Exploitability:** Low (2/10); requires valid `machine:<id>` bearer token.
+/// - **Applied Mitigation:** Server enforces `machine:<id>` subject check and caps long-poll wait.
+pub async fn agent_pull_pty_input(
+    dc_endpoint: &str,
+    bearer_token: &str,
+    machine_id: &str,
+    pty_id: &str,
+    wait_secs: u64,
+) -> Result<(Vec<u8>, Option<(u16, u16)>, bool), String> {
+    let path = format!("/v1/machines/{machine_id}/relay/pty/{pty_id}/input?wait={wait_secs}");
+    let bytes =
+        send_endpoint_request_with_bearer(dc_endpoint, "GET", &path, None, Some(bearer_token))
+            .await?;
+    let val: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| format!("Invalid PTY pull response: {e}"))?;
+    let data_b64 = val.get("data_b64").and_then(|v| v.as_str()).unwrap_or("");
+    let closed = val.get("closed").and_then(|v| v.as_bool()).unwrap_or(false);
+    let resize = val.get("resize").and_then(|r| {
+        let cols = r
+            .get("cols")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| u16::try_from(n).ok())?;
+        let rows = r
+            .get("rows")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| u16::try_from(n).ok())?;
+        Some((cols, rows))
+    });
+    let data = if data_b64.is_empty() {
+        Vec::new()
+    } else {
+        base64::engine::general_purpose::STANDARD
+            .decode(data_b64)
+            .map_err(|e| format!("Invalid PTY base64: {e}"))?
+    };
+    Ok((data, resize, closed))
 }
 
 /// Authenticates a joined machine using its local Ed25519 `machine.key` (`POST /v1/machines/<id>/auth`)

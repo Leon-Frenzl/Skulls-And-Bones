@@ -747,6 +747,331 @@ pub async fn close_relay_tunnel(
     Ok(false)
 }
 
+/// Public metadata returned when opening an interactive PTY session over the HTTPS-443 relay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PtySessionInfo {
+    pub pty_id: String,
+    pub machine_id: String,
+    pub fqdn: String,
+    pub ssh_user: String,
+    pub cols: u16,
+    pub rows: u16,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PtyInputItem {
+    pub data: Vec<u8>,
+    pub resize: Option<(u16, u16)>,
+}
+
+#[derive(Debug)]
+struct PtySessionState {
+    owner: String,
+    input_buf: VecDeque<PtyInputItem>,
+    output_buf: VecDeque<Vec<u8>>,
+    input_notify: Arc<Notify>,
+    output_notify: Arc<Notify>,
+    closed: bool,
+    expires_at: DateTime<Utc>,
+}
+
+static RELAY_PTYS: OnceLock<Arc<RwLock<HashMap<String, PtySessionState>>>> = OnceLock::new();
+
+fn relay_ptys() -> &'static Arc<RwLock<HashMap<String, PtySessionState>>> {
+    RELAY_PTYS.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
+}
+
+/// Opens an interactive PTY session (`ConPTY` on Windows, `openpty` on Linux) via the HTTPS-443 relay.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Unauthorized interactive shell access or resource exhaustion via zombie PTYs.
+/// - **CWE Mapping:** CWE-284 (Improper Access Control), CWE-400 (Resource Consumption).
+/// - **Likelihood & Exploitability:** High (8/10) on remote shell gateways.
+/// - **Applied Mitigation:** Verifies active user, `admin`/`domain:admin`/`ssh:connect` capability, non-revoked
+///   machine record, online relay agent, validates `ssh_user`, clamps `cols`/`rows`, and caps active PTYs at 32.
+pub async fn open_pty_session(
+    claims: &SovereignClaims,
+    machine_id: &str,
+    requested_ssh_user: Option<&str>,
+    cols: u16,
+    rows: u16,
+    base_dir: &Path,
+) -> Result<PtySessionInfo, (u16, String)> {
+    let cols = cols.clamp(20, 400);
+    let rows = rows.clamp(5, 200);
+
+    let users_path = base_dir.join("users.json");
+    let dir = crate::directory_users::IdentityDirectory::load_or_create(&users_path, "corp.eu")
+        .map_err(|e| (500, e))?;
+    let user = dir
+        .users
+        .get(&claims.subject)
+        .ok_or_else(|| (404, format!("User '{}' not found", claims.subject)))?;
+    if !user.enabled {
+        return Err((403, format!("User '{}' is disabled", claims.subject)));
+    }
+    if !claims.has_role("admin")
+        && !claims.has_capability("domain:admin")
+        && !claims.has_capability("ssh:connect")
+    {
+        return Err((
+            403,
+            "Token lacks ssh:connect or domain:admin capability".into(),
+        ));
+    }
+
+    let ssh_user = requested_ssh_user
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&claims.subject)
+        .to_string();
+    validate_ssh_user(&ssh_user).map_err(|e| (400, e))?;
+
+    let reg_file = base_dir.join("machines.json");
+    let reg_raw = fs::read_to_string(&reg_file)
+        .map_err(|e| (500, format!("Failed to read machines registry: {e}")))?;
+    let reg: crate::domain_join::DomainRegistry = serde_json::from_str(&reg_raw)
+        .map_err(|e| (500, format!("Failed to parse machines registry: {e}")))?;
+    let machine = reg
+        .machines
+        .iter()
+        .find(|m| m.machine_id == machine_id || m.fqdn.eq_ignore_ascii_case(machine_id))
+        .ok_or_else(|| (404, format!("Machine '{machine_id}' not found")))?;
+    if machine.revoked {
+        return Err((403, format!("Machine '{}' is revoked", machine.fqdn)));
+    }
+    if !is_relay_online(&machine.machine_id).await {
+        return Err((
+            503,
+            format!(
+                "Agent auf '{}' ist nicht mit dem Relay verbunden (sb-node-agent prüfen)",
+                machine.fqdn
+            ),
+        ));
+    }
+
+    let pty_id = format!("pty_{}", hex::encode(rand::random::<[u8; 12]>()));
+    let now = Utc::now();
+    let expires_at = now + Duration::minutes(60);
+
+    {
+        let mut guard = relay_ptys().write().await;
+        guard.retain(|_, p| !p.closed && p.expires_at > now);
+        if guard.len() >= 32 {
+            return Err((429, "Too many active PTY sessions (max 32)".into()));
+        }
+        guard.insert(
+            pty_id.clone(),
+            PtySessionState {
+                owner: claims.subject.clone(),
+                input_buf: VecDeque::new(),
+                output_buf: VecDeque::new(),
+                input_notify: Arc::new(Notify::new()),
+                output_notify: Arc::new(Notify::new()),
+                closed: false,
+                expires_at,
+            },
+        );
+    }
+
+    let q_notify = {
+        let mut q_guard = relay_queues().write().await;
+        let entry = q_guard.entry(machine.machine_id.clone()).or_default();
+        entry.queue.push_back(RelayCommand {
+            cmd_id: pty_id.clone(),
+            session_id: pty_id.clone(),
+            ssh_user: ssh_user.clone(),
+            command: format!("{cols}x{rows}"),
+            kind: "pty_open".to_string(),
+            target_port: None,
+        });
+        Arc::clone(&entry.notify)
+    };
+    q_notify.notify_one();
+
+    Ok(PtySessionInfo {
+        pty_id,
+        machine_id: machine.machine_id.clone(),
+        fqdn: machine.fqdn.clone(),
+        ssh_user,
+        cols,
+        rows,
+        expires_at: expires_at.to_rfc3339(),
+    })
+}
+
+/// Pushes keyboard input / resize events from the browser to the PTY session.
+pub async fn push_pty_input(
+    claims: &SovereignClaims,
+    pty_id: &str,
+    data: Vec<u8>,
+    resize: Option<(u16, u16)>,
+    close: bool,
+) -> Result<(), (u16, String)> {
+    let notify = {
+        let mut guard = relay_ptys().write().await;
+        let p = guard
+            .get_mut(pty_id)
+            .ok_or_else(|| (404, "PTY session not found".to_string()))?;
+        if p.owner != claims.subject && !claims.has_role("admin") {
+            return Err((403, "PTY session belongs to another user".into()));
+        }
+        if !data.is_empty() || resize.is_some() {
+            if p.input_buf.len() >= 256 {
+                return Err((429, "PTY input queue full".into()));
+            }
+            p.input_buf.push_back(PtyInputItem {
+                data,
+                resize: resize.map(|(c, r)| (c.clamp(20, 400), r.clamp(5, 200))),
+            });
+        }
+        if close {
+            p.closed = true;
+        }
+        Arc::clone(&p.input_notify)
+    };
+    notify.notify_one();
+    Ok(())
+}
+
+/// Agent pulls queued keystrokes / resize events from the DC PTY buffer.
+pub async fn pull_pty_input(
+    claims: &SovereignClaims,
+    pty_id: &str,
+    wait_secs: u64,
+) -> Result<(Vec<u8>, Option<(u16, u16)>, bool), (u16, String)> {
+    if !claims.has_capability("domain:join") && !claims.has_role("admin") {
+        return Err((403, "Forbidden".into()));
+    }
+    let wait = wait_secs.min(25);
+    let notify = {
+        let mut guard = relay_ptys().write().await;
+        let p = guard
+            .get_mut(pty_id)
+            .ok_or_else(|| (404, "PTY session not found".to_string()))?;
+        if !p.input_buf.is_empty() || p.closed {
+            let mut data = Vec::new();
+            let mut last_resize = None;
+            while let Some(item) = p.input_buf.pop_front() {
+                data.extend_from_slice(&item.data);
+                if item.resize.is_some() {
+                    last_resize = item.resize;
+                }
+            }
+            return Ok((data, last_resize, p.closed));
+        }
+        Arc::clone(&p.input_notify)
+    };
+
+    if wait > 0 {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(wait), notify.notified()).await;
+    }
+
+    let mut guard = relay_ptys().write().await;
+    let p = guard
+        .get_mut(pty_id)
+        .ok_or_else(|| (404, "PTY session not found".to_string()))?;
+    let mut data = Vec::new();
+    let mut last_resize = None;
+    while let Some(item) = p.input_buf.pop_front() {
+        data.extend_from_slice(&item.data);
+        if item.resize.is_some() {
+            last_resize = item.resize;
+        }
+    }
+    Ok((data, last_resize, p.closed))
+}
+
+/// Agent pushes raw PTY stdout/stderr bytes to the DC buffer.
+pub async fn push_pty_output(
+    claims: &SovereignClaims,
+    pty_id: &str,
+    data: Vec<u8>,
+    eof: bool,
+) -> Result<(), (u16, String)> {
+    if !claims.has_capability("domain:join") && !claims.has_role("admin") {
+        return Err((403, "Forbidden".into()));
+    }
+    let notify = {
+        let mut guard = relay_ptys().write().await;
+        let p = guard
+            .get_mut(pty_id)
+            .ok_or_else(|| (404, "PTY session not found".to_string()))?;
+        if !data.is_empty() {
+            if p.output_buf.len() >= 512 {
+                p.output_buf.pop_front();
+            }
+            p.output_buf.push_back(data);
+        }
+        if eof {
+            p.closed = true;
+        }
+        Arc::clone(&p.output_notify)
+    };
+    notify.notify_one();
+    Ok(())
+}
+
+/// Browser pulls raw PTY output bytes from the DC buffer.
+pub async fn pull_pty_output(
+    claims: &SovereignClaims,
+    pty_id: &str,
+    wait_secs: u64,
+) -> Result<(Vec<u8>, bool), (u16, String)> {
+    let wait = wait_secs.min(25);
+    let notify = {
+        let mut guard = relay_ptys().write().await;
+        let p = guard
+            .get_mut(pty_id)
+            .ok_or_else(|| (404, "PTY session not found".to_string()))?;
+        if p.owner != claims.subject && !claims.has_role("admin") {
+            return Err((403, "PTY session belongs to another user".into()));
+        }
+        if !p.output_buf.is_empty() || p.closed {
+            let mut out = Vec::new();
+            while let Some(chunk) = p.output_buf.pop_front() {
+                out.extend_from_slice(&chunk);
+            }
+            return Ok((out, p.closed));
+        }
+        Arc::clone(&p.output_notify)
+    };
+
+    if wait > 0 {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(wait), notify.notified()).await;
+    }
+
+    let mut guard = relay_ptys().write().await;
+    let p = guard
+        .get_mut(pty_id)
+        .ok_or_else(|| (404, "PTY session not found".to_string()))?;
+    let mut out = Vec::new();
+    while let Some(chunk) = p.output_buf.pop_front() {
+        out.extend_from_slice(&chunk);
+    }
+    Ok((out, p.closed))
+}
+
+/// Closes an active PTY session and notifies both browser and agent.
+pub async fn close_pty_session(
+    claims: &SovereignClaims,
+    pty_id: &str,
+) -> Result<bool, (u16, String)> {
+    let mut guard = relay_ptys().write().await;
+    if let Some(p) = guard.get_mut(pty_id) {
+        if p.owner != claims.subject && !claims.has_role("admin") {
+            return Err((403, "PTY session belongs to another user".into()));
+        }
+        p.closed = true;
+        p.input_notify.notify_waiters();
+        p.output_notify.notify_waiters();
+        guard.remove(pty_id);
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5545,6 +5545,18 @@ async fn run_relay_worker(
                             run_agent_tcp_tunnel(dc, mid, tid, port).await;
                         });
                     }
+                } else if cmd.kind == "pty_open" {
+                    let (cols, rows) = cmd
+                        .command
+                        .split_once('x')
+                        .and_then(|(c, r)| Some((c.parse::<u16>().ok()?, r.parse::<u16>().ok()?)))
+                        .unwrap_or((100, 30));
+                    let dc = dc_endpoint.clone();
+                    let mid = machine_id.clone();
+                    let pid = cmd.session_id.clone();
+                    tokio::spawn(async move {
+                        run_agent_pty_session(dc, mid, pid, cols, rows).await;
+                    });
                 } else {
                     let res = execute_local_relay_command(&cmd.session_id, &cmd.command).await;
                     let _ = domain_join::post_remote_relay_result(
@@ -5666,6 +5678,169 @@ async fn run_agent_tcp_tunnel(
     });
 
     let _ = tokio::join!(up_task, dn_task);
+}
+
+/// Spawns an interactive ConPTY/PTY shell and bridges I/O + resize over the DC HTTPS-443 relay.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Unbounded shell output flooding memory or zombie child processes after disconnect.
+/// - **CWE Mapping:** CWE-400 (Resource Consumption), CWE-284 (Improper Access Control).
+/// - **Likelihood & Exploitability:** Medium (5/10) for interactive remote terminals.
+/// - **Applied Mitigation:** Only spawned for DC-authorized `pty_open` commands, enforces bounded 16 KiB
+///   read chunks, and explicitly kills the child shell when the relay session closes.
+async fn run_agent_pty_session(
+    dc_endpoint: String,
+    machine_id: String,
+    pty_id: String,
+    cols: u16,
+    rows: u16,
+) {
+    use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+    use std::io::{Read, Write};
+
+    let pty_system = native_pty_system();
+    let Ok(pair) = pty_system.openpty(PtySize {
+        rows: rows.clamp(5, 200),
+        cols: cols.clamp(20, 400),
+        pixel_width: 0,
+        pixel_height: 0,
+    }) else {
+        if let Ok(tok) = ensure_fresh_machine_token(&dc_endpoint, false).await {
+            let _ = domain_join::agent_push_pty_output(
+                &dc_endpoint,
+                &tok,
+                &machine_id,
+                &pty_id,
+                b"\r\n[PTY error: openpty failed]\r\n",
+                true,
+            )
+            .await;
+        }
+        return;
+    };
+
+    let mut cmd = if cfg!(windows) {
+        let mut c = CommandBuilder::new("powershell.exe");
+        c.arg("-NoLogo");
+        c
+    } else {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        CommandBuilder::new(shell)
+    };
+    if let Some(home) = sb_core::paths::sb_home().parent() {
+        if home.exists() {
+            cmd.cwd(home);
+        }
+    }
+
+    let Ok(mut child) = pair.slave.spawn_command(cmd) else {
+        if let Ok(tok) = ensure_fresh_machine_token(&dc_endpoint, false).await {
+            let _ = domain_join::agent_push_pty_output(
+                &dc_endpoint,
+                &tok,
+                &machine_id,
+                &pty_id,
+                b"\r\n[PTY error: spawn shell failed]\r\n",
+                true,
+            )
+            .await;
+        }
+        return;
+    };
+    drop(pair.slave);
+
+    let Ok(mut reader) = pair.master.try_clone_reader() else {
+        let _ = child.kill();
+        return;
+    };
+    let Ok(writer) = pair.master.take_writer() else {
+        let _ = child.kill();
+        return;
+    };
+    let master = Arc::new(std::sync::Mutex::new(pair.master));
+    let writer = Arc::new(std::sync::Mutex::new(writer));
+
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 16 * 1024];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if out_tx.blocking_send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    let dc_out = dc_endpoint.clone();
+    let mid_out = machine_id.clone();
+    let pid_out = pty_id.clone();
+    let out_task = tokio::spawn(async move {
+        while let Some(chunk) = out_rx.recv().await {
+            let Ok(tok) = ensure_fresh_machine_token(&dc_out, false).await else {
+                break;
+            };
+            if domain_join::agent_push_pty_output(&dc_out, &tok, &mid_out, &pid_out, &chunk, false)
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+        if let Ok(tok) = ensure_fresh_machine_token(&dc_out, false).await {
+            let _ =
+                domain_join::agent_push_pty_output(&dc_out, &tok, &mid_out, &pid_out, &[], true)
+                    .await;
+        }
+    });
+
+    let dc_in = dc_endpoint;
+    let mid_in = machine_id;
+    let pid_in = pty_id;
+    let master_in = Arc::clone(&master);
+    let writer_in = Arc::clone(&writer);
+    let in_task = tokio::spawn(async move {
+        loop {
+            let Ok(tok) = ensure_fresh_machine_token(&dc_in, false).await else {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            };
+            match domain_join::agent_pull_pty_input(&dc_in, &tok, &mid_in, &pid_in, 15).await {
+                Ok((data, resize, closed)) => {
+                    if let Some((c, r)) = resize {
+                        if let Ok(m) = master_in.lock() {
+                            let _ = m.resize(PtySize {
+                                rows: r.clamp(5, 200),
+                                cols: c.clamp(20, 400),
+                                pixel_width: 0,
+                                pixel_height: 0,
+                            });
+                        }
+                    }
+                    if !data.is_empty() {
+                        if let Ok(mut w) = writer_in.lock() {
+                            let _ = w.write_all(&data);
+                            let _ = w.flush();
+                        }
+                    }
+                    if closed {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let _ = tokio::select! {
+        _ = out_task => {},
+        _ = in_task => {},
+    };
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 static RELAY_CWDS: std::sync::OnceLock<RwLock<HashMap<String, PathBuf>>> =

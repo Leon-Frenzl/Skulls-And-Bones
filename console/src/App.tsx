@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from "react";
+import { DesktopShell, DesktopShortcut, DesktopWindowItem, DESKTOP_SHORTCUTS } from "./DesktopShell";
+import { XtermTerminal } from "./XtermTerminal";
 import {
   Activity,
   Download,
@@ -159,6 +161,120 @@ export default function App() {
   const [sshBusy, setSshBusy] = useState<boolean>(false);
   const [sshHistory, setSshHistory] = useState<string[]>([]);
   const [sshHistoryIdx, setSshHistoryIdx] = useState<number>(-1);
+  const [zCounter, setZCounter] = useState<number>(20);
+  const [focusedWinId, setFocusedWinId] = useState<string | null>("app:overview");
+  const [desktopWins, setDesktopWins] = useState<
+    Array<Omit<DesktopWindowItem, "content"> & { machineId?: string; fqdn?: string }>
+  >([
+    {
+      id: "app:overview",
+      title: "System-Übersicht",
+      kind: "app",
+      tabId: "overview",
+      x: 136,
+      y: 28,
+      w: 960,
+      h: 640,
+      z: 10,
+      minimized: false,
+      maximized: false,
+    },
+  ]);
+
+  const focusWindow = (id: string) => {
+    setZCounter((z) => {
+      const next = z + 1;
+      setDesktopWins((prev) =>
+        prev.map((w) => (w.id === id ? { ...w, minimized: false, z: next } : w))
+      );
+      return next;
+    });
+    setFocusedWinId(id);
+  };
+
+  const openShortcutWindow = (sc: DesktopShortcut) => {
+    const winId = `app:${sc.tabId}`;
+    setTab(sc.tabId as TabId);
+    const exists = desktopWins.some((w) => w.id === winId);
+    if (exists) {
+      focusWindow(winId);
+      return;
+    }
+    setZCounter((z) => {
+      const next = z + 1;
+      const offset = (desktopWins.length % 6) * 26;
+      setDesktopWins((prev) => [
+        ...prev,
+        {
+          id: winId,
+          title: sc.label,
+          kind: "app",
+          tabId: sc.tabId,
+          icon: sc.icon,
+          x: 136 + offset,
+          y: 28 + offset,
+          w: 980,
+          h: 660,
+          z: next,
+          minimized: false,
+          maximized: false,
+        },
+      ]);
+      return next;
+    });
+    setFocusedWinId(winId);
+  };
+
+  const openTerminalWindow = (m: MachineRecord) => {
+    const winId = `term:${m.machine_id}:${Date.now()}`;
+    setZCounter((z) => {
+      const next = z + 1;
+      const offset = (desktopWins.length % 6) * 28;
+      setDesktopWins((prev) => [
+        ...prev,
+        {
+          id: winId,
+          title: `Terminal — ${m.fqdn} (${m.mesh_ip})`,
+          kind: "terminal",
+          machineId: m.machine_id,
+          fqdn: m.fqdn,
+          x: 180 + offset,
+          y: 52 + offset,
+          w: 840,
+          h: 520,
+          z: next,
+          minimized: false,
+          maximized: false,
+        },
+      ]);
+      return next;
+    });
+    setFocusedWinId(winId);
+  };
+
+  const closeWindow = (id: string) => {
+    setDesktopWins((prev) => prev.filter((w) => w.id !== id));
+    if (focusedWinId === id) setFocusedWinId(null);
+  };
+
+  const minimizeWindow = (id: string) => {
+    setDesktopWins((prev) => prev.map((w) => (w.id === id ? { ...w, minimized: true } : w)));
+  };
+
+  const toggleMaximizeWindow = (id: string) => {
+    setDesktopWins((prev) =>
+      prev.map((w) => (w.id === id ? { ...w, maximized: !w.maximized } : w))
+    );
+    focusWindow(id);
+  };
+
+  const moveWindow = (id: string, x: number, y: number) => {
+    setDesktopWins((prev) => prev.map((w) => (w.id === id ? { ...w, x, y } : w)));
+  };
+
+  const resizeWindow = (id: string, w: number, h: number) => {
+    setDesktopWins((prev) => prev.map((win) => (win.id === id ? { ...win, w, h } : win)));
+  };
 
   // API Explorer state
   const [apiMethod, setApiMethod] = useState<string>("GET");
@@ -483,52 +599,10 @@ export default function App() {
     );
   }
 
-  return (
-    <div className="layout">
-      <aside className="sidebar">
-        <div className="brand">
-          <ShieldCheck size={24} color="#52c7bd" />
-          <div>
-            <div className="brand-title">Skulls &amp; Bones</div>
-            <div className="brand-sub">Sovereign Control Console</div>
-          </div>
-        </div>
-
-        <button className={`nav-btn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>
-          <Activity size={16} /> Übersicht
-        </button>
-        <button className={`nav-btn ${tab === "me" ? "active" : ""}`} onClick={() => setTab("me")}>
-          <UserCheck size={16} /> Mein Konto
-        </button>
-        <button className={`nav-btn ${tab === "vault" ? "active" : ""}`} onClick={() => setTab("vault")}>
-          <Lock size={16} /> Passwort-Tresor
-        </button>
-        <button className={`nav-btn ${tab === "users" ? "active" : ""}`} onClick={() => setTab("users")}>
-          <Users size={16} /> Users &amp; Gruppen
-        </button>
-        <button className={`nav-btn ${tab === "machines" ? "active" : ""}`} onClick={() => setTab("machines")}>
-          <Laptop size={16} /> Maschinen &amp; Join
-        </button>
-        <button className={`nav-btn ${tab === "policies" ? "active" : ""}`} onClick={() => setTab("policies")}>
-          <ShieldCheck size={16} /> GPO Policies
-        </button>
-        <button className={`nav-btn ${tab === "dns" ? "active" : ""}`} onClick={() => setTab("dns")}>
-          <Globe size={16} /> DNS Manager
-        </button>
-        <button className={`nav-btn ${tab === "ca" ? "active" : ""}`} onClick={() => setTab("ca")}>
-          <KeyRound size={16} /> CA &amp; Proxy
-        </button>
-        <button className={`nav-btn ${tab === "audit" ? "active" : ""}`} onClick={() => setTab("audit")}>
-          <FileText size={16} /> Audit Log
-        </button>
-        <button className={`nav-btn ${tab === "explorer" ? "active" : ""}`} onClick={() => setTab("explorer")}>
-          <Terminal size={16} /> Graph API Explorer
-        </button>
-      </aside>
-
-      <main className="main">
-        <div className="topbar">
-          <h1 style={{ margin: 0, fontSize: 22 }}>
+  const renderTabContent = (tab: TabId) => (
+    <>
+        <div className="topbar" style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--muted)" }}>
             {tab === "overview" && "Infrastruktur-Übersicht"}
             {tab === "me" && "Mein Konto (Self-Service)"}
             {tab === "vault" && "Sovereign Passwort-Tresor (Argon2id + AES-256-GCM)"}
@@ -539,7 +613,7 @@ export default function App() {
             {tab === "ca" && "Certificate Authority & Proxy"}
             {tab === "audit" && "Hash-Verkettetes Audit Log (NIS2 / DSGVO)"}
             {tab === "explorer" && "Open Graph API Explorer (/v1/*)"}
-          </h1>
+          </div>
 
           <div className="token-box">
             {meUser && (
@@ -549,9 +623,6 @@ export default function App() {
             )}
             <button className="btn" onClick={() => void refreshAll()}>
               <RefreshCw size={14} /> Refresh
-            </button>
-            <button className="btn btn-danger" onClick={() => { saveSession("", ""); setMeUser(null); }}>
-              Abmelden
             </button>
           </div>
         </div>
@@ -1187,28 +1258,7 @@ export default function App() {
                           <button
                             className="btn"
                             disabled={m.revoked}
-                            onClick={async () => {
-                              const targetUser = window.prompt("SSH-Benutzername (leer = eigener Account):", "");
-                              if (targetUser === null) return;
-                              const r = await fetch(`/v1/machines/${encodeURIComponent(m.machine_id)}/ssh/session`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json", ...authHeaders() },
-                                body: JSON.stringify(targetUser.trim() ? { ssh_user: targetUser.trim() } : {}),
-                              });
-                              const data = await r.json().catch(() => ({}));
-                              if (!r.ok) {
-                                setStatusMsg(data.error || `SSH-Fehler (${r.status})`);
-                                return;
-                              }
-                              setSshSession(data);
-                              setSshCwd("~");
-                              setSshLog(
-                                `[Mesh-SSH autorisiert] ${data.ssh_user}@${data.fqdn} (${data.mesh_ip})\n` +
-                                `OpenSSH-Cert Principals: ${data.principals.join(", ")} | Gültig bis: ${data.expires_at}\n` +
-                                `Lokale CLI-Alternative: ${data.cli_fallback}\n` +
-                                `-------------------------------------------------------------------\n`
-                              );
-                            }}
+                            onClick={() => openTerminalWindow(m)}
                           >
                             SSH Terminal
                           </button>
@@ -1613,7 +1663,46 @@ export default function App() {
             <pre className="code-block">{apiOutput || "// Antwort erscheint hier..."}</pre>
           </div>
         )}
-      </main>
-    </div>
+    </>
+  );
+
+  const renderedWindows: DesktopWindowItem[] = desktopWins.map((w) => ({
+    ...w,
+    icon:
+      w.kind === "app"
+        ? DESKTOP_SHORTCUTS.find((s) => s.tabId === w.tabId)?.icon
+        : undefined,
+    content:
+      w.kind === "terminal" && w.machineId && w.fqdn ? (
+        <XtermTerminal
+          machineId={w.machineId}
+          fqdn={w.fqdn}
+          authHeaders={authHeaders}
+          onStatus={setStatusMsg}
+        />
+      ) : (
+        renderTabContent((w.tabId as TabId) || "overview")
+      ),
+  }));
+
+  return (
+    <DesktopShell
+      windows={renderedWindows}
+      focusedId={focusedWinId}
+      domainName="skulls-and-bones.sb"
+      username={meUser?.username || loginUser}
+      statusMsg={statusMsg}
+      onOpenShortcut={openShortcutWindow}
+      onFocusWindow={focusWindow}
+      onCloseWindow={closeWindow}
+      onMinimizeWindow={minimizeWindow}
+      onToggleMaximizeWindow={toggleMaximizeWindow}
+      onMoveWindow={moveWindow}
+      onResizeWindow={resizeWindow}
+      onLogout={() => {
+        saveSession("", "");
+        setMeUser(null);
+      }}
+    />
   );
 }
