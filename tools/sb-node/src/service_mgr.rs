@@ -357,7 +357,18 @@ pub fn update_service(repo_dir: &Path, dry_run: bool) -> Result<String, String> 
         let _ = std::process::Command::new("sc.exe")
             .args(["stop", SERVICE_NAME])
             .output();
-        std::thread::sleep(std::time::Duration::from_millis(1500));
+        for _ in 0..30 {
+            let q = std::process::Command::new("sc.exe")
+                .args(["query", SERVICE_NAME])
+                .output();
+            if let Ok(out) = q {
+                if String::from_utf8_lossy(&out.stdout).contains("STOPPED") {
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
     #[cfg(target_os = "linux")]
     {
