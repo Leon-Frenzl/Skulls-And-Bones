@@ -81,7 +81,6 @@ export function XtermTerminal({
 
     let pendingInput = "";
     let flushing = false;
-    let flushTimer: ReturnType<typeof setTimeout> | null = null;
     const flushInput = async () => {
       if (flushing || !ptyId || !pendingInput || cancelled) return;
       flushing = true;
@@ -103,12 +102,8 @@ export function XtermTerminal({
 
     const dataSub = term.onData((data) => {
       pendingInput += data;
-      if (flushing) return;
-      if (!flushTimer) {
-        flushTimer = setTimeout(() => {
-          flushTimer = null;
-          void flushInput();
-        }, 6);
+      if (!flushing) {
+        void flushInput();
       }
     });
 

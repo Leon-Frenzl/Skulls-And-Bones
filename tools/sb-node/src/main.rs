@@ -5806,6 +5806,7 @@ async fn run_agent_pty_session(
     let mid_out = machine_id.clone();
     let pid_out = pty_id.clone();
     let out_task = tokio::spawn(async move {
+        let mut client = domain_join::PersistentDcClient::new(&dc_out).ok();
         while let Some(mut batch) = out_rx.recv().await {
             // Coalesce rapid ConPTY output chunks (e.g. prompt + ANSI escapes) into one HTTPS push.
             tokio::time::sleep(Duration::from_millis(8)).await;
@@ -5818,11 +5819,13 @@ async fn run_agent_pty_session(
             let Ok(tok) = ensure_fresh_machine_token(&dc_out, false).await else {
                 break;
             };
-            if let Err(e) = domain_join::agent_push_pty_output(
-                &dc_out, &tok, &mid_out, &pid_out, &batch, false,
-            )
-            .await
-            {
+            let push_res = if let Some(ref mut c) = client {
+                c.push_pty_output(&tok, &mid_out, &pid_out, &batch, false).await
+            } else {
+                domain_join::agent_push_pty_output(&dc_out, &tok, &mid_out, &pid_out, &batch, false)
+                    .await
+            };
+            if let Err(e) = push_res {
                 let p = sb_core::paths::sb_home().join("pty_agent.log");
                 if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p) {
                     let _ = writeln!(f, "[{pid_out}] push_output err: {e}");
@@ -5831,9 +5834,14 @@ async fn run_agent_pty_session(
             }
         }
         if let Ok(tok) = ensure_fresh_machine_token(&dc_out, false).await {
-            let _ =
-                domain_join::agent_push_pty_output(&dc_out, &tok, &mid_out, &pid_out, &[], true)
-                    .await;
+            if let Some(ref mut c) = client {
+                let _ = c.push_pty_output(&tok, &mid_out, &pid_out, &[], true).await;
+            } else {
+                let _ = domain_join::agent_push_pty_output(
+                    &dc_out, &tok, &mid_out, &pid_out, &[], true,
+                )
+                .await;
+            }
         }
     });
 
@@ -5843,12 +5851,18 @@ async fn run_agent_pty_session(
     let master_in = Arc::clone(&master);
     let writer_in = Arc::clone(&writer);
     let in_task = tokio::spawn(async move {
+        let mut client = domain_join::PersistentDcClient::new(&dc_in).ok();
         loop {
             let Ok(tok) = ensure_fresh_machine_token(&dc_in, false).await else {
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             };
-            match domain_join::agent_pull_pty_input(&dc_in, &tok, &mid_in, &pid_in, 15).await {
+            let pull_res = if let Some(ref mut c) = client {
+                c.pull_pty_input(&tok, &mid_in, &pid_in, 15).await
+            } else {
+                domain_join::agent_pull_pty_input(&dc_in, &tok, &mid_in, &pid_in, 15).await
+            };
+            match pull_res {
                 Ok((data, resize, closed)) => {
                     if let Some((c, r)) = resize {
                         if let Ok(m) = master_in.lock() {
