@@ -1560,8 +1560,8 @@ pub fn handle_domain_bootstrap(
 
 #[derive(Debug, Deserialize)]
 struct DomainSessionFile {
-    #[serde(default)]
-    dc_endpoint: String,
+    #[serde(default, alias = "dc_endpoint")]
+    dc_url: String,
     #[serde(default)]
     access_token: String,
 }
@@ -1572,7 +1572,7 @@ fn load_domain_session_credentials(dc_override: Option<&str>) -> Result<(String,
         .ok()
         .and_then(|raw| serde_json::from_str(raw.trim_start_matches('\u{feff}')).ok())
         .unwrap_or(DomainSessionFile {
-            dc_endpoint: String::new(),
+            dc_url: String::new(),
             access_token: String::new(),
         });
 
@@ -1580,7 +1580,7 @@ fn load_domain_session_credentials(dc_override: Option<&str>) -> Result<(String,
         .map(|s| s.trim().trim_end_matches('/').to_string())
         .filter(|s| !s.is_empty())
         .or_else(|| {
-            let trimmed = session.dc_endpoint.trim().trim_end_matches('/');
+            let trimmed = session.dc_url.trim().trim_end_matches('/');
             if trimmed.is_empty() {
                 None
             } else {
