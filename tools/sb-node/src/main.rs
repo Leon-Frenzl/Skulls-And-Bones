@@ -5382,7 +5382,7 @@ async fn check_and_rotate_laps(
             &vault_dir,
             &meta_path,
         )?;
-        if let Some((_, token)) = load_dc_session_credentials() {
+        if let Ok(token) = ensure_fresh_machine_token(dc_endpoint, false).await {
             domain_join::upload_rotated_laps_to_dc(
                 dc_endpoint,
                 &token,
@@ -5417,6 +5417,61 @@ fn load_dc_session_credentials() -> Option<(String, String)> {
     Some((dc_url, token))
 }
 
+static MACHINE_TOKEN_CACHE: std::sync::OnceLock<RwLock<Option<(String, i64)>>> =
+    std::sync::OnceLock::new();
+
+async fn ensure_fresh_machine_token(
+    dc_endpoint: &str,
+    force_refresh: bool,
+) -> Result<String, String> {
+    if let Ok(env_tok) = std::env::var("SB_DC_TOKEN") {
+        if !env_tok.trim().is_empty() {
+            return Ok(env_tok);
+        }
+    }
+    let cache = MACHINE_TOKEN_CACHE.get_or_init(|| RwLock::new(None));
+    let now = chrono::Utc::now().timestamp();
+    if !force_refresh {
+        let guard = cache.read().await;
+        if let Some((ref tok, exp)) = *guard {
+            if now + 60 < exp {
+                return Ok(tok.clone());
+            }
+        }
+    }
+
+    let domain_dir = sb_core::domain::local_domain_dir();
+    let raw_state =
+        fs::read_to_string(domain_dir.join("machine.json")).map_err(|e| e.to_string())?;
+    let state: sb_core::domain::JoinedMachineState =
+        serde_json::from_str(&raw_state).map_err(|e| e.to_string())?;
+    let key_b64 = fs::read_to_string(domain_dir.join("machine.key")).map_err(|e| e.to_string())?;
+    let key_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(key_b64.trim())
+        .map_err(|e| format!("Invalid machine.key: {e}"))?;
+    let key_arr: [u8; 32] = key_bytes
+        .try_into()
+        .map_err(|_| "machine.key must be 32 bytes".to_string())?;
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_arr);
+
+    match domain_join::authenticate_with_machine_key(dc_endpoint, &state.machine_id, &signing_key)
+        .await
+    {
+        Ok(tok) => {
+            let mut guard = cache.write().await;
+            *guard = Some((tok.clone(), now + 600));
+            Ok(tok)
+        }
+        Err(err) => {
+            if let Some((_, sess_tok)) = load_dc_session_credentials() {
+                Ok(sess_tok)
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
 async fn send_compliance_heartbeat(
     dc_endpoint: &str,
     gpo_revision: u64,
@@ -5428,17 +5483,7 @@ async fn send_compliance_heartbeat(
     let state: sb_core::domain::JoinedMachineState =
         serde_json::from_str(&raw_state).map_err(|e| e.to_string())?;
 
-    let token = if let Ok(env_tok) = std::env::var("SB_DC_TOKEN") {
-        env_tok
-    } else {
-        let sess_raw =
-            fs::read_to_string(domain_dir.join("session.json")).map_err(|e| e.to_string())?;
-        let sess: serde_json::Value = serde_json::from_str(&sess_raw).map_err(|e| e.to_string())?;
-        sess.get("access_token")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "missing access_token in session.json".to_string())?
-            .to_string()
-    };
+    let token = ensure_fresh_machine_token(dc_endpoint, false).await?;
 
     let laps_rotated_at = laps::LapsMetaStore::load(&laps::default_laps_meta_path())
         .ok()
@@ -5466,16 +5511,18 @@ async fn run_relay_worker(
     machine_id: String,
     stop_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) {
+    let mut force_refresh = false;
     loop {
         if let Some(ref flag) = stop_flag {
             if flag.load(std::sync::atomic::Ordering::SeqCst) {
                 break;
             }
         }
-        let Some((_, token)) = load_dc_session_credentials() else {
+        let Ok(token) = ensure_fresh_machine_token(&dc_endpoint, force_refresh).await else {
             tokio::time::sleep(Duration::from_secs(10)).await;
             continue;
         };
+        force_refresh = false;
         match domain_join::poll_remote_relay_command(&dc_endpoint, &token, &machine_id, 20).await {
             Ok(Some(cmd)) => {
                 let res = execute_local_relay_command(&cmd.command).await;
@@ -5490,6 +5537,7 @@ async fn run_relay_worker(
             }
             Ok(None) => {}
             Err(_) => {
+                force_refresh = true;
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
         }

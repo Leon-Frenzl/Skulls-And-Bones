@@ -366,16 +366,15 @@ pub fn update_service(repo_dir: &Path, dry_run: bool) -> Result<String, String> 
             .output();
     }
 
-    let build_out = std::process::Command::new("cargo")
+    let build_status = std::process::Command::new("cargo")
         .args(["build", "--release", "-p", "sb-node"])
         .current_dir(repo_dir)
-        .output()
+        .status()
         .map_err(|e| format!("Failed to spawn cargo build: {e}"))?;
-    if !build_out.status.success() {
+    if !build_status.success() {
         return Err(format!(
-            "cargo build --release -p sb-node failed ({}): {}",
-            build_out.status,
-            String::from_utf8_lossy(&build_out.stderr).trim()
+            "cargo build --release -p sb-node failed ({})",
+            build_status
         ));
     }
 

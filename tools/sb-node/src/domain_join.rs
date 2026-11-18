@@ -601,6 +601,127 @@ async fn handle_join_http_connection(
         };
     }
 
+    if method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/auth") {
+        let machine_id = path
+            .trim_start_matches("/v1/machines/")
+            .trim_end_matches("/auth");
+        let body =
+            match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines).await? {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        let ts = payload
+            .get("timestamp")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let sig_b64 = payload
+            .get("signature_b64")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if (Utc::now().timestamp() - ts).abs() > 120 {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"machine auth timestamp expired or skewed (>120s)"}"#,
+            )
+            .await;
+        }
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let reg_path = registry_path
+            .map(PathBuf::from)
+            .unwrap_or_else(|| base_dir.join("machines.json"));
+        let registry = match DomainRegistry::load_from_path(&reg_path, "corp.eu") {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": e }).to_string();
+                return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+            }
+        };
+        let Some(machine) = registry
+            .machines
+            .iter()
+            .find(|m| m.machine_id == machine_id)
+        else {
+            return write_http_json(stream, 404, "Not Found", r#"{"error":"machine not found"}"#)
+                .await;
+        };
+        if machine.revoked {
+            return write_http_json(
+                stream,
+                403,
+                "Forbidden",
+                r#"{"error":"machine is revoked"}"#,
+            )
+            .await;
+        }
+        let Ok(vk) = parse_public_key(&machine.machine_public_key_b64) else {
+            return write_http_json(
+                stream,
+                500,
+                "Internal Server Error",
+                r#"{"error":"corrupt machine public key"}"#,
+            )
+            .await;
+        };
+        let Ok(sig_bytes) = URL_SAFE_NO_PAD.decode(sig_b64.trim()) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"invalid signature encoding"}"#,
+            )
+            .await;
+        };
+        let Ok(sig_arr): Result<[u8; 64], _> = sig_bytes.try_into() else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"invalid signature length"}"#,
+            )
+            .await;
+        };
+        let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
+        let msg_to_verify = format!("machine_auth:{machine_id}:{ts}");
+        if vk.verify_strict(msg_to_verify.as_bytes(), &sig).is_err() {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"machine signature verification failed"}"#,
+            )
+            .await;
+        }
+        let engine = match load_local_auth_engine() {
+            Ok(e) => e,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": e }).to_string();
+                return write_http_json(stream, 500, "Internal Server Error", &msg).await;
+            }
+        };
+        return match engine.issue_session(
+            &machine.fqdn,
+            vec!["machines".into()],
+            vec!["domain:join".into(), "laps:write".into()],
+            serde_json::json!({ "machine_id": machine.machine_id }),
+        ) {
+            Ok(tokens) => {
+                let json = session_tokens_json(&tokens);
+                write_http_json(stream, 200, "OK", &json).await
+            }
+            Err(e) => {
+                let msg =
+                    serde_json::json!({ "error": format!("Token issue failed: {e}") }).to_string();
+                write_http_json(stream, 500, "Internal Server Error", &msg).await
+            }
+        };
+    }
+
     if method == "POST" && path == "/v1/auth/login" {
         let body =
             match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines).await? {
@@ -3284,6 +3405,42 @@ pub async fn post_remote_relay_result(
     send_endpoint_request_with_bearer(dc_endpoint, "POST", &path, Some(&body), Some(bearer_token))
         .await?;
     Ok(())
+}
+
+/// Authenticates a joined machine using its local Ed25519 `machine.key` (`POST /v1/machines/<id>/auth`)
+/// and returns a fresh short-lived bearer token for agent heartbeats, LAPS sync, and relay polling.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Long-running agents failing after user `access_token` expiry (15m)
+///   or replay of captured machine authentication requests.
+/// - **CVE / CWE Mapping:** CWE-294 (Authentication Bypass by Capture-replay), CWE-287.
+/// - **Likelihood & Exploitability:** Medium (6/10).
+/// - **Applied Mitigation:** Signs `"machine_auth:<machine_id>:<unix_ts>"` with the machine's
+///   Ed25519 private key; DC enforces a `±120s` timestamp window, active non-revoked membership,
+///   and strict Ed25519 verification against the enrolled `machine_public_key_b64`.
+pub async fn authenticate_with_machine_key(
+    dc_endpoint: &str,
+    machine_id: &str,
+    signing_key: &SigningKey,
+) -> Result<String, String> {
+    use ed25519_dalek::Signer;
+    let ts = Utc::now().timestamp();
+    let msg = format!("machine_auth:{machine_id}:{ts}");
+    let sig = signing_key.sign(msg.as_bytes());
+    let sig_b64 = URL_SAFE_NO_PAD.encode(sig.to_bytes());
+    let body = serde_json::json!({
+        "timestamp": ts,
+        "signature_b64": sig_b64,
+    })
+    .to_string();
+    let path = format!("/v1/machines/{machine_id}/auth");
+    let resp_bytes = send_endpoint_request(dc_endpoint, "POST", &path, Some(&body)).await?;
+    let val: serde_json::Value = serde_json::from_slice(&resp_bytes)
+        .map_err(|e| format!("Invalid machine auth response: {e}"))?;
+    val.get("access_token")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "Machine auth response missing access_token".to_string())
 }
 
 #[cfg(test)]
