@@ -3,7 +3,7 @@
 > **Souveräne Identitäten. Signierte Policies. Null Cloud-Zwang.**  
 > Modulare Rust-Infrastruktur-Suite für selbstgehostete Active-Directory-Alternativen, Zero-Trust-Mesh-Networking, X.509/OpenSSH-PKI und Cross-Platform-Geräteverwaltung.
 
-[![Version](https://img.shields.io/badge/release-v0.2.2-blue.svg)](https://github.com/Leon-Frenzl/Skulls-And-Bones/releases/tag/v0.2.2)
+[![Version](https://img.shields.io/badge/release-v0.2.3-blue.svg)](https://github.com/Leon-Frenzl/Skulls-And-Bones/releases/tag/v0.2.3)
 [![Rust](https://img.shields.io/badge/rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -31,7 +31,6 @@ Skulls-And-Bones/
 │   └── install-dc.sh       # 1-Befehl-Server-Installer (Ubuntu/Debian + Caddy TLS + UFW + systemd)
 ├── console/                # Web-Konsole & Self-Service Enrollment UI
 ├── docs/                   # Architektur- und Produktspezifikationen
-├── website/                # Web-Präsenz
 └── tools/
     ├── sb/                 # Master-CLI (sb join, sb status, Delegation an Suite-Tools)
     ├── sb-node/            # Domain Controller, Client-Agent, GPO Engine, LAPS & Service Manager
@@ -41,13 +40,7 @@ Skulls-And-Bones/
     ├── sb-mesh/            # P2P-Overlay-Netzwerk & Mesh-Routing
     ├── sb-dns/             # Sovereign Split-DNS Resolver
     ├── sb-proxy/           # Reverse Proxy & Auto-TLS Edge Gateway
-    ├── sb-db/              # Embedded MVCC Document-KV Store
-    ├── sb-key/             # Root-Identity & Ephemeral Lease Engine
-    ├── sb-code/            # Code Engine & Mesh-Synchronisation
-    ├── sb-drive/           # Peer-Filesystem & Mesh-Storage
-    ├── sb-forge/           # CI/CD Pipeline-Runner
-    ├── sb-app-contract/    # SB-MAP Manifest- & Operations-Grants
-    └── sb-app-protocol/    # SB-MAP Protokoll-Framing
+    └── sb-key/             # Root-Identity & Ephemeral Lease Engine
 ```
 
 ---
@@ -64,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/Leon-Frenzl/Skulls-And-Bones/main/s
   --console-host console.example.org \
   --enroll-host enroll.example.org \
   --admin sb.admin \
-  --tarball-url https://github.com/Leon-Frenzl/Skulls-And-Bones/releases/download/v0.2.2/sb-v0.2.2-linux-x86_64.tar.gz
+  --tarball-url https://github.com/Leon-Frenzl/Skulls-And-Bones/releases/download/v0.2.3/sb-v0.2.3-linux-x86_64.tar.gz
 ```
 
 Voraussetzung sind gesetzte DNS A-Records für `--console-host` und `--enroll-host` auf die IP des Servers (Ports `80/tcp` und `443/tcp` erreichbar).

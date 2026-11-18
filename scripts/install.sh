@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/Leon-Frenzl/Skulls-And-Bones/main/scripts/install.sh | bash
 set -euo pipefail
 
-VERSION="${SB_VERSION:-v0.2.2}"
+VERSION="${SB_VERSION:-v0.2.3}"
 REPO="${SB_REPO:-Leon-Frenzl/Skulls-And-Bones}"
 
 if [[ $EUID -eq 0 ]]; then

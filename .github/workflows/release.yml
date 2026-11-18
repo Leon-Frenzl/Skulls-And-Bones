@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build console UI
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm --prefix console ci && npm --prefix console run build
+      - name: Build release binaries (Linux x86_64)
+        run: cargo build --release -p sb-cli -p sb-node
+      - name: Package Linux tarball
+        run: |
+          mkdir -p dist
+          tar -czf "dist/sb-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" -C target/release sb sb-node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-bundle
+          path: dist/sb-*-linux-x86_64.tar.gz
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binaries (Windows x86_64)
+        run: cargo build --release -p sb-cli -p sb-node
+      - name: Package Windows zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path target/release/sb.exe, target/release/sb-node.exe -DestinationPath "dist/sb-$env:GITHUB_REF_NAME-windows-x86_64.zip" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-bundle
+          path: dist/sb-*-windows-x86_64.zip
+
+  publish-release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Copy installer scripts & compute SHA256SUMS
+        run: |
+          cp scripts/install-dc.sh scripts/install.ps1 scripts/install.sh dist/
+          (cd dist && sha256sum sb-* install-dc.sh install.ps1 install.sh > SHA256SUMS.txt)
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/sb-*-linux-x86_64.tar.gz
+            dist/sb-*-windows-x86_64.zip
+            dist/install-dc.sh
+            dist/install.ps1
+            dist/install.sh
+            dist/SHA256SUMS.txt

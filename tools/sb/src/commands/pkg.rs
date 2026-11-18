@@ -378,9 +378,32 @@ pub fn self_update_from_github(tag_override: Option<&str>) -> Result<(), String>
             .parent()
             .ok_or_else(|| "Installationsverzeichnis nicht ermittelbar".to_string())?;
 
-        // Falls Windows-Service läuft, kurz stoppen für sb-node.exe-Austausch
+        // Falls Windows-Service läuft, zuverlässig stoppen und ggf. abweichenden Service-Binary-Pfad ermitteln
         #[cfg(windows)]
-        let service_was_running = {
+        let (service_was_running, service_bin_path) = {
+            let qc_out = std::process::Command::new("sc.exe")
+                .args(["qc", "sb-node-agent"])
+                .output()
+                .ok();
+            let svc_path = qc_out.and_then(|o| {
+                let text = String::from_utf8_lossy(&o.stdout);
+                for line in text.lines() {
+                    if let Some(rest) = line.trim().strip_prefix("BINARY_PATH_NAME") {
+                        if let Some(rhs) = rest.split_once(':').map(|(_, v)| v.trim()) {
+                            let extracted = if let Some(after_q) = rhs.strip_prefix('"') {
+                                after_q.split('"').next().unwrap_or("")
+                            } else {
+                                rhs.split_whitespace().next().unwrap_or("")
+                            };
+                            if !extracted.is_empty() {
+                                return Some(std::path::PathBuf::from(extracted));
+                            }
+                        }
+                    }
+                }
+                None
+            });
+
             let q = std::process::Command::new("sc.exe")
                 .args(["query", "sb-node-agent"])
                 .output()
@@ -390,9 +413,40 @@ pub fn self_update_from_github(tag_override: Option<&str>) -> Result<(), String>
                 let _ = std::process::Command::new("sc.exe")
                     .args(["stop", "sb-node-agent"])
                     .output();
-                std::thread::sleep(std::time::Duration::from_millis(1200));
+                let mut stopped = false;
+                for _ in 0..10 {
+                    let st = std::process::Command::new("sc.exe")
+                        .args(["query", "sb-node-agent"])
+                        .output();
+                    if let Ok(out) = st {
+                        if String::from_utf8_lossy(&out.stdout).contains("STOPPED") {
+                            stopped = true;
+                            break;
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                if !stopped {
+                    if let Ok(qex) = std::process::Command::new("sc.exe")
+                        .args(["queryex", "sb-node-agent"])
+                        .output()
+                    {
+                        for line in String::from_utf8_lossy(&qex.stdout).lines() {
+                            if let Some(rest) = line.trim().strip_prefix("PID") {
+                                if let Some(pid) = rest.split(':').nth(1).map(str::trim) {
+                                    if !pid.is_empty() && pid != "0" {
+                                        let _ = std::process::Command::new("taskkill")
+                                            .args(["/F", "/PID", pid])
+                                            .output();
+                                        std::thread::sleep(std::time::Duration::from_millis(700));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            q
+            (q, svc_path)
         };
 
         let sb_bin = if cfg!(windows) { "sb.exe" } else { "sb" };
@@ -404,7 +458,16 @@ pub fn self_update_from_github(tag_override: Option<&str>) -> Result<(), String>
 
         replace_binary_atomically(&temp_dir.join(sb_bin), &install_dir.join(sb_bin))?;
         if temp_dir.join(node_bin).exists() {
-            replace_binary_atomically(&temp_dir.join(node_bin), &install_dir.join(node_bin))?;
+            let primary_node = install_dir.join(node_bin);
+            replace_binary_atomically(&temp_dir.join(node_bin), &primary_node)?;
+            #[cfg(windows)]
+            if let Some(ref svc_path) = service_bin_path {
+                if svc_path != &primary_node
+                    && svc_path.parent().map(|p| p.exists()).unwrap_or(false)
+                {
+                    let _ = replace_binary_atomically(&temp_dir.join(node_bin), svc_path);
+                }
+            }
         }
 
         #[cfg(windows)]

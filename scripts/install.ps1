@@ -4,7 +4,7 @@
 # Usage (from local build):
 #   .\scripts\install.ps1 -LocalDir .\target\release
 param(
-    [string]$Version = "v0.2.2",
+    [string]$Version = "v0.2.3",
     [string]$Repo = "Leon-Frenzl/Skulls-And-Bones",
     [string]$InstallDir = "",
     [string]$LocalDir = "",
@@ -13,8 +13,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$useSystemWide = $SystemWide -or $isAdmin
+
 if ([string]::IsNullOrWhiteSpace($InstallDir)) {
-    if ($SystemWide) {
+    if ($useSystemWide) {
         $InstallDir = Join-Path $env:ProgramFiles "SkullsAndBones\bin"
     } else {
         $InstallDir = Join-Path $env:LOCALAPPDATA "SkullsAndBones\bin"
@@ -44,7 +47,7 @@ if (-not [string]::IsNullOrWhiteSpace($LocalDir)) {
     Remove-Item -Force -ErrorAction SilentlyContinue $tmpZip
 }
 
-$scope = if ($SystemWide) { "Machine" } else { "User" }
+$scope = if ($useSystemWide) { "Machine" } else { "User" }
 $currentPath = [Environment]::GetEnvironmentVariable("Path", $scope)
 $entries = ($currentPath -split ";") | Where-Object { $_ -ne "" }
 if ($entries -notcontains $InstallDir) {
