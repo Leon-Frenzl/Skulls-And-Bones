@@ -357,18 +357,41 @@ pub fn update_service(repo_dir: &Path, dry_run: bool) -> Result<String, String> 
         let _ = std::process::Command::new("sc.exe")
             .args(["stop", SERVICE_NAME])
             .output();
-        for _ in 0..30 {
+        let mut stopped = false;
+        for _ in 0..10 {
             let q = std::process::Command::new("sc.exe")
                 .args(["query", SERVICE_NAME])
                 .output();
             if let Ok(out) = q {
                 if String::from_utf8_lossy(&out.stdout).contains("STOPPED") {
+                    stopped = true;
                     break;
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        if !stopped {
+            if let Ok(qex) = std::process::Command::new("sc.exe")
+                .args(["queryex", SERVICE_NAME])
+                .output()
+            {
+                let text = String::from_utf8_lossy(&qex.stdout);
+                for line in text.lines() {
+                    if let Some(rest) = line.trim().strip_prefix("PID") {
+                        if let Some(pid_str) = rest.split(':').nth(1) {
+                            let pid = pid_str.trim();
+                            if !pid.is_empty() && pid != "0" {
+                                let _ = std::process::Command::new("taskkill")
+                                    .args(["/F", "/PID", pid])
+                                    .output();
+                                std::thread::sleep(std::time::Duration::from_millis(800));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(400));
     }
     #[cfg(target_os = "linux")]
     {
