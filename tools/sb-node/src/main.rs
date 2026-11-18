@@ -5761,13 +5761,22 @@ async fn run_agent_pty_session(
     let writer = Arc::new(std::sync::Mutex::new(writer));
 
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+    let writer_cpr = Arc::clone(&writer);
     std::thread::spawn(move || {
         let mut buf = [0u8; 16 * 1024];
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if out_tx.blocking_send(buf[..n].to_vec()).is_err() {
+                    let chunk = &buf[..n];
+                    // Windows ConPTY sends ESC[6n (CPR) on startup and blocks until ESC[1;1R arrives.
+                    if chunk.windows(4).any(|w| w == b"\x1b[6n") {
+                        if let Ok(mut w) = writer_cpr.lock() {
+                            let _ = w.write_all(b"\x1b[1;1R");
+                            let _ = w.flush();
+                        }
+                    }
+                    if out_tx.blocking_send(chunk.to_vec()).is_err() {
                         break;
                     }
                 }

@@ -36,6 +36,7 @@ export function XtermTerminal({
   onStatus,
 }: XtermTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const termRef = useRef<Terminal | null>(null);
   const [connState, setConnState] = useState<"connecting" | "connected" | "closed" | "error">(
     "connecting"
   );
@@ -70,6 +71,7 @@ export function XtermTerminal({
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(el);
+    termRef.current = term;
     fitAddon.fit();
     term.focus();
 
@@ -155,7 +157,14 @@ export function XtermTerminal({
       term.writeln(
         `\x1b[32m✓ Verbunden als ${openData.ssh_user}@${openData.fqdn} (${openData.cols}x${openData.rows})\x1b[0m\r\n`
       );
-      term.focus();
+      setTimeout(() => {
+        try {
+          fitAddon.fit();
+          term.focus();
+        } catch {
+          // ignore
+        }
+      }, 60);
 
       while (!cancelled) {
         try {
@@ -229,6 +238,8 @@ export function XtermTerminal({
       </div>
       <div
         ref={hostRef}
+        onClick={() => termRef.current?.focus()}
+        onPointerDown={() => setTimeout(() => termRef.current?.focus(), 0)}
         style={{
           flex: 1,
           width: "100%",
@@ -236,6 +247,7 @@ export function XtermTerminal({
           background: "#090d12",
           padding: 6,
           overflow: "hidden",
+          cursor: "text",
         }}
       />
     </div>

@@ -1137,4 +1137,63 @@ mod tests {
         assert_eq!(err.0, 404);
         let _ = fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn portable_pty_spawns_shell_with_timeout() {
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+        use std::io::{Read, Write};
+
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("openpty");
+        let cmd = if cfg!(windows) {
+            let mut c = CommandBuilder::new("cmd.exe");
+            c.arg("/K");
+            c
+        } else {
+            CommandBuilder::new("sh")
+        };
+        let mut child = pair.slave.spawn_command(cmd).expect("spawn");
+        drop(pair.slave);
+        let mut reader = pair.master.try_clone_reader().expect("reader");
+        let mut writer = pair.master.take_writer().expect("writer");
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let _ = tx.send(buf[..n].to_vec());
+                    }
+                }
+            }
+        });
+
+        writer.write_all(b"\x1b[1;1Recho PTY_OK\r\n").expect("write");
+        writer.flush().expect("flush");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+        let mut out = Vec::new();
+        while std::time::Instant::now() < deadline {
+            if let Ok(chunk) = rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                out.extend_from_slice(&chunk);
+                if String::from_utf8_lossy(&out).contains("PTY_OK") {
+                    break;
+                }
+            }
+        }
+        let _ = child.kill();
+        drop(writer);
+        drop(pair.master);
+        let text = String::from_utf8_lossy(&out);
+        assert!(text.contains("PTY_OK"), "unexpected pty output: {text:?}");
+    }
 }
