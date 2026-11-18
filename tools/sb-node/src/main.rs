@@ -5806,12 +5806,20 @@ async fn run_agent_pty_session(
     let mid_out = machine_id.clone();
     let pid_out = pty_id.clone();
     let out_task = tokio::spawn(async move {
-        while let Some(chunk) = out_rx.recv().await {
+        while let Some(mut batch) = out_rx.recv().await {
+            // Coalesce rapid ConPTY output chunks (e.g. prompt + ANSI escapes) into one HTTPS push.
+            tokio::time::sleep(Duration::from_millis(8)).await;
+            while batch.len() < 32 * 1024 {
+                match out_rx.try_recv() {
+                    Ok(more) => batch.extend_from_slice(&more),
+                    Err(_) => break,
+                }
+            }
             let Ok(tok) = ensure_fresh_machine_token(&dc_out, false).await else {
                 break;
             };
             if let Err(e) = domain_join::agent_push_pty_output(
-                &dc_out, &tok, &mid_out, &pid_out, &chunk, false,
+                &dc_out, &tok, &mid_out, &pid_out, &batch, false,
             )
             .await
             {

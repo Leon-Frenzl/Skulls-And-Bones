@@ -3699,14 +3699,20 @@ pub async fn send_endpoint_request_with_bearer(
     .map_err(|e| format!("Failed to connect to Domain Controller {addr_str}: {e}"))?;
 
     if use_tls {
-        let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
-        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let tls_cfg = Arc::new(
-            tokio_rustls::rustls::ClientConfig::builder()
-                .with_root_certificates(root_store)
-                .with_no_client_auth(),
-        );
-        let connector = tokio_rustls::TlsConnector::from(tls_cfg);
+        static TLS_CONNECTOR: std::sync::OnceLock<tokio_rustls::TlsConnector> =
+            std::sync::OnceLock::new();
+        let connector = TLS_CONNECTOR
+            .get_or_init(|| {
+                let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
+                root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+                let tls_cfg = Arc::new(
+                    tokio_rustls::rustls::ClientConfig::builder()
+                        .with_root_certificates(root_store)
+                        .with_no_client_auth(),
+                );
+                tokio_rustls::TlsConnector::from(tls_cfg)
+            })
+            .clone();
         let server_name = rustls_pki_types::ServerName::try_from(host.clone())
             .map_err(|e| format!("Invalid TLS server name '{host}': {e}"))?;
         let tls_stream = connector
