@@ -3060,16 +3060,15 @@ async fn handle_join_http_connection(
 
         if path.starts_with("/v1/machines/") && path.contains("/relay/pty/") {
             let rest = path.trim_start_matches("/v1/machines/");
-            let Some((machine_id, tail)) = rest.split_once("/relay/pty/") else {
+            let Some((_machine_id, tail)) = rest.split_once("/relay/pty/") else {
                 return write_http_json(stream, 404, "Not Found", r#"{"error":"not found"}"#).await;
             };
-            let expected_subject = format!("machine:{machine_id}");
-            if claims.subject != expected_subject && !claims.has_role("admin") {
+            if !claims.has_capability("domain:join") && !claims.has_role("admin") {
                 return write_http_json(
                     stream,
                     403,
                     "Forbidden",
-                    r#"{"error":"agent pty relay forbidden for subject"}"#,
+                    r#"{"error":"token lacks domain:join or admin"}"#,
                 )
                 .await;
             }
@@ -3187,16 +3186,15 @@ async fn handle_join_http_connection(
 
         if path.starts_with("/v1/machines/") && path.contains("/relay/tunnel/") {
             let rest = path.trim_start_matches("/v1/machines/");
-            let Some((machine_id, tail)) = rest.split_once("/relay/tunnel/") else {
+            let Some((_machine_id, tail)) = rest.split_once("/relay/tunnel/") else {
                 return write_http_json(stream, 404, "Not Found", r#"{"error":"not found"}"#).await;
             };
-            let expected_subject = format!("machine:{machine_id}");
-            if claims.subject != expected_subject && !claims.has_role("admin") {
+            if !claims.has_capability("domain:join") && !claims.has_role("admin") {
                 return write_http_json(
                     stream,
                     403,
                     "Forbidden",
-                    r#"{"error":"agent tunnel relay forbidden for subject"}"#,
+                    r#"{"error":"token lacks domain:join or admin"}"#,
                 )
                 .await;
             }

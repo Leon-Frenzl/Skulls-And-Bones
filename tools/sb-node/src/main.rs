@@ -5698,26 +5698,39 @@ async fn run_agent_pty_session(
     use portable_pty::{native_pty_system, CommandBuilder, PtySize};
     use std::io::{Read, Write};
 
+    let pty_log = |msg: &str| {
+        let p = sb_core::paths::sb_home().join("pty_agent.log");
+        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p) {
+            let _ = writeln!(f, "[{}] [{pty_id}] {msg}", chrono::Utc::now().to_rfc3339());
+        }
+    };
+    pty_log(&format!("start cols={cols} rows={rows} dc={dc_endpoint}"));
+
     let pty_system = native_pty_system();
-    let Ok(pair) = pty_system.openpty(PtySize {
+    let pair = match pty_system.openpty(PtySize {
         rows: rows.clamp(5, 200),
         cols: cols.clamp(20, 400),
         pixel_width: 0,
         pixel_height: 0,
-    }) else {
-        if let Ok(tok) = ensure_fresh_machine_token(&dc_endpoint, false).await {
-            let _ = domain_join::agent_push_pty_output(
-                &dc_endpoint,
-                &tok,
-                &machine_id,
-                &pty_id,
-                b"\r\n[PTY error: openpty failed]\r\n",
-                true,
-            )
-            .await;
+    }) {
+        Ok(p) => p,
+        Err(e) => {
+            pty_log(&format!("openpty failed: {e}"));
+            if let Ok(tok) = ensure_fresh_machine_token(&dc_endpoint, false).await {
+                let _ = domain_join::agent_push_pty_output(
+                    &dc_endpoint,
+                    &tok,
+                    &machine_id,
+                    &pty_id,
+                    format!("\r\n[PTY error: openpty failed: {e}]\r\n").as_bytes(),
+                    true,
+                )
+                .await;
+            }
+            return;
         }
-        return;
     };
+    pty_log("openpty ok");
 
     let mut cmd = if cfg!(windows) {
         let mut c = CommandBuilder::new("powershell.exe");
@@ -5733,20 +5746,25 @@ async fn run_agent_pty_session(
         }
     }
 
-    let Ok(mut child) = pair.slave.spawn_command(cmd) else {
-        if let Ok(tok) = ensure_fresh_machine_token(&dc_endpoint, false).await {
-            let _ = domain_join::agent_push_pty_output(
-                &dc_endpoint,
-                &tok,
-                &machine_id,
-                &pty_id,
-                b"\r\n[PTY error: spawn shell failed]\r\n",
-                true,
-            )
-            .await;
+    let mut child = match pair.slave.spawn_command(cmd) {
+        Ok(c) => c,
+        Err(e) => {
+            pty_log(&format!("spawn failed: {e}"));
+            if let Ok(tok) = ensure_fresh_machine_token(&dc_endpoint, false).await {
+                let _ = domain_join::agent_push_pty_output(
+                    &dc_endpoint,
+                    &tok,
+                    &machine_id,
+                    &pty_id,
+                    format!("\r\n[PTY error: spawn shell failed: {e}]\r\n").as_bytes(),
+                    true,
+                )
+                .await;
+            }
+            return;
         }
-        return;
     };
+    pty_log("spawn ok");
     drop(pair.slave);
 
     let Ok(mut reader) = pair.master.try_clone_reader() else {
@@ -5792,10 +5810,15 @@ async fn run_agent_pty_session(
             let Ok(tok) = ensure_fresh_machine_token(&dc_out, false).await else {
                 break;
             };
-            if domain_join::agent_push_pty_output(&dc_out, &tok, &mid_out, &pid_out, &chunk, false)
-                .await
-                .is_err()
+            if let Err(e) = domain_join::agent_push_pty_output(
+                &dc_out, &tok, &mid_out, &pid_out, &chunk, false,
+            )
+            .await
             {
+                let p = sb_core::paths::sb_home().join("pty_agent.log");
+                if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p) {
+                    let _ = writeln!(f, "[{pid_out}] push_output err: {e}");
+                }
                 break;
             }
         }
@@ -5839,7 +5862,13 @@ async fn run_agent_pty_session(
                         break;
                     }
                 }
-                Err(_) => break,
+                Err(e) => {
+                    let p = sb_core::paths::sb_home().join("pty_agent.log");
+                    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p) {
+                        let _ = writeln!(f, "[{pid_in}] pull_input err: {e}");
+                    }
+                    break;
+                }
             }
         }
     });
