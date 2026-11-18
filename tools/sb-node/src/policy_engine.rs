@@ -754,6 +754,10 @@ pub fn render_windows_gpo_ps(
     }
 
     if has_ssh_hardening {
+        lines.push("if (-not (Get-Service -Name 'sshd' -ErrorAction SilentlyContinue)) { Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' -ErrorAction SilentlyContinue | Out-Null }".to_string());
+        lines.push("if (Get-Service -Name 'sshd' -ErrorAction SilentlyContinue) { Set-Service -Name 'sshd' -StartupType Automatic; Start-Service -Name 'sshd' -ErrorAction SilentlyContinue }".to_string());
+        lines.push("$sshdCfg = 'C:\\ProgramData\\ssh\\sshd_config'".to_string());
+        lines.push("if (Test-Path $sshdCfg) { $rawCfg = Get-Content $sshdCfg -Raw; if ($rawCfg -notmatch '90-sb-gpo\\.conf') { Add-Content -Path $sshdCfg -Value \"`nInclude C:/ProgramData/ssh/sshd_config.d/*.conf\" } }".to_string());
         lines.push("if (Get-Service -Name 'sshd' -ErrorAction SilentlyContinue) { Restart-Service -Name 'sshd' -ErrorAction SilentlyContinue }".to_string());
     }
 

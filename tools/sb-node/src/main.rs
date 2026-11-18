@@ -5220,6 +5220,15 @@ async fn run_agent_loop(
     let clamped_interval = interval_secs.clamp(10, 3600);
     let clamped_laps_days = laps_rotate_days.clamp(1, 90) as i64;
 
+    if !once && !dry_run {
+        let relay_dc = dc.clone();
+        let relay_mid = state.machine_id.clone();
+        let relay_stop = stop_flag.clone();
+        tokio::spawn(async move {
+            run_relay_worker(relay_dc, relay_mid, relay_stop).await;
+        });
+    }
+
     loop {
         if let Some(ref flag) = stop_flag {
             if flag.load(std::sync::atomic::Ordering::SeqCst) {
@@ -5450,6 +5459,74 @@ async fn send_compliance_heartbeat(
         last_seen_at: chrono::Utc::now().to_rfc3339(),
     };
     domain_join::send_remote_heartbeat(dc_endpoint, &token, &hb).await
+}
+
+async fn run_relay_worker(
+    dc_endpoint: String,
+    machine_id: String,
+    stop_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
+) {
+    loop {
+        if let Some(ref flag) = stop_flag {
+            if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
+        }
+        let Some((_, token)) = load_dc_session_credentials() else {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            continue;
+        };
+        match domain_join::poll_remote_relay_command(&dc_endpoint, &token, &machine_id, 20).await {
+            Ok(Some(cmd)) => {
+                let res = execute_local_relay_command(&cmd.command).await;
+                let _ = domain_join::post_remote_relay_result(
+                    &dc_endpoint,
+                    &token,
+                    &machine_id,
+                    &cmd.cmd_id,
+                    &res,
+                )
+                .await;
+            }
+            Ok(None) => {}
+            Err(_) => {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        }
+    }
+}
+
+async fn execute_local_relay_command(command: &str) -> web_ssh::WebSshExecResult {
+    let mut cmd = if cfg!(windows) {
+        let mut c = tokio::process::Command::new("powershell.exe");
+        c.args(["-NoProfile", "-NonInteractive", "-Command", command]);
+        c
+    } else {
+        let mut c = tokio::process::Command::new("sh");
+        c.args(["-c", command]);
+        c
+    };
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    match tokio::time::timeout(Duration::from_secs(12), cmd.output()).await {
+        Ok(Ok(out)) => web_ssh::WebSshExecResult {
+            exit_code: out.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+        },
+        Ok(Err(e)) => web_ssh::WebSshExecResult {
+            exit_code: -1,
+            stdout: String::new(),
+            stderr: format!("Local execution failed: {e}"),
+        },
+        Err(_) => web_ssh::WebSshExecResult {
+            exit_code: -1,
+            stdout: String::new(),
+            stderr: "Local command timed out (12s)".to_string(),
+        },
+    }
 }
 
 fn handle_member_commands(sub: MemberCommands) {

@@ -2583,6 +2583,10 @@ async fn handle_join_http_connection(
     }
 
     if (method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/ssh/session"))
+        || (method == "GET" && path.starts_with("/v1/machines/") && path.ends_with("/relay/poll"))
+        || (method == "POST"
+            && path.starts_with("/v1/machines/")
+            && path.ends_with("/relay/result"))
         || path.starts_with("/v1/ssh/sessions/")
     {
         let Some(token) = extract_bearer_token(&header_lines) else {
@@ -2607,6 +2611,68 @@ async fn handle_join_http_connection(
             .map(PathBuf::from)
             .unwrap_or_else(local_domain_dir);
         let audit_path = base_dir.join("audit.jsonl");
+
+        if method == "GET" && path.starts_with("/v1/machines/") && path.ends_with("/relay/poll") {
+            let machine_id = path
+                .trim_start_matches("/v1/machines/")
+                .trim_end_matches("/relay/poll");
+            if !claims.has_capability("domain:join") && !claims.has_role("admin") {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"token lacks domain:join or admin"}"#,
+                )
+                .await;
+            }
+            let wait_secs: u64 = query_param(query, "wait")
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(20)
+                .min(25);
+            let cmd = crate::web_ssh::poll_relay_command(machine_id, wait_secs).await;
+            let json = serde_json::json!({ "command": cmd }).to_string();
+            return write_http_json(stream, 200, "OK", &json).await;
+        }
+
+        if method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/relay/result")
+        {
+            if !claims.has_capability("domain:join") && !claims.has_role("admin") {
+                return write_http_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    r#"{"error":"token lacks domain:join or admin"}"#,
+                )
+                .await;
+            }
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let payload: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            let cmd_id = payload.get("cmd_id").and_then(|v| v.as_str()).unwrap_or("");
+            let result = crate::web_ssh::WebSshExecResult {
+                exit_code: payload
+                    .get("exit_code")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(-1) as i32,
+                stdout: payload
+                    .get("stdout")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                stderr: payload
+                    .get("stderr")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            };
+            let recorded = crate::web_ssh::submit_relay_result(cmd_id, result).await;
+            let json = serde_json::json!({ "recorded": recorded }).to_string();
+            return write_http_json(stream, 200, "OK", &json).await;
+        }
 
         if method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/ssh/session") {
             let machine_id = path
@@ -3174,6 +3240,48 @@ pub async fn upload_rotated_laps_to_dc(
     })
     .to_string();
     send_endpoint_request_with_bearer(dc_endpoint, "PUT", &path, Some(&body), Some(bearer_token))
+        .await?;
+    Ok(())
+}
+
+/// Long-polls the DC for a queued Web SSH relay command (`GET /v1/machines/<id>/relay/poll`).
+pub async fn poll_remote_relay_command(
+    dc_endpoint: &str,
+    bearer_token: &str,
+    machine_id: &str,
+    wait_secs: u64,
+) -> Result<Option<crate::web_ssh::RelayCommand>, String> {
+    let path = format!("/v1/machines/{machine_id}/relay/poll?wait={wait_secs}");
+    let bytes =
+        send_endpoint_request_with_bearer(dc_endpoint, "GET", &path, None, Some(bearer_token))
+            .await?;
+    let val: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| format!("Invalid relay poll response: {e}"))?;
+    match val.get("command") {
+        Some(v) if !v.is_null() => serde_json::from_value(v.clone())
+            .map(Some)
+            .map_err(|e| format!("Invalid relay command JSON: {e}")),
+        _ => Ok(None),
+    }
+}
+
+/// Posts the local execution result of a relayed command back to the DC.
+pub async fn post_remote_relay_result(
+    dc_endpoint: &str,
+    bearer_token: &str,
+    machine_id: &str,
+    cmd_id: &str,
+    result: &crate::web_ssh::WebSshExecResult,
+) -> Result<(), String> {
+    let path = format!("/v1/machines/{machine_id}/relay/result");
+    let body = serde_json::json!({
+        "cmd_id": cmd_id,
+        "exit_code": result.exit_code,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    })
+    .to_string();
+    send_endpoint_request_with_bearer(dc_endpoint, "POST", &path, Some(&body), Some(bearer_token))
         .await?;
     Ok(())
 }

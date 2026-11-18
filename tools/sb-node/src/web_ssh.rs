@@ -6,14 +6,14 @@
 
 use chrono::{DateTime, Duration, Utc};
 use sb_auth::claims::SovereignClaims;
-use serde::Serialize;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 
 #[derive(Debug, Clone)]
 pub struct WebSshSession {
@@ -43,17 +43,136 @@ pub struct WebSshSessionInfo {
     pub cli_fallback: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSshExecResult {
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayCommand {
+    pub cmd_id: String,
+    pub session_id: String,
+    pub ssh_user: String,
+    pub command: String,
+}
+
+#[derive(Debug, Default)]
+struct MachineRelayQueue {
+    last_poll_at: Option<DateTime<Utc>>,
+    queue: VecDeque<RelayCommand>,
+    notify: Arc<Notify>,
+}
+
 static SESSIONS: OnceLock<Arc<RwLock<HashMap<String, WebSshSession>>>> = OnceLock::new();
+static RELAY_QUEUES: OnceLock<Arc<RwLock<HashMap<String, MachineRelayQueue>>>> = OnceLock::new();
+static RELAY_RESULTS: OnceLock<
+    Arc<RwLock<HashMap<String, (Arc<Notify>, Option<WebSshExecResult>)>>>,
+> = OnceLock::new();
 
 fn session_store() -> &'static Arc<RwLock<HashMap<String, WebSshSession>>> {
     SESSIONS.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
+}
+
+fn relay_queues() -> &'static Arc<RwLock<HashMap<String, MachineRelayQueue>>> {
+    RELAY_QUEUES.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
+}
+
+fn relay_results() -> &'static Arc<RwLock<HashMap<String, (Arc<Notify>, Option<WebSshExecResult>)>>>
+{
+    RELAY_RESULTS.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
+}
+
+async fn is_relay_online(machine_id: &str) -> bool {
+    let guard = relay_queues().read().await;
+    guard
+        .get(machine_id)
+        .and_then(|q| q.last_poll_at)
+        .map(|ts| Utc::now() - ts < Duration::seconds(90))
+        .unwrap_or(false)
+}
+
+/// Long-polls for the next authorized Web SSH command queued for `machine_id`.
+pub async fn poll_relay_command(machine_id: &str, wait_secs: u64) -> Option<RelayCommand> {
+    let wait = wait_secs.min(25);
+    let notify = {
+        let mut guard = relay_queues().write().await;
+        let entry = guard.entry(machine_id.to_string()).or_default();
+        entry.last_poll_at = Some(Utc::now());
+        if let Some(cmd) = entry.queue.pop_front() {
+            return Some(cmd);
+        }
+        Arc::clone(&entry.notify)
+    };
+
+    if wait == 0 {
+        return None;
+    }
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(wait), notify.notified()).await;
+
+    let mut guard = relay_queues().write().await;
+    let entry = guard.entry(machine_id.to_string()).or_default();
+    entry.last_poll_at = Some(Utc::now());
+    entry.queue.pop_front()
+}
+
+/// Records the execution result of a relayed command and wakes the waiting Web Console call.
+pub async fn submit_relay_result(cmd_id: &str, result: WebSshExecResult) -> bool {
+    let notify_opt = {
+        let mut guard = relay_results().write().await;
+        if let Some((notify, slot)) = guard.get_mut(cmd_id) {
+            *slot = Some(result);
+            Some(Arc::clone(notify))
+        } else {
+            None
+        }
+    };
+    if let Some(notify) = notify_opt {
+        notify.notify_one();
+        true
+    } else {
+        false
+    }
+}
+
+async fn exec_via_relay(
+    machine_id: &str,
+    session_id: &str,
+    ssh_user: &str,
+    command: &str,
+) -> Result<WebSshExecResult, (u16, String)> {
+    let cmd_id = format!("rcmd_{:016x}", rand::random::<u64>());
+    let res_notify = Arc::new(Notify::new());
+    {
+        let mut res_guard = relay_results().write().await;
+        res_guard.insert(cmd_id.clone(), (Arc::clone(&res_notify), None));
+    }
+
+    let q_notify = {
+        let mut q_guard = relay_queues().write().await;
+        let entry = q_guard.entry(machine_id.to_string()).or_default();
+        entry.queue.push_back(RelayCommand {
+            cmd_id: cmd_id.clone(),
+            session_id: session_id.to_string(),
+            ssh_user: ssh_user.to_string(),
+            command: command.to_string(),
+        });
+        Arc::clone(&entry.notify)
+    };
+    q_notify.notify_one();
+
+    let wait_res =
+        tokio::time::timeout(std::time::Duration::from_secs(15), res_notify.notified()).await;
+    let mut res_guard = relay_results().write().await;
+    let removed = res_guard.remove(&cmd_id).and_then(|(_, r)| r);
+    match (wait_res, removed) {
+        (Ok(_), Some(r)) => Ok(r),
+        _ => Err((
+            504,
+            "HTTPS-Relay Zeitüberschreitung (15s) — Agent hat nicht geantwortet".into(),
+        )),
+    }
 }
 
 /// Validates an SSH target username (`1..=32` safe ASCII characters).
@@ -286,6 +405,16 @@ pub async fn exec_web_ssh_command(
         }
         s.clone()
     };
+
+    if is_relay_online(&session.machine_id).await {
+        return exec_via_relay(
+            &session.machine_id,
+            &session.session_id,
+            &session.ssh_user,
+            trimmed,
+        )
+        .await;
+    }
 
     let target = format!("{}@{}", session.ssh_user, session.mesh_ip);
     let cert_opt = format!("CertificateFile={}", session.cert_path.display());
