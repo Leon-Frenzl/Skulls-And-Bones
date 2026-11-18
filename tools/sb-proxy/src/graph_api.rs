@@ -334,13 +334,22 @@ async fn handle_graph_request(
         || uri_path.starts_with("/v1/ssh")
         || uri_path.starts_with("/v1/tunnels")
     {
+        let target_path = match &query {
+            Some(q) if !q.is_empty() => format!("{uri_path}?{q}"),
+            _ => uri_path.clone(),
+        };
+        if req
+            .headers()
+            .get(hyper::header::UPGRADE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.eq_ignore_ascii_case("websocket"))
+            .unwrap_or(false)
+        {
+            return forward_ws_upgrade_to_dc(config.dc_addr, &target_path, req).await;
+        }
         let body_bytes = match collect_bounded_body(req.into_body()).await {
             Ok(b) => b,
             Err(resp) => return Ok(resp),
-        };
-        let target_path = match &query {
-            Some(q) if !q.is_empty() => format!("{uri_path}?{q}"),
-            _ => uri_path,
         };
         return match forward_to_dc(
             config.dc_addr,
@@ -389,6 +398,136 @@ async fn collect_bounded_body(body: Incoming) -> Result<Vec<u8>, Response<Full<B
         ));
     }
     Ok(bytes.to_vec())
+}
+
+async fn forward_ws_upgrade_to_dc(
+    dc_addr: SocketAddr,
+    target_path: &str,
+    req: Request<Incoming>,
+) -> Result<Response<Full<Bytes>>, hyper::Error> {
+    let ws_key = req
+        .headers()
+        .get("sec-websocket-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let ws_ver = req
+        .headers()
+        .get("sec-websocket-version")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("13")
+        .to_string();
+    let auth = req
+        .headers()
+        .get(hyper::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+
+    let mut dc_stream = match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        TcpStream::connect(dc_addr),
+    )
+    .await
+    {
+        Ok(Ok(s)) => {
+            let _ = s.set_nodelay(true);
+            s
+        }
+        _ => {
+            return Ok(json_response(
+                StatusCode::BAD_GATEWAY,
+                r#"{"error":"failed to connect to DC for WebSocket"}"#,
+            ));
+        }
+    };
+
+    let mut upgrade_req = format!(
+        "GET {target_path} HTTP/1.1\r\nHost: {dc_addr}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: {ws_key}\r\nSec-WebSocket-Version: {ws_ver}\r\n"
+    );
+    if let Some(ref a) = auth {
+        upgrade_req.push_str(&format!("Authorization: {a}\r\n"));
+    }
+    upgrade_req.push_str("\r\n");
+
+    if dc_stream.write_all(upgrade_req.as_bytes()).await.is_err() {
+        return Ok(json_response(
+            StatusCode::BAD_GATEWAY,
+            r#"{"error":"failed writing WebSocket upgrade to DC"}"#,
+        ));
+    }
+
+    let mut resp_buf = Vec::with_capacity(2048);
+    let mut tmp = [0u8; 1024];
+    let header_end = loop {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), dc_stream.read(&mut tmp))
+            .await
+        {
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => {
+                return Ok(json_response(
+                    StatusCode::BAD_GATEWAY,
+                    r#"{"error":"DC closed during WebSocket handshake"}"#,
+                ));
+            }
+            Ok(Ok(n)) => {
+                resp_buf.extend_from_slice(&tmp[..n]);
+                if let Some(pos) = resp_buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break pos;
+                }
+                if resp_buf.len() > 16 * 1024 {
+                    return Ok(json_response(
+                        StatusCode::BAD_GATEWAY,
+                        r#"{"error":"DC WebSocket handshake headers too large"}"#,
+                    ));
+                }
+            }
+        }
+    };
+
+    let header_str = String::from_utf8_lossy(&resp_buf[..header_end]);
+    let status_line = header_str.lines().next().unwrap_or("");
+    if !status_line.contains(" 101 ") {
+        let code = status_line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse::<u16>().ok())
+            .and_then(|c| StatusCode::from_u16(c).ok())
+            .unwrap_or(StatusCode::BAD_GATEWAY);
+        return Ok(json_response(
+            code,
+            r#"{"error":"WebSocket upgrade rejected by DC"}"#,
+        ));
+    }
+
+    let mut accept_val = String::new();
+    for line in header_str.lines().skip(1) {
+        if let Some((k, v)) = line.split_once(':') {
+            if k.trim().eq_ignore_ascii_case("sec-websocket-accept") {
+                accept_val = v.trim().to_string();
+            }
+        }
+    }
+    let leftover = resp_buf[header_end + 4..].to_vec();
+
+    tokio::spawn(async move {
+        if let Ok(upgraded) = hyper::upgrade::on(req).await {
+            let mut client_io = hyper_util::rt::TokioIo::new(upgraded);
+            if !leftover.is_empty() {
+                let _ = client_io.write_all(&leftover).await;
+            }
+            let _ = tokio::io::copy_bidirectional(&mut client_io, &mut dc_stream).await;
+        }
+    });
+
+    let mut builder = Response::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header(hyper::header::CONNECTION, "Upgrade")
+        .header(hyper::header::UPGRADE, "websocket");
+    if !accept_val.is_empty() {
+        builder = builder.header("Sec-WebSocket-Accept", accept_val);
+    }
+    Ok(builder
+        .body(Full::new(Bytes::new()))
+        .unwrap_or_else(|_| json_response(StatusCode::INTERNAL_SERVER_ERROR, "{}")))
 }
 
 async fn forward_to_dc(

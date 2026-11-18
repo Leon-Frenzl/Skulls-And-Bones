@@ -77,11 +77,20 @@ export function XtermTerminal({
 
     let cancelled = false;
     let ptyId = "";
+    let wsConn: WebSocket | null = null;
     const encoder = new TextEncoder();
 
     let pendingInput = "";
     let flushing = false;
     const flushInput = async () => {
+      if (wsConn && wsConn.readyState === WebSocket.OPEN) {
+        if (pendingInput) {
+          const chunk = pendingInput;
+          pendingInput = "";
+          wsConn.send(encoder.encode(chunk));
+        }
+        return;
+      }
       if (flushing || !ptyId || !pendingInput || cancelled) return;
       flushing = true;
       try {
@@ -101,6 +110,10 @@ export function XtermTerminal({
     };
 
     const dataSub = term.onData((data) => {
+      if (wsConn && wsConn.readyState === WebSocket.OPEN) {
+        wsConn.send(encoder.encode(data));
+        return;
+      }
       pendingInput += data;
       if (!flushing) {
         void flushInput();
@@ -114,7 +127,9 @@ export function XtermTerminal({
     const resizeObserver = new ResizeObserver(() => {
       try {
         fitAddon.fit();
-        if (ptyId && !cancelled) {
+        if (wsConn && wsConn.readyState === WebSocket.OPEN) {
+          wsConn.send(JSON.stringify({ resize: { cols: term.cols, rows: term.rows } }));
+        } else if (ptyId && !cancelled) {
           void fetch(`/v1/ssh/pty/${encodeURIComponent(ptyId)}/input`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -168,6 +183,51 @@ export function XtermTerminal({
         }
       }, 60);
 
+      const authHeader = authHeaders()["Authorization"] || authHeaders()["authorization"] || "";
+      const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
+      const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${wsProto}//${window.location.host}/v1/ssh/pty/${encodeURIComponent(ptyId)}/ws?token=${encodeURIComponent(bearer)}`;
+
+      const wsWorked = await new Promise<boolean>((resolve) => {
+        let opened = false;
+        const ws = new WebSocket(wsUrl);
+        ws.binaryType = "arraybuffer";
+        wsConn = ws;
+
+        ws.onopen = () => {
+          opened = true;
+          if (pendingInput) {
+            ws.send(encoder.encode(pendingInput));
+            pendingInput = "";
+          }
+          ws.send(JSON.stringify({ resize: { cols: term.cols, rows: term.rows } }));
+        };
+        ws.onmessage = (ev) => {
+          if (ev.data instanceof ArrayBuffer) {
+            term.write(new Uint8Array(ev.data));
+          } else if (typeof ev.data === "string") {
+            term.write(ev.data);
+          }
+        };
+        ws.onerror = () => {
+          if (!opened) resolve(false);
+        };
+        ws.onclose = () => {
+          if (!opened) {
+            wsConn = null;
+            resolve(false);
+            return;
+          }
+          if (!cancelled) {
+            setConnState("closed");
+            term.writeln(`\r\n\x1b[33m[Shell beendet]\x1b[0m`);
+          }
+          resolve(true);
+        };
+      });
+
+      if (wsWorked || cancelled) return;
+
       while (!cancelled) {
         try {
           const pullResp = await fetch(
@@ -205,6 +265,13 @@ export function XtermTerminal({
       dataSub.dispose();
       titleSub.dispose();
       resizeObserver.disconnect();
+      if (wsConn) {
+        try {
+          wsConn.close();
+        } catch {
+          // ignore
+        }
+      }
       if (ptyId) {
         void fetch(`/v1/ssh/pty/${encodeURIComponent(ptyId)}`, {
           method: "DELETE",

@@ -466,7 +466,14 @@ async fn handle_join_http_connection(
     }
 
     if method == "POST" && path == "/v1/auth/code" {
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -838,7 +845,14 @@ async fn handle_join_http_connection(
     }
 
     if method == "POST" && path == "/v1/me/password" {
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -888,7 +902,14 @@ async fn handle_join_http_connection(
     }
 
     if method == "GET" && path == "/v1/auth/userinfo" {
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -940,7 +961,14 @@ async fn handle_join_http_connection(
         let audit_path = base_dir.join("audit.jsonl");
 
         if method == "GET" && path == "/v1/packages" {
-            let Some(token) = extract_bearer_token(&header_lines) else {
+            let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+                if path.ends_with("/ws") {
+                    query_param(query, "token")
+                } else {
+                    None
+                }
+            });
+            let Some(token) = token_opt else {
                 return write_http_json(
                     stream,
                     401,
@@ -964,7 +992,14 @@ async fn handle_join_http_connection(
             return write_http_json(stream, 200, "OK", &json).await;
         }
 
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -1125,7 +1160,14 @@ async fn handle_join_http_connection(
             || path.ends_with("/laps/reveal")
             || path.ends_with("/laps/rotate-request"))
     {
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -1327,7 +1369,14 @@ async fn handle_join_http_connection(
     }
 
     if method == "GET" && path == "/v1/machines" {
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -1370,7 +1419,14 @@ async fn handle_join_http_connection(
     }
 
     if method == "GET" && path == "/v1/policies" {
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -1466,7 +1522,14 @@ async fn handle_join_http_connection(
 
     if method == "DELETE" && path.starts_with("/v1/policies/") {
         let policy_id = path.trim_start_matches("/v1/policies/");
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -1536,7 +1599,14 @@ async fn handle_join_http_connection(
 
     if method == "PUT" && path.starts_with("/v1/policies/") {
         let policy_id = path.trim_start_matches("/v1/policies/");
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -1650,7 +1720,14 @@ async fn handle_join_http_connection(
     }
 
     if method == "GET" && path == "/v1/audit/events" {
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -1703,7 +1780,14 @@ async fn handle_join_http_connection(
         let username = path
             .trim_start_matches("/v1/users/")
             .trim_end_matches("/offboard");
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -1761,7 +1845,14 @@ async fn handle_join_http_connection(
         || path.starts_with("/v1/rbac/rules")
         || path.starts_with("/v1/apps")
     {
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -1988,7 +2079,14 @@ async fn handle_join_http_connection(
     }
 
     if path.starts_with("/v1/me/vault") || path.starts_with("/v1/vault/team") {
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -2288,7 +2386,14 @@ async fn handle_join_http_connection(
         || (method == "PUT" && path == "/v1/me/ssh-key")
         || (method == "POST" && path == "/v1/me/ssh-cert")
     {
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -2456,7 +2561,14 @@ async fn handle_join_http_connection(
     }
 
     if method == "GET" && (path == "/v1/users" || path == "/v1/groups") {
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -2507,7 +2619,14 @@ async fn handle_join_http_connection(
         let username = path
             .trim_start_matches("/v1/users/")
             .trim_end_matches("/ssh-cert");
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -2581,7 +2700,14 @@ async fn handle_join_http_connection(
 
     if (method == "PUT" || method == "DELETE") && path.starts_with("/v1/users/") {
         let username = path.trim_start_matches("/v1/users/");
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -2705,6 +2831,9 @@ async fn handle_join_http_connection(
 
     if (method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/ssh/session"))
         || (method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/ssh/pty"))
+        || (method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/files/list"))
+        || (method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/files/read"))
+        || (method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/files/write"))
         || (method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/tunnel/open"))
         || (method == "GET" && path.starts_with("/v1/machines/") && path.ends_with("/relay/poll"))
         || (method == "POST"
@@ -2716,7 +2845,14 @@ async fn handle_join_http_connection(
         || path.starts_with("/v1/ssh/pty/")
         || path.starts_with("/v1/tunnels/")
     {
-        let Some(token) = extract_bearer_token(&header_lines) else {
+        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
+            if path.ends_with("/ws") {
+                query_param(query, "token")
+            } else {
+                None
+            }
+        });
+        let Some(token) = token_opt else {
             return write_http_json(
                 stream,
                 401,
@@ -2966,8 +3102,49 @@ async fn handle_join_http_connection(
             };
         }
 
+        if method == "POST"
+            && path.starts_with("/v1/machines/")
+            && (path.ends_with("/files/list")
+                || path.ends_with("/files/read")
+                || path.ends_with("/files/write"))
+        {
+            let (machine_id, kind) = if let Some(m) = path.strip_suffix("/files/list") {
+                (m.trim_start_matches("/v1/machines/"), "file_list")
+            } else if let Some(m) = path.strip_suffix("/files/read") {
+                (m.trim_start_matches("/v1/machines/"), "file_read")
+            } else {
+                let m = path.strip_suffix("/files/write").unwrap_or("");
+                (m.trim_start_matches("/v1/machines/"), "file_write")
+            };
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let body_str = String::from_utf8_lossy(&body).into_owned();
+            return match crate::web_ssh::exec_relay_file_op(
+                &claims, machine_id, kind, &body_str, &base_dir,
+            )
+            .await
+            {
+                Ok(val) => {
+                    let json = val.to_string();
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err((code, err)) => {
+                    let msg = serde_json::json!({ "error": err }).to_string();
+                    write_http_json(stream, code, "Error", &msg).await
+                }
+            };
+        }
+
         if path.starts_with("/v1/ssh/pty/") {
             let tail = path.trim_start_matches("/v1/ssh/pty/");
+            if method == "GET" && tail.ends_with("/ws") {
+                let pid = tail.trim_end_matches("/ws");
+                return handle_browser_pty_ws(stream, &header_lines, &claims, pid).await;
+            }
             if method == "POST" && tail.ends_with("/input") {
                 let pid = tail.trim_end_matches("/input");
                 let body =
@@ -3071,6 +3248,10 @@ async fn handle_join_http_connection(
                     r#"{"error":"token lacks domain:join or admin"}"#,
                 )
                 .await;
+            }
+            if method == "GET" && tail.ends_with("/ws") {
+                let pid = tail.trim_end_matches("/ws");
+                return handle_agent_pty_ws(stream, &header_lines, &claims, pid).await;
             }
             if method == "POST" && tail.ends_with("/output") {
                 let pid = tail.trim_end_matches("/output");
@@ -3180,6 +3361,43 @@ async fn handle_join_http_connection(
                         &msg,
                     )
                     .await
+                }
+            };
+        }
+
+        if method == "POST"
+            && path.starts_with("/v1/machines/")
+            && (path.ends_with("/files/list")
+                || path.ends_with("/files/read")
+                || path.ends_with("/files/write"))
+        {
+            let (machine_id, kind) = if let Some(m) = path.strip_suffix("/files/list") {
+                (m.trim_start_matches("/v1/machines/"), "file_list")
+            } else if let Some(m) = path.strip_suffix("/files/read") {
+                (m.trim_start_matches("/v1/machines/"), "file_read")
+            } else {
+                let m = path.strip_suffix("/files/write").unwrap_or("");
+                (m.trim_start_matches("/v1/machines/"), "file_write")
+            };
+            let body = match read_http_body(stream, &mut buf, &mut chunk, header_end, &header_lines)
+                .await?
+            {
+                Some(b) => b,
+                None => return Ok(()),
+            };
+            let body_str = String::from_utf8_lossy(&body).into_owned();
+            return match crate::web_ssh::exec_relay_file_op(
+                &claims, machine_id, kind, &body_str, &base_dir,
+            )
+            .await
+            {
+                Ok(val) => {
+                    let json = val.to_string();
+                    write_http_json(stream, 200, "OK", &json).await
+                }
+                Err((code, err)) => {
+                    let msg = serde_json::json!({ "error": err }).to_string();
+                    write_http_json(stream, code, "Error", &msg).await
                 }
             };
         }
@@ -3983,10 +4201,7 @@ pub struct PersistentDcClient {
     stream: Option<Box<dyn AsyncReadWriteUnpin + Send>>,
 }
 
-pub trait AsyncReadWriteUnpin:
-    tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
-{
-}
+pub trait AsyncReadWriteUnpin: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin {}
 impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> AsyncReadWriteUnpin for T {}
 
 impl PersistentDcClient {
@@ -4108,7 +4323,10 @@ impl PersistentDcClient {
             if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
                 break pos;
             }
-            let n = s.read(&mut tmp).await.map_err(|e| format!("read error: {e}"))?;
+            let n = s
+                .read(&mut tmp)
+                .await
+                .map_err(|e| format!("read error: {e}"))?;
             if n == 0 {
                 return Err("EOF before response headers".to_string());
             }
@@ -4159,7 +4377,10 @@ impl PersistentDcClient {
                 return Err("DC response exceeded 512 KiB limit".to_string());
             }
             while buf.len() < body_start + len {
-                let n = s.read(&mut tmp).await.map_err(|e| format!("read body: {e}"))?;
+                let n = s
+                    .read(&mut tmp)
+                    .await
+                    .map_err(|e| format!("read body: {e}"))?;
                 if n == 0 {
                     return Err("EOF in response body".to_string());
                 }
@@ -4206,7 +4427,8 @@ impl PersistentDcClient {
             "eof": eof,
         })
         .to_string();
-        self.request("POST", &path, Some(&body), bearer_token).await?;
+        self.request("POST", &path, Some(&body), bearer_token)
+            .await?;
         Ok(())
     }
 
@@ -4219,13 +4441,19 @@ impl PersistentDcClient {
     ) -> Result<(Vec<u8>, Option<(u16, u16)>, bool), String> {
         let path = format!("/v1/machines/{machine_id}/relay/pty/{pty_id}/input?wait={wait_secs}");
         let bytes = self.request("GET", &path, None, bearer_token).await?;
-        let val: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|e| format!("Invalid PTY pull response: {e}"))?;
+        let val: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|e| format!("Invalid PTY pull response: {e}"))?;
         let data_b64 = val.get("data_b64").and_then(|v| v.as_str()).unwrap_or("");
         let closed = val.get("closed").and_then(|v| v.as_bool()).unwrap_or(false);
         let resize = val.get("resize").and_then(|r| {
-            let cols = r.get("cols").and_then(|v| v.as_u64()).and_then(|n| u16::try_from(n).ok())?;
-            let rows = r.get("rows").and_then(|v| v.as_u64()).and_then(|n| u16::try_from(n).ok())?;
+            let cols = r
+                .get("cols")
+                .and_then(|v| v.as_u64())
+                .and_then(|n| u16::try_from(n).ok())?;
+            let rows = r
+                .get("rows")
+                .and_then(|v| v.as_u64())
+                .and_then(|n| u16::try_from(n).ok())?;
             Some((cols, rows))
         });
         let data = if data_b64.is_empty() {
@@ -4258,6 +4486,169 @@ fn decode_chunked_body(mut raw: &[u8]) -> Vec<u8> {
         raw = &raw[start + sz + 2..];
     }
     out
+}
+
+async fn upgrade_ws_stream<'a>(
+    stream: &'a mut TcpStream,
+    header_lines: &[&str],
+) -> Result<tokio_tungstenite::WebSocketStream<&'a mut TcpStream>, String> {
+    use sha1::{Digest, Sha1};
+
+    let ws_key = header_lines
+        .iter()
+        .find_map(|line| {
+            let (k, v) = line.split_once(':')?;
+            if k.trim().eq_ignore_ascii_case("sec-websocket-key") {
+                Some(v.trim())
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| "missing Sec-WebSocket-Key".to_string())?;
+
+    // Conforms to RFC 6455 §4.2.2 Sec-WebSocket-Accept derivation.
+    let mut hasher = Sha1::new();
+    hasher.update(ws_key.as_bytes());
+    hasher.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+    let accept = base64::engine::general_purpose::STANDARD.encode(hasher.finalize());
+
+    let resp = format!(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
+    );
+    stream
+        .write_all(resp.as_bytes())
+        .await
+        .map_err(|e| format!("WS handshake write error: {e}"))?;
+    let _ = stream.set_nodelay(true);
+
+    Ok(tokio_tungstenite::WebSocketStream::from_raw_socket(
+        stream,
+        tokio_tungstenite::tungstenite::protocol::Role::Server,
+        None,
+    )
+    .await)
+}
+
+async fn handle_browser_pty_ws(
+    stream: &mut TcpStream,
+    header_lines: &[&str],
+    claims: &sb_auth::claims::SovereignClaims,
+    pty_id: &str,
+) -> Result<(), String> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    if let Err((code, err)) = crate::web_ssh::verify_pty_owner(claims, pty_id).await {
+        let msg = serde_json::json!({ "error": err }).to_string();
+        return write_http_json(stream, code, "Error", &msg).await;
+    }
+    let mut ws = upgrade_ws_stream(stream, header_lines).await?;
+
+    loop {
+        tokio::select! {
+            incoming = ws.next() => {
+                match incoming {
+                    Some(Ok(Message::Binary(bytes))) => {
+                        if crate::web_ssh::push_pty_input(claims, pty_id, bytes.to_vec(), None, false).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Text(txt))) => {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&txt) {
+                            let resize = val.get("resize").and_then(|r| {
+                                let c = r.get("cols").and_then(|v| v.as_u64()).and_then(|n| u16::try_from(n).ok())?;
+                                let r_ = r.get("rows").and_then(|v| v.as_u64()).and_then(|n| u16::try_from(n).ok())?;
+                                Some((c, r_))
+                            });
+                            if resize.is_some() {
+                                let _ = crate::web_ssh::push_pty_input(claims, pty_id, Vec::new(), resize, false).await;
+                            }
+                        } else {
+                            let _ = crate::web_ssh::push_pty_input(claims, pty_id, txt.as_bytes().to_vec(), None, false).await;
+                        }
+                    }
+                    Some(Ok(Message::Ping(p))) => {
+                        let _ = ws.send(Message::Pong(p)).await;
+                    }
+                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                    _ => {}
+                }
+            }
+            outgoing = crate::web_ssh::pull_pty_output(claims, pty_id, 25) => {
+                match outgoing {
+                    Ok((data, closed)) => {
+                        if !data.is_empty() && ws.send(Message::Binary(data.into())).await.is_err() {
+                            break;
+                        }
+                        if closed {
+                            let _ = ws.send(Message::Close(None)).await;
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn handle_agent_pty_ws(
+    stream: &mut TcpStream,
+    header_lines: &[&str],
+    claims: &sb_auth::claims::SovereignClaims,
+    pty_id: &str,
+) -> Result<(), String> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    if !claims.has_capability("domain:join") && !claims.has_role("admin") {
+        return write_http_json(stream, 403, "Forbidden", r#"{"error":"forbidden"}"#).await;
+    }
+    let mut ws = upgrade_ws_stream(stream, header_lines).await?;
+
+    loop {
+        tokio::select! {
+            incoming = ws.next() => {
+                match incoming {
+                    Some(Ok(Message::Binary(bytes))) => {
+                        if crate::web_ssh::push_pty_output(claims, pty_id, bytes.to_vec(), false).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Ping(p))) => {
+                        let _ = ws.send(Message::Pong(p)).await;
+                    }
+                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
+                        let _ = crate::web_ssh::push_pty_output(claims, pty_id, Vec::new(), true).await;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            outgoing = crate::web_ssh::pull_pty_input(claims, pty_id, 25) => {
+                match outgoing {
+                    Ok((data, resize, closed)) => {
+                        if let Some((c, r)) = resize {
+                            let msg = serde_json::json!({ "resize": { "cols": c, "rows": r } }).to_string();
+                            if ws.send(Message::Text(msg.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        if !data.is_empty() && ws.send(Message::Binary(data.into())).await.is_err() {
+                            break;
+                        }
+                        if closed {
+                            let _ = ws.send(Message::Close(None)).await;
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Authenticates a joined machine using its local Ed25519 `machine.key` (`POST /v1/machines/<id>/auth`)

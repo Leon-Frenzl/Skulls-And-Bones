@@ -20,7 +20,7 @@ import {
 export interface DesktopWindowItem {
   id: string;
   title: string;
-  kind: "app" | "terminal";
+  kind: "app" | "terminal" | "files";
   tabId?: string;
   icon?: React.ReactNode;
   x: number;

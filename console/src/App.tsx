@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { DesktopShell, DesktopShortcut, DesktopWindowItem, DESKTOP_SHORTCUTS } from "./DesktopShell";
+import { FilesWindow } from "./FilesWindow";
 import { XtermTerminal } from "./XtermTerminal";
 import {
   Activity,
@@ -215,6 +216,37 @@ export default function App() {
           y: 28 + offset,
           w: 980,
           h: 660,
+          z: next,
+          minimized: false,
+          maximized: false,
+        },
+      ]);
+      return next;
+    });
+    setFocusedWinId(winId);
+  };
+
+  const openFilesWindow = (m: MachineRecord) => {
+    const winId = `files:${m.machine_id}`;
+    if (desktopWins.some((w) => w.id === winId)) {
+      focusWindow(winId);
+      return;
+    }
+    setZCounter((z) => {
+      const next = z + 1;
+      const offset = (desktopWins.length % 6) * 28;
+      setDesktopWins((prev) => [
+        ...prev,
+        {
+          id: winId,
+          title: `Dateien — ${m.fqdn}`,
+          kind: "files",
+          machineId: m.machine_id,
+          fqdn: m.fqdn,
+          x: 160 + offset,
+          y: 44 + offset,
+          w: 820,
+          h: 540,
           z: next,
           minimized: false,
           maximized: false,
@@ -1265,6 +1297,13 @@ export default function App() {
                           <button
                             className="btn"
                             disabled={m.revoked}
+                            onClick={() => openFilesWindow(m)}
+                          >
+                            Dateien
+                          </button>
+                          <button
+                            className="btn"
+                            disabled={m.revoked}
                             onClick={() => {
                               const raw = window.prompt(
                                 `Remote-Port auf ${m.fqdn} für den HTTPS-443 Tunnel (z. B. 3389 für RDP, 5432 für Postgres, 8080):`,
@@ -1675,6 +1714,13 @@ export default function App() {
     content:
       w.kind === "terminal" && w.machineId && w.fqdn ? (
         <XtermTerminal
+          machineId={w.machineId}
+          fqdn={w.fqdn}
+          authHeaders={authHeaders}
+          onStatus={setStatusMsg}
+        />
+      ) : w.kind === "files" && w.machineId && w.fqdn ? (
+        <FilesWindow
           machineId={w.machineId}
           fqdn={w.fqdn}
           authHeaders={authHeaders}

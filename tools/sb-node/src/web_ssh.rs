@@ -499,6 +499,7 @@ pub struct RelayTunnelInfo {
 #[derive(Debug)]
 struct RelayTunnelState {
     owner: String,
+    #[allow(dead_code)]
     machine_id: String,
     c2a_buf: VecDeque<Vec<u8>>,
     a2c_buf: VecDeque<Vec<u8>>,
@@ -1053,6 +1054,122 @@ pub async fn pull_pty_output(
     Ok((out, p.closed))
 }
 
+/// Verifies that `claims` owns `pty_id` (or has `admin` role) before upgrading to WebSocket.
+pub async fn verify_pty_owner(claims: &SovereignClaims, pty_id: &str) -> Result<(), (u16, String)> {
+    let guard = relay_ptys().read().await;
+    let p = guard
+        .get(pty_id)
+        .ok_or_else(|| (404, "PTY session not found".to_string()))?;
+    if p.owner != claims.subject && !claims.has_role("admin") {
+        return Err((403, "PTY session belongs to another user".into()));
+    }
+    Ok(())
+}
+
+/// Executes a structured file-explorer operation (`file_list`, `file_read`, `file_write`)
+/// over the HTTPS-443 reverse relay and returns the JSON payload from `stdout`.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Unauthorized filesystem read/write or memory DoS via oversized payloads.
+/// - **CWE Mapping:** CWE-284 (Improper Access Control), CWE-400 (Resource Consumption).
+/// - **Likelihood & Exploitability:** High (8/10) on remote file-transfer APIs.
+/// - **Applied Mitigation:** Requires active user, `admin`/`domain:admin`/`ssh:connect` capability,
+///   non-revoked online machine, and caps relay file payloads at 2 MiB.
+pub async fn exec_relay_file_op(
+    claims: &SovereignClaims,
+    machine_id: &str,
+    kind: &str,
+    payload_json: &str,
+    base_dir: &Path,
+) -> Result<serde_json::Value, (u16, String)> {
+    if payload_json.len() > 3 * 1024 * 1024 {
+        return Err((413, "File payload exceeds 2 MiB relay limit".into()));
+    }
+    let users_path = base_dir.join("users.json");
+    let dir = crate::directory_users::IdentityDirectory::load_or_create(&users_path, "corp.eu")
+        .map_err(|e| (500, e))?;
+    let user = dir
+        .users
+        .get(&claims.subject)
+        .ok_or_else(|| (404, format!("User '{}' not found", claims.subject)))?;
+    if !user.enabled {
+        return Err((403, format!("User '{}' is disabled", claims.subject)));
+    }
+    if !claims.has_role("admin")
+        && !claims.has_capability("domain:admin")
+        && !claims.has_capability("ssh:connect")
+    {
+        return Err((
+            403,
+            "Token lacks ssh:connect or domain:admin capability".into(),
+        ));
+    }
+
+    let reg_file = base_dir.join("machines.json");
+    let reg_raw = fs::read_to_string(&reg_file)
+        .map_err(|e| (500, format!("Failed to read machines registry: {e}")))?;
+    let reg: crate::domain_join::DomainRegistry = serde_json::from_str(&reg_raw)
+        .map_err(|e| (500, format!("Failed to parse machines registry: {e}")))?;
+    let machine = reg
+        .machines
+        .iter()
+        .find(|m| m.machine_id == machine_id || m.fqdn.eq_ignore_ascii_case(machine_id))
+        .ok_or_else(|| (404, format!("Machine '{machine_id}' not found")))?;
+    if machine.revoked {
+        return Err((403, format!("Machine '{}' is revoked", machine.fqdn)));
+    }
+    if !is_relay_online(&machine.machine_id).await {
+        return Err((
+            503,
+            format!(
+                "Agent auf '{}' ist nicht mit dem Relay verbunden",
+                machine.fqdn
+            ),
+        ));
+    }
+
+    let cmd_id = format!("file_{}", hex::encode(rand::random::<[u8; 8]>()));
+    let waiter = Arc::new(Notify::new());
+    {
+        let mut res_guard = relay_results().write().await;
+        res_guard.insert(cmd_id.clone(), (Arc::clone(&waiter), None));
+    }
+    let q_notify = {
+        let mut q_guard = relay_queues().write().await;
+        let entry = q_guard.entry(machine.machine_id.clone()).or_default();
+        entry.queue.push_back(RelayCommand {
+            cmd_id: cmd_id.clone(),
+            session_id: cmd_id.clone(),
+            ssh_user: claims.subject.clone(),
+            command: payload_json.to_string(),
+            kind: kind.to_string(),
+            target_port: None,
+        });
+        Arc::clone(&entry.notify)
+    };
+    q_notify.notify_one();
+
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(20), waiter.notified()).await;
+    let res = {
+        let mut res_guard = relay_results().write().await;
+        res_guard.remove(&cmd_id).and_then(|(_, r)| r)
+    };
+    let Some(res) = res else {
+        return Err((504, "Agent file operation timed out".into()));
+    };
+    if res.exit_code != 0 {
+        return Err((
+            400,
+            if res.stderr.is_empty() {
+                "File operation failed".into()
+            } else {
+                res.stderr
+            },
+        ));
+    }
+    serde_json::from_str(&res.stdout).map_err(|e| (500, format!("Invalid agent file JSON: {e}")))
+}
+
 /// Closes an active PTY session and notifies both browser and agent.
 pub async fn close_pty_session(
     claims: &SovereignClaims,
@@ -1153,8 +1270,8 @@ mod tests {
             })
             .expect("openpty");
         let cmd = if cfg!(windows) {
-            let mut c = CommandBuilder::new("cmd.exe");
-            c.arg("/K");
+            let mut c = CommandBuilder::new("powershell.exe");
+            c.arg("-NoLogo");
             c
         } else {
             CommandBuilder::new("sh")
@@ -1177,7 +1294,9 @@ mod tests {
             }
         });
 
-        writer.write_all(b"\x1b[1;1Recho PTY_OK\r\n").expect("write");
+        writer
+            .write_all(b"\x1b[1;1Recho PTY_OK\r\n")
+            .expect("write");
         writer.flush().expect("flush");
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);

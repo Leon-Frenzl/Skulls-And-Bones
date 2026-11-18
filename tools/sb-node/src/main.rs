@@ -5557,6 +5557,19 @@ async fn run_relay_worker(
                     tokio::spawn(async move {
                         run_agent_pty_session(dc, mid, pid, cols, rows).await;
                     });
+                } else if cmd.kind == "file_list"
+                    || cmd.kind == "file_read"
+                    || cmd.kind == "file_write"
+                {
+                    let res = execute_local_file_op(&cmd.kind, &cmd.command);
+                    let _ = domain_join::post_remote_relay_result(
+                        &dc_endpoint,
+                        &token,
+                        &machine_id,
+                        &cmd.cmd_id,
+                        &res,
+                    )
+                    .await;
                 } else {
                     let res = execute_local_relay_command(&cmd.session_id, &cmd.command).await;
                     let _ = domain_join::post_remote_relay_result(
@@ -5802,105 +5815,343 @@ async fn run_agent_pty_session(
         }
     });
 
-    let dc_out = dc_endpoint.clone();
-    let mid_out = machine_id.clone();
-    let pid_out = pty_id.clone();
-    let out_task = tokio::spawn(async move {
-        let mut client = domain_join::PersistentDcClient::new(&dc_out).ok();
-        while let Some(mut batch) = out_rx.recv().await {
-            // Coalesce rapid ConPTY output chunks (e.g. prompt + ANSI escapes) into one HTTPS push.
-            tokio::time::sleep(Duration::from_millis(8)).await;
-            while batch.len() < 32 * 1024 {
-                match out_rx.try_recv() {
-                    Ok(more) => batch.extend_from_slice(&more),
-                    Err(_) => break,
-                }
-            }
-            let Ok(tok) = ensure_fresh_machine_token(&dc_out, false).await else {
-                break;
-            };
-            let push_res = if let Some(ref mut c) = client {
-                c.push_pty_output(&tok, &mid_out, &pid_out, &batch, false).await
-            } else {
-                domain_join::agent_push_pty_output(&dc_out, &tok, &mid_out, &pid_out, &batch, false)
-                    .await
-            };
-            if let Err(e) = push_res {
-                let p = sb_core::paths::sb_home().join("pty_agent.log");
-                if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p) {
-                    let _ = writeln!(f, "[{pid_out}] push_output err: {e}");
-                }
-                break;
-            }
-        }
-        if let Ok(tok) = ensure_fresh_machine_token(&dc_out, false).await {
-            if let Some(ref mut c) = client {
-                let _ = c.push_pty_output(&tok, &mid_out, &pid_out, &[], true).await;
-            } else {
-                let _ = domain_join::agent_push_pty_output(
-                    &dc_out, &tok, &mid_out, &pid_out, &[], true,
-                )
-                .await;
-            }
-        }
-    });
+    let dc_ws = dc_endpoint.clone();
+    let mid_ws = machine_id.clone();
+    let pid_ws = pty_id.clone();
+    let ws_ok = try_run_agent_pty_ws(&dc_ws, &mid_ws, &pid_ws, &mut out_rx, &master, &writer).await;
 
-    let dc_in = dc_endpoint;
-    let mid_in = machine_id;
-    let pid_in = pty_id;
-    let master_in = Arc::clone(&master);
-    let writer_in = Arc::clone(&writer);
-    let in_task = tokio::spawn(async move {
-        let mut client = domain_join::PersistentDcClient::new(&dc_in).ok();
-        loop {
-            let Ok(tok) = ensure_fresh_machine_token(&dc_in, false).await else {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                continue;
-            };
-            let pull_res = if let Some(ref mut c) = client {
-                c.pull_pty_input(&tok, &mid_in, &pid_in, 15).await
-            } else {
-                domain_join::agent_pull_pty_input(&dc_in, &tok, &mid_in, &pid_in, 15).await
-            };
-            match pull_res {
-                Ok((data, resize, closed)) => {
-                    if let Some((c, r)) = resize {
-                        if let Ok(m) = master_in.lock() {
-                            let _ = m.resize(PtySize {
-                                rows: r.clamp(5, 200),
-                                cols: c.clamp(20, 400),
-                                pixel_width: 0,
-                                pixel_height: 0,
-                            });
-                        }
-                    }
-                    if !data.is_empty() {
-                        if let Ok(mut w) = writer_in.lock() {
-                            let _ = w.write_all(&data);
-                            let _ = w.flush();
-                        }
-                    }
-                    if closed {
-                        break;
+    if !ws_ok {
+        let dc_out = dc_endpoint.clone();
+        let mid_out = machine_id.clone();
+        let pid_out = pty_id.clone();
+        let out_task = tokio::spawn(async move {
+            let mut client = domain_join::PersistentDcClient::new(&dc_out).ok();
+            while let Some(mut batch) = out_rx.recv().await {
+                // Coalesce rapid ConPTY output chunks (e.g. prompt + ANSI escapes) into one HTTPS push.
+                tokio::time::sleep(Duration::from_millis(8)).await;
+                while batch.len() < 32 * 1024 {
+                    match out_rx.try_recv() {
+                        Ok(more) => batch.extend_from_slice(&more),
+                        Err(_) => break,
                     }
                 }
-                Err(e) => {
+                let Ok(tok) = ensure_fresh_machine_token(&dc_out, false).await else {
+                    break;
+                };
+                let push_res = if let Some(ref mut c) = client {
+                    c.push_pty_output(&tok, &mid_out, &pid_out, &batch, false)
+                        .await
+                } else {
+                    domain_join::agent_push_pty_output(
+                        &dc_out, &tok, &mid_out, &pid_out, &batch, false,
+                    )
+                    .await
+                };
+                if let Err(e) = push_res {
                     let p = sb_core::paths::sb_home().join("pty_agent.log");
                     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p) {
-                        let _ = writeln!(f, "[{pid_in}] pull_input err: {e}");
+                        let _ = writeln!(f, "[{pid_out}] push_output err: {e}");
                     }
                     break;
                 }
             }
-        }
-    });
+            if let Ok(tok) = ensure_fresh_machine_token(&dc_out, false).await {
+                if let Some(ref mut c) = client {
+                    let _ = c.push_pty_output(&tok, &mid_out, &pid_out, &[], true).await;
+                } else {
+                    let _ = domain_join::agent_push_pty_output(
+                        &dc_out,
+                        &tok,
+                        &mid_out,
+                        &pid_out,
+                        &[],
+                        true,
+                    )
+                    .await;
+                }
+            }
+        });
 
-    let _ = tokio::select! {
-        _ = out_task => {},
-        _ = in_task => {},
-    };
+        let dc_in = dc_endpoint;
+        let mid_in = machine_id;
+        let pid_in = pty_id;
+        let master_in = Arc::clone(&master);
+        let writer_in = Arc::clone(&writer);
+        let in_task = tokio::spawn(async move {
+            let mut client = domain_join::PersistentDcClient::new(&dc_in).ok();
+            loop {
+                let Ok(tok) = ensure_fresh_machine_token(&dc_in, false).await else {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    continue;
+                };
+                let pull_res = if let Some(ref mut c) = client {
+                    c.pull_pty_input(&tok, &mid_in, &pid_in, 15).await
+                } else {
+                    domain_join::agent_pull_pty_input(&dc_in, &tok, &mid_in, &pid_in, 15).await
+                };
+                match pull_res {
+                    Ok((data, resize, closed)) => {
+                        if let Some((c, r)) = resize {
+                            if let Ok(m) = master_in.lock() {
+                                let _ = m.resize(PtySize {
+                                    rows: r.clamp(5, 200),
+                                    cols: c.clamp(20, 400),
+                                    pixel_width: 0,
+                                    pixel_height: 0,
+                                });
+                            }
+                        }
+                        if !data.is_empty() {
+                            if let Ok(mut w) = writer_in.lock() {
+                                let _ = w.write_all(&data);
+                                let _ = w.flush();
+                            }
+                        }
+                        if closed {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        let p = sb_core::paths::sb_home().join("pty_agent.log");
+                        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p) {
+                            let _ = writeln!(f, "[{pid_in}] pull_input err: {e}");
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+
+        let _ = tokio::select! {
+            _ = out_task => {},
+            _ = in_task => {},
+        };
+    }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+async fn try_run_agent_pty_ws(
+    dc_endpoint: &str,
+    machine_id: &str,
+    pty_id: &str,
+    out_rx: &mut tokio::sync::mpsc::Receiver<Vec<u8>>,
+    master: &Arc<std::sync::Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+    writer: &Arc<std::sync::Mutex<Box<dyn std::io::Write + Send>>>,
+) -> bool {
+    use futures_util::{SinkExt, StreamExt};
+    use portable_pty::PtySize;
+    use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message};
+
+    let Ok(tok) = ensure_fresh_machine_token(dc_endpoint, false).await else {
+        return false;
+    };
+    let trimmed = dc_endpoint.trim().trim_end_matches('/');
+    let ws_base = if let Some(rest) = trimmed.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        return false;
+    };
+    let ws_url = format!("{ws_base}/v1/machines/{machine_id}/relay/pty/{pty_id}/ws");
+    let Ok(mut req) = ws_url.into_client_request() else {
+        return false;
+    };
+    let Ok(auth_val) = format!("Bearer {tok}").parse() else {
+        return false;
+    };
+    req.headers_mut().insert("Authorization", auth_val);
+
+    let Ok((mut ws, _)) = tokio_tungstenite::connect_async(req).await else {
+        return false;
+    };
+
+    loop {
+        tokio::select! {
+            chunk = out_rx.recv() => {
+                match chunk {
+                    Some(mut batch) => {
+                        while batch.len() < 32 * 1024 {
+                            match out_rx.try_recv() {
+                                Ok(more) => batch.extend_from_slice(&more),
+                                Err(_) => break,
+                            }
+                        }
+                        if ws.send(Message::Binary(batch.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => {
+                        let _ = ws.send(Message::Close(None)).await;
+                        break;
+                    }
+                }
+            }
+            incoming = ws.next() => {
+                match incoming {
+                    Some(Ok(Message::Binary(bytes))) => {
+                        if !bytes.is_empty() {
+                            if let Ok(mut w) = writer.lock() {
+                                let _ = w.write_all(&bytes);
+                                let _ = w.flush();
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Text(txt))) => {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&txt) {
+                            if let Some(r) = val.get("resize") {
+                                if let (Some(c), Some(rows)) = (
+                                    r.get("cols").and_then(|v| v.as_u64()).and_then(|n| u16::try_from(n).ok()),
+                                    r.get("rows").and_then(|v| v.as_u64()).and_then(|n| u16::try_from(n).ok()),
+                                ) {
+                                    if let Ok(m) = master.lock() {
+                                        let _ = m.resize(PtySize {
+                                            rows: rows.clamp(5, 200),
+                                            cols: c.clamp(20, 400),
+                                            pixel_width: 0,
+                                            pixel_height: 0,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Ping(p))) => {
+                        let _ = ws.send(Message::Pong(p)).await;
+                    }
+                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+    true
+}
+
+fn execute_local_file_op(kind: &str, payload_json: &str) -> web_ssh::WebSshExecResult {
+    let payload: serde_json::Value = serde_json::from_str(payload_json).unwrap_or_default();
+    let default_root = sb_core::paths::sb_home()
+        .parent()
+        .map(PathBuf::from)
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let raw_path = payload
+        .get("path")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let target = raw_path.map(PathBuf::from).unwrap_or(default_root);
+
+    let err_res = |msg: String| web_ssh::WebSshExecResult {
+        exit_code: 1,
+        stdout: String::new(),
+        stderr: msg,
+        cwd: String::new(),
+    };
+
+    match kind {
+        "file_list" => {
+            let rd = match fs::read_dir(&target) {
+                Ok(r) => r,
+                Err(e) => return err_res(format!("read_dir failed: {e}")),
+            };
+            let mut entries = Vec::new();
+            for entry in rd.flatten().take(500) {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let meta = entry.metadata().ok();
+                let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                entries.push(serde_json::json!({
+                    "name": name,
+                    "is_dir": is_dir,
+                    "size": size,
+                }));
+            }
+            entries.sort_by(|a, b| {
+                let ad = a["is_dir"].as_bool().unwrap_or(false);
+                let bd = b["is_dir"].as_bool().unwrap_or(false);
+                bd.cmp(&ad).then_with(|| {
+                    a["name"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .cmp(&b["name"].as_str().unwrap_or("").to_lowercase())
+                })
+            });
+            let canonical = fs::canonicalize(&target).unwrap_or(target);
+            let out = serde_json::json!({
+                "path": canonical.display().to_string(),
+                "entries": entries,
+            })
+            .to_string();
+            web_ssh::WebSshExecResult {
+                exit_code: 0,
+                stdout: out,
+                stderr: String::new(),
+                cwd: String::new(),
+            }
+        }
+        "file_read" => {
+            let meta = match fs::metadata(&target) {
+                Ok(m) => m,
+                Err(e) => return err_res(format!("metadata failed: {e}")),
+            };
+            if meta.len() > 2 * 1024 * 1024 {
+                return err_res("Datei größer als 2 MiB Relay-Limit".into());
+            }
+            let bytes = match fs::read(&target) {
+                Ok(b) => b,
+                Err(e) => return err_res(format!("read failed: {e}")),
+            };
+            let name = target
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "file.bin".into());
+            let out = serde_json::json!({
+                "path": target.display().to_string(),
+                "name": name,
+                "size": bytes.len(),
+                "data_b64": base64::engine::general_purpose::STANDARD.encode(&bytes),
+            })
+            .to_string();
+            web_ssh::WebSshExecResult {
+                exit_code: 0,
+                stdout: out,
+                stderr: String::new(),
+                cwd: String::new(),
+            }
+        }
+        "file_write" => {
+            let b64 = payload
+                .get("data_b64")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let bytes = match base64::engine::general_purpose::STANDARD.decode(b64) {
+                Ok(b) => b,
+                Err(e) => return err_res(format!("invalid base64: {e}")),
+            };
+            if bytes.len() > 2 * 1024 * 1024 {
+                return err_res("Datei größer als 2 MiB Relay-Limit".into());
+            }
+            if let Err(e) = fs::write(&target, &bytes) {
+                return err_res(format!("write failed: {e}"));
+            }
+            let out = serde_json::json!({
+                "ok": true,
+                "path": target.display().to_string(),
+                "size": bytes.len(),
+            })
+            .to_string();
+            web_ssh::WebSshExecResult {
+                exit_code: 0,
+                stdout: out,
+                stderr: String::new(),
+                cwd: String::new(),
+            }
+        }
+        _ => err_res("unknown file op".into()),
+    }
 }
 
 static RELAY_CWDS: std::sync::OnceLock<RwLock<HashMap<String, PathBuf>>> =
