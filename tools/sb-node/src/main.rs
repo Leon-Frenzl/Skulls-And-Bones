@@ -5554,6 +5554,16 @@ async fn execute_local_relay_command(command: &str) -> web_ssh::WebSshExecResult
         c.args(["-c", command]);
         c
     };
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            let current_path = std::env::var_os("PATH").unwrap_or_default();
+            let mut paths = vec![exe_dir.to_path_buf()];
+            paths.extend(std::env::split_paths(&current_path));
+            if let Ok(joined) = std::env::join_paths(paths) {
+                cmd.env("PATH", joined);
+            }
+        }
+    }
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
