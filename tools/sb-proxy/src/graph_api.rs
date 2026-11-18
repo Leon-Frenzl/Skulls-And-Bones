@@ -331,6 +331,7 @@ async fn handle_graph_request(
         || uri_path.starts_with("/v1/users")
         || uri_path.starts_with("/v1/groups")
         || uri_path.starts_with("/v1/audit")
+        || uri_path.starts_with("/v1/ssh")
     {
         let body_bytes = match collect_bounded_body(req.into_body()).await {
             Ok(b) => b,
