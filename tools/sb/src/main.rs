@@ -60,6 +60,11 @@ fn real_main() {
         use std::io::IsTerminal;
         if !std::io::stdout().is_terminal() {
             colored::control::set_override(false);
+        } else {
+            #[cfg(windows)]
+            if colored::control::set_virtual_terminal(true).is_err() {
+                colored::control::set_override(false);
+            }
         }
     }
     cleanup_old_binary();
