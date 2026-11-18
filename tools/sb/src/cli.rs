@@ -76,6 +76,12 @@ pub enum Commands {
     #[command(alias = "p")]
     Ps,
 
+    /// Startet den S&B Node-Agent-Dienst (sb start [agent])
+    Start {
+        /// Dienstname (Standard: 'agent' / sb-node-agent)
+        target: Option<String>,
+    },
+
     /// Beendet laufende S&B Hintergrund-Dienste (sb stop <NAME|PID|all>)
     Stop {
         /// Name, PID oder 'all' (Standard: 'all')

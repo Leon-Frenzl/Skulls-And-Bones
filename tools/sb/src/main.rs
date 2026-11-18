@@ -101,8 +101,34 @@ fn real_main() {
         Some(Commands::Ps) => {
             process_ledger::cmd_ps();
         }
+        Some(Commands::Start { target }) => {
+            let t = target.as_deref().unwrap_or("agent");
+            if t.eq_ignore_ascii_case("agent") || t.eq_ignore_ascii_case("sb-node-agent") {
+                if let Err(e) = commands::pkg::control_agent_service(true) {
+                    eprintln!("  {} {e}", "✗".bright_red());
+                    std::process::exit(1);
+                }
+            } else {
+                eprintln!(
+                    "  {} Unbekanntes Start-Target '{t}' (verwende: sb start [agent])",
+                    "✗".bright_red()
+                );
+                std::process::exit(1);
+            }
+        }
         Some(Commands::Stop { target }) => {
-            process_ledger::cmd_stop(target.as_deref());
+            let t = target.as_deref().unwrap_or("all");
+            if t.eq_ignore_ascii_case("all")
+                || t.eq_ignore_ascii_case("agent")
+                || t.eq_ignore_ascii_case("sb-node-agent")
+            {
+                if let Err(e) = commands::pkg::control_agent_service(false) {
+                    eprintln!("  {} {e}", "✗".bright_red());
+                }
+            }
+            if !t.eq_ignore_ascii_case("agent") && !t.eq_ignore_ascii_case("sb-node-agent") {
+                process_ledger::cmd_stop(target.as_deref());
+            }
         }
         Some(Commands::Lease { args }) => {
             let mut pass_args = vec!["lease".to_string()];
@@ -165,12 +191,24 @@ fn real_main() {
             github,
             tag,
         }) => {
-            let use_github = github
+            let no_explicit_source = !github
+                && tag.is_none()
+                && tools.is_empty()
+                && from_dir.is_none()
+                && from_url.is_none()
+                && from_mesh.is_none();
+            let res = if no_explicit_source {
+                match commands::pkg::try_local_stage_update() {
+                    Ok(true) => Ok(()),
+                    Ok(false) => commands::pkg::self_update_from_github(tag.as_deref()),
+                    Err(e) => Err(e),
+                }
+            } else if github
                 || (tools.is_empty()
                     && from_dir.is_none()
                     && from_url.is_none()
-                    && from_mesh.is_none());
-            let res = if use_github {
+                    && from_mesh.is_none())
+            {
                 commands::pkg::self_update_from_github(tag.as_deref())
             } else {
                 handle_update_with_options(&tools, allow_downgrade, from_dir, from_url, from_mesh)

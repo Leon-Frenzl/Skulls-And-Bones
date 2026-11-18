@@ -595,6 +595,172 @@ pub fn handle_identity() {
     }
 }
 
+/// Starts or stops the system `sb-node-agent` service (`sb start` / `sb stop`).
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Uncontrolled service tampering or command injection via service names.
+/// - **CWE Mapping:** CWE-78 (OS Command Injection).
+/// - **Likelihood & Exploitability:** Low (1/10); service name is hardcoded to `"sb-node-agent"`.
+/// - **Applied Mitigation:** Hardcodes service identifier `"sb-node-agent"` and uses OS native service managers (`sc.exe` / `powershell` / `systemctl`).
+pub fn control_agent_service(start: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let action = if start {
+            "Start-Service sb-node-agent"
+        } else {
+            "Stop-Service sb-node-agent -Force"
+        };
+        let ps_cmd = format!(
+            "$svc = Get-Service -Name 'sb-node-agent' -ErrorAction SilentlyContinue; if (-not $svc) {{ Write-Output 'NOT_INSTALLED'; exit 0 }}; {action}; (Get-Service -Name 'sb-node-agent').Status"
+        );
+        let out = Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+            .output()
+            .map_err(|e| format!("PowerShell-Aufruf fehlgeschlagen: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        if stdout == "NOT_INSTALLED" {
+            return Ok(());
+        }
+        if !out.status.success() {
+            return Err(format!(
+                "Dienst sb-node-agent konnte nicht {} werden: {}",
+                if start { "gestartet" } else { "gestoppt" },
+                if stderr.is_empty() { stdout } else { stderr }
+            ));
+        }
+        println!(
+            "  {} Dienst sb-node-agent: {}",
+            "✓".bright_green().bold(),
+            if stdout.is_empty() {
+                if start {
+                    "Running"
+                } else {
+                    "Stopped"
+                }
+            } else {
+                &stdout
+            }
+        );
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let verb = if start { "start" } else { "stop" };
+        let status = Command::new("systemctl")
+            .args([verb, "sb-node-agent"])
+            .status()
+            .map_err(|e| format!("systemctl {verb} sb-node-agent fehlgeschlagen: {e}"))?;
+        if !status.success() {
+            return Err(format!("systemctl {verb} sb-node-agent fehlgeschlagen"));
+        }
+        println!(
+            "  {} Dienst sb-node-agent: {}",
+            "✓".bright_green().bold(),
+            if start { "active" } else { "stopped" }
+        );
+        Ok(())
+    }
+}
+
+/// Checks if a locally staged `target/rel-stage/release/sb-node(.exe)` exists in the current
+/// workspace (or known service parent) and installs it directly into the `sb-node-agent` binary path.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Arbitrary binary planting if an untrusted relative path is copied into a privileged service.
+/// - **CWE Mapping:** CWE-426 (Untrusted Search Path).
+/// - **Likelihood & Exploitability:** Low (2/10); only activates when `Cargo.toml` + `target/rel-stage/release` exist alongside the workspace.
+/// - **Applied Mitigation:** Resolves canonical workspace root, queries `sc.exe qc sb-node-agent` for the exact service path, and replaces atomically.
+pub fn try_local_stage_update() -> Result<bool, String> {
+    let node_name = if cfg!(windows) {
+        "sb-node.exe"
+    } else {
+        "sb-node"
+    };
+    let sb_name = if cfg!(windows) { "sb.exe" } else { "sb" };
+
+    let mut candidate_roots = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        candidate_roots.push(cwd);
+    }
+
+    #[cfg(windows)]
+    let svc_bin_path: Option<PathBuf> = {
+        let mut found = None;
+        if let Ok(q) = Command::new("sc.exe")
+            .args(["qc", "sb-node-agent"])
+            .output()
+        {
+            for line in String::from_utf8_lossy(&q.stdout).lines() {
+                if let Some(rest) = line.trim().strip_prefix("BINARY_PATH_NAME") {
+                    if let Some((_, val)) = rest.split_once(':') {
+                        let trimmed = val.trim();
+                        let exe = if let Some(after_q) = trimmed.strip_prefix('"') {
+                            after_q.split('"').next().unwrap_or("")
+                        } else {
+                            trimmed.split_whitespace().next().unwrap_or("")
+                        };
+                        if !exe.is_empty() {
+                            let p = PathBuf::from(exe);
+                            // Also check repo root two levels above target/release/sb-node.exe
+                            if let Some(repo) =
+                                p.parent().and_then(|d| d.parent()).and_then(|d| d.parent())
+                            {
+                                candidate_roots.push(repo.to_path_buf());
+                            }
+                            found = Some(p);
+                        }
+                    }
+                }
+            }
+        }
+        found
+    };
+    #[cfg(not(windows))]
+    let svc_bin_path: Option<PathBuf> = None;
+
+    let stage_dir = candidate_roots
+        .into_iter()
+        .map(|r| r.join("target").join("rel-stage").join("release"))
+        .find(|d| d.join(node_name).exists() || d.join(sb_name).exists());
+
+    let Some(stage_dir) = stage_dir else {
+        return Ok(false);
+    };
+
+    let stage_node = stage_dir.join(node_name);
+    if stage_node.exists() {
+        if let Some(ref target_node) = svc_bin_path {
+            replace_binary_atomically(&stage_node, target_node)?;
+            println!(
+                "  {} Lokales Service-Update installiert: {}",
+                "✓".bright_green().bold(),
+                target_node.display()
+            );
+        }
+    }
+
+    let stage_sb = stage_dir.join(sb_name);
+    if stage_sb.exists() {
+        if let Ok(cur) = std::env::current_exe() {
+            let _ = replace_binary_atomically(&stage_sb, &cur);
+        }
+        if let Some(home) = dirs::home_dir() {
+            let cargo_sb = home.join(".cargo").join("bin").join(sb_name);
+            if cargo_sb.exists() {
+                let _ = replace_binary_atomically(&stage_sb, &cargo_sb);
+            }
+        }
+        println!(
+            "  {} Lokales CLI-Update installiert: {}",
+            "✓".bright_green().bold(),
+            stage_sb.display()
+        );
+    }
+
+    Ok(true)
+}
+
 #[cfg(test)]
 mod release_signature_tests {
     use super::{verify_release_manifest, verify_release_manifest_with_key};
