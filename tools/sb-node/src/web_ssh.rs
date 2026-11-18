@@ -48,6 +48,8 @@ pub struct WebSshExecResult {
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
+    #[serde(default)]
+    pub cwd: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -451,6 +453,7 @@ pub async fn exec_web_ssh_command(
         exit_code: out.status.code().unwrap_or(-1),
         stdout: String::from_utf8_lossy(&out.stdout).to_string(),
         stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+        cwd: String::new(),
     })
 }
 

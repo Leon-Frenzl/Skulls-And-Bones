@@ -2789,6 +2789,11 @@ async fn handle_join_http_connection(
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string(),
+                cwd: payload
+                    .get("cwd")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
             };
             let recorded = crate::web_ssh::submit_relay_result(cmd_id, result).await;
             let json = serde_json::json!({ "recorded": recorded }).to_string();
@@ -3400,6 +3405,7 @@ pub async fn post_remote_relay_result(
         "exit_code": result.exit_code,
         "stdout": result.stdout,
         "stderr": result.stderr,
+        "cwd": result.cwd,
     })
     .to_string();
     send_endpoint_request_with_bearer(dc_endpoint, "POST", &path, Some(&body), Some(bearer_token))

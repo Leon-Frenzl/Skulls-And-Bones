@@ -5525,7 +5525,7 @@ async fn run_relay_worker(
         force_refresh = false;
         match domain_join::poll_remote_relay_command(&dc_endpoint, &token, &machine_id, 20).await {
             Ok(Some(cmd)) => {
-                let res = execute_local_relay_command(&cmd.command).await;
+                let res = execute_local_relay_command(&cmd.session_id, &cmd.command).await;
                 let _ = domain_join::post_remote_relay_result(
                     &dc_endpoint,
                     &token,
@@ -5544,16 +5544,38 @@ async fn run_relay_worker(
     }
 }
 
-async fn execute_local_relay_command(command: &str) -> web_ssh::WebSshExecResult {
+static RELAY_CWDS: std::sync::OnceLock<RwLock<HashMap<String, PathBuf>>> =
+    std::sync::OnceLock::new();
+
+async fn execute_local_relay_command(session_id: &str, command: &str) -> web_ssh::WebSshExecResult {
+    let cwds = RELAY_CWDS.get_or_init(|| RwLock::new(HashMap::new()));
+    let current_cwd = {
+        let guard = cwds.read().await;
+        guard.get(session_id).cloned().unwrap_or_else(|| {
+            sb_core::paths::sb_home()
+                .parent()
+                .map(PathBuf::from)
+                .filter(|p| p.exists())
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        })
+    };
+
+    const MARKER: &str = "__SB_CWD__=";
     let mut cmd = if cfg!(windows) {
+        let wrapped = format!(
+            "$global:LASTEXITCODE = 0; {command}; $__sb_ec = if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) {{ $LASTEXITCODE }} elseif (-not $?) {{ 1 }} else {{ 0 }}; Write-Output ('{MARKER}' + (Get-Location).Path); exit $__sb_ec"
+        );
         let mut c = tokio::process::Command::new("powershell.exe");
-        c.args(["-NoProfile", "-NonInteractive", "-Command", command]);
+        c.args(["-NoProfile", "-NonInteractive", "-Command", &wrapped]);
         c
     } else {
+        let wrapped =
+            format!("{command}; __sb_ec=$?; printf '\\n{MARKER}%s\\n' \"$PWD\"; exit $__sb_ec");
         let mut c = tokio::process::Command::new("sh");
-        c.args(["-c", command]);
+        c.args(["-c", &wrapped]);
         c
     };
+    cmd.current_dir(&current_cwd);
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
             let current_path = std::env::var_os("PATH").unwrap_or_default();
@@ -5569,20 +5591,47 @@ async fn execute_local_relay_command(command: &str) -> web_ssh::WebSshExecResult
         .stderr(Stdio::piped());
 
     match tokio::time::timeout(Duration::from_secs(12), cmd.output()).await {
-        Ok(Ok(out)) => web_ssh::WebSshExecResult {
-            exit_code: out.status.code().unwrap_or(-1),
-            stdout: String::from_utf8_lossy(&out.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&out.stderr).to_string(),
-        },
+        Ok(Ok(out)) => {
+            let raw_stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let mut new_cwd = current_cwd.to_string_lossy().to_string();
+            let mut clean_lines = Vec::new();
+            for line in raw_stdout.lines() {
+                if let Some(path_str) = line.strip_prefix(MARKER) {
+                    let trimmed_path = path_str.trim();
+                    if !trimmed_path.is_empty() && Path::new(trimmed_path).is_dir() {
+                        new_cwd = trimmed_path.to_string();
+                    }
+                } else {
+                    clean_lines.push(line);
+                }
+            }
+            {
+                let mut guard = cwds.write().await;
+                guard.insert(session_id.to_string(), PathBuf::from(&new_cwd));
+            }
+            let stdout = if clean_lines.is_empty() {
+                String::new()
+            } else {
+                clean_lines.join("\n") + "\n"
+            };
+            web_ssh::WebSshExecResult {
+                exit_code: out.status.code().unwrap_or(-1),
+                stdout,
+                stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+                cwd: new_cwd,
+            }
+        }
         Ok(Err(e)) => web_ssh::WebSshExecResult {
             exit_code: -1,
             stdout: String::new(),
             stderr: format!("Local execution failed: {e}"),
+            cwd: current_cwd.to_string_lossy().to_string(),
         },
         Err(_) => web_ssh::WebSshExecResult {
             exit_code: -1,
             stdout: String::new(),
             stderr: "Local command timed out (12s)".to_string(),
+            cwd: current_cwd.to_string_lossy().to_string(),
         },
     }
 }

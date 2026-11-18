@@ -155,6 +155,7 @@ export default function App() {
   } | null>(null);
   const [sshCmd, setSshCmd] = useState<string>("");
   const [sshLog, setSshLog] = useState<string>("");
+  const [sshCwd, setSshCwd] = useState<string>("~");
   const [sshBusy, setSshBusy] = useState<boolean>(false);
 
   // API Explorer state
@@ -1198,6 +1199,7 @@ export default function App() {
                                 return;
                               }
                               setSshSession(data);
+                              setSshCwd("~");
                               setSshLog(
                                 `[Mesh-SSH autorisiert] ${data.ssh_user}@${data.fqdn} (${data.mesh_ip})\n` +
                                 `OpenSSH-Cert Principals: ${data.principals.join(", ")} | Gültig bis: ${data.expires_at}\n` +
@@ -1251,7 +1253,7 @@ export default function App() {
                 </div>
 
                 <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
-                  {["whoami", "uname -a", "uptime", "sb-node domain status"].map((quick) => (
+                  {["whoami", "hostname", "dir", "sb-node domain status"].map((quick) => (
                     <button
                       key={quick}
                       className="btn"
@@ -1282,13 +1284,14 @@ export default function App() {
                 </pre>
 
                 <form
-                  style={{ display: "flex", gap: 8 }}
+                  style={{ display: "flex", gap: 8, alignItems: "center" }}
                   onSubmit={async (e) => {
                     e.preventDefault();
                     const cmd = sshCmd.trim();
                     if (!cmd || sshBusy) return;
                     setSshBusy(true);
-                    setSshLog((prev) => `${prev}\n$ ${cmd}\n`);
+                    const promptLabel = `${sshSession.ssh_user}@${sshSession.fqdn} ${sshCwd}>`;
+                    setSshLog((prev) => `${prev}\n${promptLabel} ${cmd}\n`);
                     setSshCmd("");
                     try {
                       const r = await fetch(`/v1/ssh/sessions/${encodeURIComponent(sshSession.session_id)}/exec`, {
@@ -1297,6 +1300,9 @@ export default function App() {
                         body: JSON.stringify({ command: cmd }),
                       });
                       const res = await r.json().catch(() => ({}));
+                      if (res.cwd) {
+                        setSshCwd(res.cwd);
+                      }
                       if (!r.ok) {
                         setSshLog((prev) => `${prev}[Fehler ${r.status}] ${res.error || "Ausführung fehlgeschlagen"}\n`);
                       } else {
@@ -1308,10 +1314,13 @@ export default function App() {
                     }
                   }}
                 >
+                  <span style={{ fontFamily: "monospace", fontSize: "0.85rem", color: "var(--muted)", whiteSpace: "nowrap" }}>
+                    {sshCwd}&gt;
+                  </span>
                   <input
                     className="input"
                     style={{ flex: 1 }}
-                    placeholder="Befehl eingeben (z. B. uname -a) und Enter drücken..."
+                    placeholder="Befehl eingeben (z. B. cd C:\Users\leonf oder dir) und Enter drücken..."
                     value={sshCmd}
                     onChange={(e) => setSshCmd(e.target.value)}
                     disabled={sshBusy}
