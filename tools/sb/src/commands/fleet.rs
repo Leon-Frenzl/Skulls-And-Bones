@@ -1558,6 +1558,245 @@ pub fn handle_domain_bootstrap(
     );
 }
 
+#[derive(Debug, Deserialize)]
+struct DomainSessionFile {
+    #[serde(default)]
+    dc_endpoint: String,
+    #[serde(default)]
+    access_token: String,
+}
+
+fn load_domain_session_credentials(dc_override: Option<&str>) -> Result<(String, String), String> {
+    let session_path = get_sb_dir().join("domain").join("session.json");
+    let session: DomainSessionFile = fs::read_to_string(&session_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(raw.trim_start_matches('\u{feff}')).ok())
+        .unwrap_or(DomainSessionFile {
+            dc_endpoint: String::new(),
+            access_token: String::new(),
+        });
+
+    let dc = dc_override
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            let trimmed = session.dc_endpoint.trim().trim_end_matches('/');
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .ok_or_else(|| {
+            "Kein DC-Endpoint in ~/.sb/domain/session.json gefunden. Bitte --dc <url> angeben oder zuerst `sb join <domain>` ausführen.".to_string()
+        })?;
+
+    if !dc.starts_with("https://") && !dc.starts_with("http://127.0.0.1") {
+        return Err(format!(
+            "Unsicherer DC-Endpoint abgelehnt: {dc} (erfordert https://)"
+        ));
+    }
+
+    let token = session.access_token.trim().to_string();
+    if token.is_empty() {
+        return Err(
+            "Kein gültiges access_token in ~/.sb/domain/session.json. Bitte zuerst mit `sb join <domain>` anmelden."
+                .to_string(),
+        );
+    }
+
+    Ok((dc, token))
+}
+
+/// Opens a local TCP listener on `127.0.0.1:<local_port>` and forwards each connection
+/// to `127.0.0.1:<remote_port>` on `<machine>` via the DC HTTPS-443 reverse relay.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Binding to `0.0.0.0` exposing private remote ports on the local LAN, or unauthenticated plaintext DC calls.
+/// - **CWE Mapping:** CWE-284 (Improper Access Control), CWE-319 (Cleartext Transmission).
+/// - **Likelihood & Exploitability:** Low (2/10); requires valid DC `access_token`.
+/// - **Applied Mitigation:** Binds strictly to `127.0.0.1`, enforces `https://` DC endpoints, and uses bearer authentication.
+pub fn handle_tunnel(machine: &str, remote_port: u16, local_port: u16, dc_override: Option<&str>) {
+    use base64::Engine;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    print_banner();
+    if remote_port == 0 || local_port == 0 {
+        eprintln!(
+            "  {} Ungültiger Port: remote_port und local_port müssen >= 1 sein.",
+            "✗".bright_red()
+        );
+        std::process::exit(1);
+    }
+
+    let (dc, token) = match load_domain_session_credentials(dc_override) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("  {} {e}", "✗".bright_red());
+            std::process::exit(1);
+        }
+    };
+
+    let bind_addr = format!("127.0.0.1:{local_port}");
+    let listener = match TcpListener::bind(&bind_addr) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!(
+                "  {} Lokaler Port {bind_addr} konnte nicht gebunden werden: {e}",
+                "✗".bright_red()
+            );
+            std::process::exit(1);
+        }
+    };
+
+    println!(
+        "  {} Tunnel aktiv: {} -> {} (127.0.0.1:{}) über {}",
+        "✓".bright_green().bold(),
+        bind_addr.bright_cyan(),
+        machine.bright_yellow(),
+        remote_port,
+        dc.dimmed()
+    );
+    println!("  {} Beenden mit Ctrl+C\n", "►".bright_blue());
+
+    for incoming in listener.incoming() {
+        let Ok(stream) = incoming else {
+            continue;
+        };
+        let dc_c = dc.clone();
+        let tok_c = token.clone();
+        let mach_c = machine.to_string();
+
+        std::thread::spawn(move || {
+            let open_url = format!("{dc_c}/v1/machines/{mach_c}/tunnel/open");
+            let open_body = serde_json::json!({ "target_port": remote_port }).to_string();
+            let resp = match ureq::post(&open_url)
+                .set("Authorization", &format!("Bearer {tok_c}"))
+                .set("Content-Type", "application/json")
+                .send_string(&open_body)
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("  {} Tunnel-Open fehlgeschlagen: {e}", "✗".bright_red());
+                    return;
+                }
+            };
+            let info_raw = match resp.into_string() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("  {} Ungültige Tunnel-Antwort: {e}", "✗".bright_red());
+                    return;
+                }
+            };
+            let info: serde_json::Value = match serde_json::from_str(&info_raw) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("  {} Ungültiges Tunnel-JSON: {e}", "✗".bright_red());
+                    return;
+                }
+            };
+            let Some(tid) = info
+                .get("tunnel_id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+            else {
+                eprintln!("  {} Keine tunnel_id erhalten", "✗".bright_red());
+                return;
+            };
+
+            let Ok(mut rd) = stream.try_clone() else {
+                return;
+            };
+            let mut wr = stream;
+            let stop = Arc::new(AtomicBool::new(false));
+
+            let dc_up = dc_c.clone();
+            let tok_up = tok_c.clone();
+            let tid_up = tid.clone();
+            let stop_up = Arc::clone(&stop);
+            let up_handle = std::thread::spawn(move || {
+                let mut buf = vec![0u8; 32 * 1024];
+                let push_url = format!("{dc_up}/v1/tunnels/{tid_up}/push");
+                loop {
+                    if stop_up.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    match rd.read(&mut buf) {
+                        Ok(0) => {
+                            let eof_body =
+                                serde_json::json!({ "data_b64": "", "eof": true }).to_string();
+                            let _ = ureq::post(&push_url)
+                                .set("Authorization", &format!("Bearer {tok_up}"))
+                                .set("Content-Type", "application/json")
+                                .send_string(&eof_body);
+                            break;
+                        }
+                        Ok(n) => {
+                            let data_b64 =
+                                base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
+                            let chunk_body = serde_json::json!({
+                                "data_b64": data_b64,
+                                "eof": false
+                            })
+                            .to_string();
+                            if ureq::post(&push_url)
+                                .set("Authorization", &format!("Bearer {tok_up}"))
+                                .set("Content-Type", "application/json")
+                                .send_string(&chunk_body)
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                stop_up.store(true, Ordering::Relaxed);
+            });
+
+            let pull_url = format!("{dc_c}/v1/tunnels/{tid}/pull?wait=15");
+            loop {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let Ok(r) = ureq::get(&pull_url)
+                    .set("Authorization", &format!("Bearer {tok_c}"))
+                    .call()
+                else {
+                    break;
+                };
+                let Ok(raw) = r.into_string() else {
+                    break;
+                };
+                let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                    break;
+                };
+                let b64 = val.get("data_b64").and_then(|v| v.as_str()).unwrap_or("");
+                let closed = val.get("closed").and_then(|v| v.as_bool()).unwrap_or(false);
+                if !b64.is_empty() {
+                    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
+                        if !bytes.is_empty() && wr.write_all(&bytes).is_err() {
+                            break;
+                        }
+                    }
+                }
+                if closed {
+                    break;
+                }
+            }
+            stop.store(true, Ordering::Relaxed);
+            let _ = up_handle.join();
+            let del_url = format!("{dc_c}/v1/tunnels/{tid}");
+            let _ = ureq::delete(&del_url)
+                .set("Authorization", &format!("Bearer {tok_c}"))
+                .call();
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

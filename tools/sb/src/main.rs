@@ -475,6 +475,19 @@ fn real_main() {
         Some(Commands::Revoke { name, reason }) => {
             handle_revoke(&name, &reason);
         }
+        Some(Commands::Tunnel {
+            machine,
+            remote_port,
+            local_port,
+            dc,
+        }) => {
+            commands::fleet::handle_tunnel(
+                &machine,
+                remote_port,
+                local_port.unwrap_or(remote_port),
+                dc.as_deref(),
+            );
+        }
         Some(Commands::Escape { action }) => match action {
             EscapeAction::Share {
                 port,
@@ -1033,6 +1046,29 @@ MULTILINE="first\nsecond"
                 assert!(!detach);
             }
             _ => panic!("Expected Daemon command"),
+        }
+    }
+
+    #[test]
+    fn test_tunnel_cli_parsing() {
+        use crate::cli::{Cli, Commands};
+        use clap::Parser;
+        let cmd =
+            Cli::try_parse_from(["sb", "tunnel", "mach_abc", "3389", "--local-port", "13389"])
+                .unwrap();
+        match cmd.command {
+            Some(Commands::Tunnel {
+                machine,
+                remote_port,
+                local_port,
+                dc,
+            }) => {
+                assert_eq!(machine, "mach_abc");
+                assert_eq!(remote_port, 3389);
+                assert_eq!(local_port, Some(13389));
+                assert_eq!(dc, None);
+            }
+            _ => panic!("Expected Tunnel command"),
         }
     }
 

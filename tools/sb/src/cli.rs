@@ -329,6 +329,20 @@ pub enum Commands {
         args: Vec<String>,
     },
 
+    /// Öffnet einen sicheren TCP-Port-Tunnel über das HTTPS-443 Relay zu einer Remote-Maschine
+    Tunnel {
+        /// Ziel-Maschinen-ID (z.B. mach_d61a1fc747530eb2)
+        machine: String,
+        /// Remote-TCP-Port auf der Zielmaschine (z.B. 3389, 5432, 8080)
+        remote_port: u16,
+        /// Lokaler Listen-Port auf 127.0.0.1 (Standard: identisch mit remote_port)
+        #[arg(long)]
+        local_port: Option<u16>,
+        /// Optionale Domain-Controller-URL (überschreibt session.json)
+        #[arg(long)]
+        dc: Option<String>,
+    },
+
     /// Veröffentlicht das aktuelle Projekt als P2P Code-Stream im Swarm (sb publish [project])
     Publish {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]

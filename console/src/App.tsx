@@ -157,6 +157,8 @@ export default function App() {
   const [sshLog, setSshLog] = useState<string>("");
   const [sshCwd, setSshCwd] = useState<string>("~");
   const [sshBusy, setSshBusy] = useState<boolean>(false);
+  const [sshHistory, setSshHistory] = useState<string[]>([]);
+  const [sshHistoryIdx, setSshHistoryIdx] = useState<number>(-1);
 
   // API Explorer state
   const [apiMethod, setApiMethod] = useState<string>("GET");
@@ -1210,6 +1212,27 @@ export default function App() {
                           >
                             SSH Terminal
                           </button>
+                          <button
+                            className="btn"
+                            disabled={m.revoked}
+                            onClick={() => {
+                              const raw = window.prompt(
+                                `Remote-Port auf ${m.fqdn} für den HTTPS-443 Tunnel (z. B. 3389 für RDP, 5432 für Postgres, 8080):`,
+                                "3389"
+                              );
+                              if (!raw) return;
+                              const port = Number(raw.trim());
+                              if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                                setStatusMsg("Ungültiger Port (1–65535)");
+                                return;
+                              }
+                              setStatusMsg(
+                                `Tunnel-Befehl für ${m.fqdn}: sb tunnel ${m.machine_id} ${port}`
+                              );
+                            }}
+                          >
+                            Port tunneln
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1290,6 +1313,8 @@ export default function App() {
                     const cmd = sshCmd.trim();
                     if (!cmd || sshBusy) return;
                     setSshBusy(true);
+                    setSshHistory((prev) => (prev[prev.length - 1] === cmd ? prev : [...prev, cmd]));
+                    setSshHistoryIdx(-1);
                     const promptLabel = `${sshSession.ssh_user}@${sshSession.fqdn} ${sshCwd}>`;
                     setSshLog((prev) => `${prev}\n${promptLabel} ${cmd}\n`);
                     setSshCmd("");
@@ -1322,7 +1347,33 @@ export default function App() {
                     style={{ flex: 1 }}
                     placeholder="Befehl eingeben (z. B. cd C:\Users\leonf oder dir) und Enter drücken..."
                     value={sshCmd}
-                    onChange={(e) => setSshCmd(e.target.value)}
+                    onChange={(e) => {
+                      setSshCmd(e.target.value);
+                      setSshHistoryIdx(-1);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "ArrowUp") {
+                        if (sshHistory.length === 0) return;
+                        e.preventDefault();
+                        const nextIdx =
+                          sshHistoryIdx === -1
+                            ? sshHistory.length - 1
+                            : Math.max(0, sshHistoryIdx - 1);
+                        setSshHistoryIdx(nextIdx);
+                        setSshCmd(sshHistory[nextIdx]);
+                      } else if (e.key === "ArrowDown") {
+                        if (sshHistoryIdx === -1) return;
+                        e.preventDefault();
+                        const nextIdx = sshHistoryIdx + 1;
+                        if (nextIdx >= sshHistory.length) {
+                          setSshHistoryIdx(-1);
+                          setSshCmd("");
+                        } else {
+                          setSshHistoryIdx(nextIdx);
+                          setSshCmd(sshHistory[nextIdx]);
+                        }
+                      }
+                    }}
                     disabled={sshBusy}
                   />
                   <button className="btn" type="submit" disabled={sshBusy}>

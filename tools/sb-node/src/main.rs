@@ -5525,15 +5525,26 @@ async fn run_relay_worker(
         force_refresh = false;
         match domain_join::poll_remote_relay_command(&dc_endpoint, &token, &machine_id, 20).await {
             Ok(Some(cmd)) => {
-                let res = execute_local_relay_command(&cmd.session_id, &cmd.command).await;
-                let _ = domain_join::post_remote_relay_result(
-                    &dc_endpoint,
-                    &token,
-                    &machine_id,
-                    &cmd.cmd_id,
-                    &res,
-                )
-                .await;
+                if cmd.kind == "tunnel_open" {
+                    if let Some(port) = cmd.target_port {
+                        let dc = dc_endpoint.clone();
+                        let mid = machine_id.clone();
+                        let tid = cmd.session_id.clone();
+                        tokio::spawn(async move {
+                            run_agent_tcp_tunnel(dc, mid, tid, port).await;
+                        });
+                    }
+                } else {
+                    let res = execute_local_relay_command(&cmd.session_id, &cmd.command).await;
+                    let _ = domain_join::post_remote_relay_result(
+                        &dc_endpoint,
+                        &token,
+                        &machine_id,
+                        &cmd.cmd_id,
+                        &res,
+                    )
+                    .await;
+                }
             }
             Ok(None) => {}
             Err(_) => {
@@ -5542,6 +5553,108 @@ async fn run_relay_worker(
             }
         }
     }
+}
+
+/// Bridges a local `127.0.0.1:<target_port>` TCP connection to a DC relay tunnel.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** SSRF/lateral pivoting to non-loopback LAN targets or stalled sockets.
+/// - **CWE Mapping:** CWE-918 (SSRF), CWE-400 (Resource Consumption).
+/// - **Likelihood & Exploitability:** Low (2/10); only authorized DC tunnel owners can queue `tunnel_open`.
+/// - **Applied Mitigation:** Strictly binds target dial to `127.0.0.1:<target_port>` and bounds read chunks to 32 KiB.
+async fn run_agent_tcp_tunnel(
+    dc_endpoint: String,
+    machine_id: String,
+    tunnel_id: String,
+    target_port: u16,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let addr = format!("127.0.0.1:{target_port}");
+    let Ok(stream) = tokio::net::TcpStream::connect(&addr).await else {
+        if let Ok(tok) = ensure_fresh_machine_token(&dc_endpoint, false).await {
+            let _ = domain_join::agent_push_tunnel_data(
+                &dc_endpoint,
+                &tok,
+                &machine_id,
+                &tunnel_id,
+                &[],
+                true,
+            )
+            .await;
+        }
+        return;
+    };
+    let (mut rd, mut wr) = stream.into_split();
+
+    let dc_up = dc_endpoint.clone();
+    let mid_up = machine_id.clone();
+    let tid_up = tunnel_id.clone();
+    let up_task = tokio::spawn(async move {
+        let mut buf = vec![0u8; 32 * 1024];
+        loop {
+            match rd.read(&mut buf).await {
+                Ok(0) => {
+                    if let Ok(tok) = ensure_fresh_machine_token(&dc_up, false).await {
+                        let _ = domain_join::agent_push_tunnel_data(
+                            &dc_up,
+                            &tok,
+                            &mid_up,
+                            &tid_up,
+                            &[],
+                            true,
+                        )
+                        .await;
+                    }
+                    break;
+                }
+                Ok(n) => {
+                    let Ok(tok) = ensure_fresh_machine_token(&dc_up, false).await else {
+                        break;
+                    };
+                    if domain_join::agent_push_tunnel_data(
+                        &dc_up,
+                        &tok,
+                        &mid_up,
+                        &tid_up,
+                        &buf[..n],
+                        false,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let dc_dn = dc_endpoint;
+    let mid_dn = machine_id;
+    let tid_dn = tunnel_id;
+    let dn_task = tokio::spawn(async move {
+        loop {
+            let Ok(tok) = ensure_fresh_machine_token(&dc_dn, false).await else {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            };
+            match domain_join::agent_pull_tunnel_data(&dc_dn, &tok, &mid_dn, &tid_dn, 15).await {
+                Ok((data, closed)) => {
+                    if !data.is_empty() && wr.write_all(&data).await.is_err() {
+                        break;
+                    }
+                    if closed {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let _ = tokio::join!(up_task, dn_task);
 }
 
 static RELAY_CWDS: std::sync::OnceLock<RwLock<HashMap<String, PathBuf>>> =
