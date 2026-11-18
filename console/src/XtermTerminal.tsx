@@ -40,6 +40,7 @@ export function XtermTerminal({
     "connecting"
   );
   const [errMsg, setErrMsg] = useState<string>("");
+  const [termTitle, setTermTitle] = useState<string>("");
 
   useEffect(() => {
     const el = hostRef.current;
@@ -100,6 +101,10 @@ export function XtermTerminal({
     const dataSub = term.onData((data) => {
       pendingInput += data;
       void flushInput();
+    });
+
+    const titleSub = term.onTitleChange((title) => {
+      setTermTitle(title.trim());
     });
 
     const resizeObserver = new ResizeObserver(() => {
@@ -187,6 +192,7 @@ export function XtermTerminal({
     return () => {
       cancelled = true;
       dataSub.dispose();
+      titleSub.dispose();
       resizeObserver.disconnect();
       if (ptyId) {
         void fetch(`/v1/ssh/pty/${encodeURIComponent(ptyId)}`, {
@@ -217,6 +223,7 @@ export function XtermTerminal({
           {connState === "connecting" && "◌ Verbinde PTY..."}
           {connState === "closed" && "○ Beendet"}
           {connState === "error" && `✕ ${errMsg}`}
+          {termTitle ? ` · ${termTitle}` : ""}
         </span>
         <span>Ctrl+C · Tab · Pfeiltasten · Vollbild-Resize aktiv</span>
       </div>
