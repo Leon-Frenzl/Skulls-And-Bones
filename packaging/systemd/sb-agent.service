@@ -1,0 +1,13 @@
+[Unit]
+Description=Skulls & Bones Linux Client Agent (GPO, LAPS & Fleet Sync)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sb-node agent --dc 10.42.0.1:8443 --interval-secs 60
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

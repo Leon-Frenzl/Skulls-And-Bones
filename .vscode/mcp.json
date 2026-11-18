@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "semgrep": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["--python", "3.12", "--with", "pydantic<2.11", "semgrep-mcp"]
+    },
+    "fetch": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["--python", "3.12", "mcp-server-fetch"]
+    }
+  }
+}
