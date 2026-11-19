@@ -92,6 +92,26 @@ unsafe fn alloc_co_task_pwstr(s: &str) -> windows::core::Result<PWSTR> {
     Ok(PWSTR(ptr))
 }
 
+unsafe fn lookup_negotiate_auth_package() -> Result<u32, String> {
+    let mut lsa_handle = windows::Win32::Foundation::HANDLE::default();
+    LsaConnectUntrusted(&mut lsa_handle)
+        .ok()
+        .map_err(|e| format!("LsaConnectUntrusted fehlgeschlagen: {e}"))?;
+    let pkg_name = b"Negotiate\0";
+    let lsa_str = LSA_STRING {
+        Length: (pkg_name.len() - 1) as u16,
+        MaximumLength: pkg_name.len() as u16,
+        Buffer: windows::core::PSTR(pkg_name.as_ptr() as *mut u8),
+    };
+    let mut auth_pkg: u32 = u32::MAX;
+    let pkg_res = LsaLookupAuthenticationPackage(lsa_handle, &lsa_str, &mut auth_pkg);
+    let _ = LsaDeregisterLogonProcess(lsa_handle);
+    pkg_res
+        .ok()
+        .map_err(|e| format!("Negotiate-Authentifizierungspaket nicht gefunden: {e}"))?;
+    Ok(auth_pkg)
+}
+
 /// Packs `username` and `password` into a `CoTaskMemAlloc`-allocated
 /// `KERB_INTERACTIVE_UNLOCK_LOGON` buffer with relative offsets via `CredPackAuthenticationBufferW`.
 unsafe fn pack_interactive_credentials(
@@ -396,28 +416,19 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
         // Pack KERB_INTERACTIVE_UNLOCK_LOGON using CredPackAuthenticationBufferW so all
         // LSA_UNICODE_STRING.Buffer fields are relative offsets valid across winlogon/lsass.
         unsafe {
-            let mut lsa_handle = windows::Win32::Foundation::HANDLE::default();
-            if LsaConnectUntrusted(&mut lsa_handle).is_err() {
-                *pcpgsr = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
-                return Ok(());
-            }
-            let pkg_name = b"Negotiate";
-            let lsa_str = LSA_STRING {
-                Length: pkg_name.len() as u16,
-                MaximumLength: pkg_name.len() as u16,
-                Buffer: windows::core::PSTR(pkg_name.as_ptr() as *mut u8),
-            };
-            let mut auth_pkg: u32 = 0;
-            let pkg_res = LsaLookupAuthenticationPackage(lsa_handle, &lsa_str, &mut auth_pkg);
-            let _ = LsaDeregisterLogonProcess(lsa_handle);
-            if pkg_res.is_err() || auth_pkg == 0 {
-                *pcpgsr = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
-                if !ppszoptionalstatustext.is_null() {
-                    *ppszoptionalstatustext =
-                        alloc_co_task_pwstr("Negotiate-Authentifizierungspaket nicht gefunden.")?;
+            let auth_pkg = match lookup_negotiate_auth_package() {
+                Ok(id) => id,
+                Err(msg) => {
+                    *pcpgsr = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+                    if !ppszoptionalstatustext.is_null() {
+                        *ppszoptionalstatustext = alloc_co_task_pwstr(&msg)?;
+                    }
+                    if !pcpsioptionalstatusicon.is_null() {
+                        *pcpsioptionalstatusicon = windows::Win32::UI::Shell::CPSI_ERROR;
+                    }
+                    return Ok(());
                 }
-                return Ok(());
-            }
+            };
 
             let local_user = format!(".\\{}", resp.username);
             let (raw, total) = match pack_interactive_credentials(&local_user, &pass) {
@@ -768,6 +779,10 @@ mod tests {
             let hbmp = cred.GetBitmapValue(0).unwrap();
             assert!(!hbmp.is_invalid());
             let _ = windows::Win32::Graphics::Gdi::DeleteObject(hbmp.into());
+
+            let pkg_id = lookup_negotiate_auth_package()
+                .expect("Negotiate LSA auth package lookup must succeed");
+            assert_ne!(pkg_id, u32::MAX);
 
             let mut resp = CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE::default();
             let mut ser = CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION::default();
