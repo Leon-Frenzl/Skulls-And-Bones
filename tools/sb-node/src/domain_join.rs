@@ -4542,11 +4542,12 @@ async fn handle_browser_pty_ws(
         let msg = serde_json::json!({ "error": err }).to_string();
         return write_http_json(stream, code, "Error", &msg).await;
     }
-    let mut ws = upgrade_ws_stream(stream, header_lines).await?;
+    let ws = upgrade_ws_stream(stream, header_lines).await?;
+    let (mut ws_tx, mut ws_rx) = ws.split();
 
     loop {
         tokio::select! {
-            incoming = ws.next() => {
+            incoming = ws_rx.next() => {
                 match incoming {
                     Some(Ok(Message::Binary(bytes))) => {
                         if crate::web_ssh::push_pty_input(claims, pty_id, bytes.to_vec(), None, false).await.is_err() {
@@ -4568,7 +4569,7 @@ async fn handle_browser_pty_ws(
                         }
                     }
                     Some(Ok(Message::Ping(p))) => {
-                        let _ = ws.send(Message::Pong(p)).await;
+                        let _ = ws_tx.send(Message::Pong(p)).await;
                     }
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                     _ => {}
@@ -4577,11 +4578,11 @@ async fn handle_browser_pty_ws(
             outgoing = crate::web_ssh::pull_pty_output(claims, pty_id, 25) => {
                 match outgoing {
                     Ok((data, closed)) => {
-                        if !data.is_empty() && ws.send(Message::Binary(data.into())).await.is_err() {
+                        if !data.is_empty() && ws_tx.send(Message::Binary(data.into())).await.is_err() {
                             break;
                         }
                         if closed {
-                            let _ = ws.send(Message::Close(None)).await;
+                            let _ = ws_tx.send(Message::Close(None)).await;
                             break;
                         }
                     }
@@ -4605,11 +4606,12 @@ async fn handle_agent_pty_ws(
     if !claims.has_capability("domain:join") && !claims.has_role("admin") {
         return write_http_json(stream, 403, "Forbidden", r#"{"error":"forbidden"}"#).await;
     }
-    let mut ws = upgrade_ws_stream(stream, header_lines).await?;
+    let ws = upgrade_ws_stream(stream, header_lines).await?;
+    let (mut ws_tx, mut ws_rx) = ws.split();
 
     loop {
         tokio::select! {
-            incoming = ws.next() => {
+            incoming = ws_rx.next() => {
                 match incoming {
                     Some(Ok(Message::Binary(bytes))) => {
                         if crate::web_ssh::push_pty_output(claims, pty_id, bytes.to_vec(), false).await.is_err() {
@@ -4617,7 +4619,7 @@ async fn handle_agent_pty_ws(
                         }
                     }
                     Some(Ok(Message::Ping(p))) => {
-                        let _ = ws.send(Message::Pong(p)).await;
+                        let _ = ws_tx.send(Message::Pong(p)).await;
                     }
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
                         let _ = crate::web_ssh::push_pty_output(claims, pty_id, Vec::new(), true).await;
@@ -4631,15 +4633,15 @@ async fn handle_agent_pty_ws(
                     Ok((data, resize, closed)) => {
                         if let Some((c, r)) = resize {
                             let msg = serde_json::json!({ "resize": { "cols": c, "rows": r } }).to_string();
-                            if ws.send(Message::Text(msg.into())).await.is_err() {
+                            if ws_tx.send(Message::Text(msg.into())).await.is_err() {
                                 break;
                             }
                         }
-                        if !data.is_empty() && ws.send(Message::Binary(data.into())).await.is_err() {
+                        if !data.is_empty() && ws_tx.send(Message::Binary(data.into())).await.is_err() {
                             break;
                         }
                         if closed {
-                            let _ = ws.send(Message::Close(None)).await;
+                            let _ = ws_tx.send(Message::Close(None)).await;
                             break;
                         }
                     }

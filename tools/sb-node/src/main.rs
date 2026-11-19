@@ -5963,9 +5963,10 @@ async fn try_run_agent_pty_ws(
     };
     req.headers_mut().insert("Authorization", auth_val);
 
-    let Ok((mut ws, _)) = tokio_tungstenite::connect_async(req).await else {
+    let Ok((ws, _)) = tokio_tungstenite::connect_async(req).await else {
         return false;
     };
+    let (mut ws_tx, mut ws_rx) = ws.split();
 
     loop {
         tokio::select! {
@@ -5978,17 +5979,17 @@ async fn try_run_agent_pty_ws(
                                 Err(_) => break,
                             }
                         }
-                        if ws.send(Message::Binary(batch.into())).await.is_err() {
+                        if ws_tx.send(Message::Binary(batch.into())).await.is_err() {
                             break;
                         }
                     }
                     None => {
-                        let _ = ws.send(Message::Close(None)).await;
+                        let _ = ws_tx.send(Message::Close(None)).await;
                         break;
                     }
                 }
             }
-            incoming = ws.next() => {
+            incoming = ws_rx.next() => {
                 match incoming {
                     Some(Ok(Message::Binary(bytes))) => {
                         if !bytes.is_empty() {
@@ -6018,7 +6019,7 @@ async fn try_run_agent_pty_ws(
                         }
                     }
                     Some(Ok(Message::Ping(p))) => {
-                        let _ = ws.send(Message::Pong(p)).await;
+                        let _ = ws_tx.send(Message::Pong(p)).await;
                     }
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                     _ => {}
@@ -6080,8 +6081,13 @@ fn execute_local_file_op(kind: &str, payload_json: &str) -> web_ssh::WebSshExecR
                 })
             });
             let canonical = fs::canonicalize(&target).unwrap_or(target);
+            let display_path = canonical.display().to_string();
+            let clean_path = display_path
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&display_path)
+                .to_string();
             let out = serde_json::json!({
-                "path": canonical.display().to_string(),
+                "path": clean_path,
                 "entries": entries,
             })
             .to_string();

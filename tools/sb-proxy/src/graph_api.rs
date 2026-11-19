@@ -67,7 +67,9 @@ pub async fn serve_graph_gateway_on_listener(
         tokio::spawn(async move {
             let service =
                 service_fn(move |req| handle_graph_request(req, cfg.clone(), ver.clone()));
-            let _ = http1::Builder::new().serve_connection(io, service).await;
+            let _ = http1::Builder::new()
+                .serve_connection_with_upgrades(io, service)
+                .await;
         });
     }
 }
