@@ -1101,16 +1101,34 @@ async fn handle_join_http_connection(
                 }
             };
             hb.machine_id = machine_id.to_string();
+            let hb_fqdn = hb.fqdn.clone();
             let mut store = crate::fleet::FleetStore::load(&fleet_path).unwrap_or_default();
             store.record_heartbeat(hb);
             let _ = store.save(&fleet_path);
 
             let laps_meta = crate::laps::LapsMetaStore::load(&base_dir.join("laps_meta.json"))
                 .unwrap_or_default();
-            let mut actions: Vec<&str> = Vec::new();
+            let mut actions: Vec<String> = Vec::new();
             if let Some(entry) = laps_meta.entries.get(machine_id) {
                 if entry.rotate_requested || entry.rotate_pending {
-                    actions.push("laps_rotate");
+                    actions.push("laps_rotate".to_string());
+                }
+            }
+            if let Ok(users_dir) =
+                crate::directory_users::IdentityDirectory::load_or_create(
+                    &base_dir.join("users.json"),
+                    "corp.eu",
+                )
+            {
+                for u in users_dir.users.values() {
+                    if !crate::os_auth_broker::is_protected_system_account(&u.username)
+                        && (!u.enabled
+                            || users_dir
+                                .evaluate_machine_login(&u.username, machine_id, &hb_fqdn)
+                                .is_err())
+                    {
+                        actions.push(format!("offboard_user:{}", u.username));
+                    }
                 }
             }
             let resp = serde_json::json!({

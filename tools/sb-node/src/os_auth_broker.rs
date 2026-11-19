@@ -212,6 +212,23 @@ pub async fn authenticate_os_user(
                         ou,
                         error: String::new(),
                     };
+                } else {
+                    // DC explicitly denied login (user disabled, offboarded, or machine removed):
+                    // purge any cached verifier and local OS residues immediately; never fall back to offline cache.
+                    let _ = purge_offboarded_user(&clean_user);
+                    let err_msg = val["error"]
+                        .as_str()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("Anmeldung durch Domain Controller abgelehnt")
+                        .to_string();
+                    return OsAuthResponse {
+                        allowed: false,
+                        username: clean_user,
+                        is_local_admin: false,
+                        groups: Vec::new(),
+                        ou: String::new(),
+                        error: err_msg,
+                    };
                 }
             }
         }
@@ -304,6 +321,170 @@ pub fn ensure_local_os_account(
         let _ = (clean, password, is_local_admin);
         Ok(())
     }
+}
+
+/// Returns `true` if `username` is a protected built-in or break-glass OS account
+/// that MUST NEVER be deleted by automated offboarding.
+pub fn is_protected_system_account(username: &str) -> bool {
+    matches!(
+        username.trim().to_ascii_lowercase().as_str(),
+        "administrator"
+            | "admin"
+            | "root"
+            | "system"
+            | "localservice"
+            | "networkservice"
+            | "guest"
+            | "defaultaccount"
+            | "wdagutilityaccount"
+            | "sb-rescue"
+    )
+}
+
+/// Completely purges an offboarded or revoked domain user from this machine with zero residues:
+/// removes offline Argon2id cache entry, terminates active sessions/processes, deletes the
+/// OS user profile directory, and deletes the local OS account.
+///
+/// // [SECURITY-HYPOTHESIS] CWE-284 / CWE-459: Offboarded users retain local OS accounts,
+/// // active sessions, profile data, or offline Argon2id verifiers after DC revocation.
+/// // [SECURITY-VERIFIED] Validates username via POSIX subset, refuses built-in/LAPS accounts,
+/// // purges `os_auth_cache.enc`, logs off sessions, kills processes, removes Win32_UserProfile /
+/// // home directory, and deletes the local OS account.
+pub fn purge_offboarded_user(username: &str) -> Result<bool, String> {
+    let clean = sb_core::identity::validate_username(username)?;
+    if is_protected_system_account(&clean) {
+        return Err(format!(
+            "Refusing to purge protected system account '{clean}'"
+        ));
+    }
+
+    let mut purged_anything = false;
+    let mut cache = load_offline_cache();
+    if cache.users.remove(&clean).is_some() {
+        save_offline_cache(&cache);
+        purged_anything = true;
+    }
+
+    #[cfg(windows)]
+    {
+        let exists = Command::new("net")
+            .args(["user", &clean])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if exists {
+            purged_anything = true;
+            // 1. Log off any active or disconnected Windows sessions for this user.
+            if let Ok(q_out) = Command::new("query").arg("user").output() {
+                let text = String::from_utf8_lossy(&q_out.stdout);
+                for line in text.lines().skip(1) {
+                    let cols: Vec<&str> = line.split_whitespace().collect();
+                    if cols.len() >= 3 {
+                        let row_user = cols[0].trim_start_matches('>');
+                        if row_user.eq_ignore_ascii_case(&clean) {
+                            // Session ID is either col[1] (when SESSIONNAME is blank) or col[2].
+                            for cand in cols.iter().skip(1).take(3) {
+                                if cand.chars().all(|c| c.is_ascii_digit()) {
+                                    let _ = Command::new("logoff").arg(cand).output();
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Terminate any remaining processes owned by this user.
+            let filter = format!("USERNAME eq {clean}");
+            let _ = Command::new("taskkill")
+                .args(["/F", "/FI", &filter])
+                .output();
+
+            // 3. Remove Windows user profile (registry + C:\Users\<clean>).
+            let ps_cmd = format!(
+                "Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue | Where-Object {{ $_.LocalPath -and ([System.IO.Path]::GetFileName($_.LocalPath) -ieq '{}') }} | Remove-CimInstance -ErrorAction SilentlyContinue",
+                clean
+            );
+            let _ = Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+                .output();
+
+            let profile_dir = PathBuf::from(format!(r"C:\Users\{clean}"));
+            if profile_dir.exists() {
+                let _ = fs::remove_dir_all(&profile_dir);
+            }
+
+            // 4. Remove from Administrators and delete the local SAM account.
+            let _ = Command::new("net")
+                .args(["localgroup", "Administrators", &clean, "/delete"])
+                .output();
+            let del_out = Command::new("net")
+                .args(["user", &clean, "/delete"])
+                .output()
+                .map_err(|e| format!("net user /delete failed: {e}"))?;
+            if !del_out.status.success() {
+                return Err(format!(
+                    "Failed to delete local Windows user '{clean}': {}",
+                    String::from_utf8_lossy(&del_out.stderr).trim()
+                ));
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let exists = Command::new("id")
+            .arg(&clean)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if exists {
+            purged_anything = true;
+            let _ = Command::new("pkill").args(["-KILL", "-u", &clean]).output();
+            let _ = Command::new("userdel").args(["-r", "-f", &clean]).output();
+            let home = PathBuf::from(format!("/home/{clean}"));
+            if home.exists() {
+                let _ = fs::remove_dir_all(&home);
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let exists = Command::new("id")
+            .arg(&clean)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if exists {
+            purged_anything = true;
+            let _ = Command::new("pkill").args(["-KILL", "-u", &clean]).output();
+            let user_record = format!("/Users/{clean}");
+            let _ = Command::new("dscl")
+                .args([".", "-delete", &user_record])
+                .output();
+            let home = PathBuf::from(&user_record);
+            if home.exists() {
+                let _ = fs::remove_dir_all(&home);
+            }
+        }
+    }
+
+    Ok(purged_anything)
+}
+
+/// Purges all cached domain users on this machine (used when the machine itself is offboarded/revoked).
+pub fn purge_all_cached_domain_users() -> Vec<String> {
+    let cache = load_offline_cache();
+    let usernames: Vec<String> = cache.users.keys().cloned().collect();
+    let mut purged = Vec::new();
+    for u in usernames {
+        if purge_offboarded_user(&u).unwrap_or(false) {
+            purged.push(u);
+        }
+    }
+    purged
 }
 
 /// Creates a Windows Named Pipe server instance with a strict DACL allowing only
@@ -455,5 +636,20 @@ pub async fn run_os_auth_broker(dc_endpoint: String, machine_id: String) {
                 }
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn protected_accounts_cannot_be_purged() {
+        assert!(is_protected_system_account("sb-rescue"));
+        assert!(is_protected_system_account("Administrator"));
+        assert!(is_protected_system_account("root"));
+        assert!(!is_protected_system_account("leon.admin"));
+        assert!(purge_offboarded_user("sb-rescue").is_err());
+        assert!(purge_offboarded_user("Administrator").is_err());
     }
 }

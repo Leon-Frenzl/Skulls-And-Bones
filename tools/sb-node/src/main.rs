@@ -307,6 +307,14 @@ enum DomainCommands {
         #[arg(long)]
         url: Option<String>,
     },
+    /// Entfernt einen offboarded Domänen-Nutzer (oder alle) restlos von dieser Maschine
+    OffboardPurge {
+        /// Benutzername (optional bei --all)
+        username: Option<String>,
+        /// Entfernt alle zwischengespeicherten Domänen-Nutzer auf dieser Maschine
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -4674,6 +4682,25 @@ async fn handle_domain_commands(sub: DomainCommands) -> Result<(), String> {
             dll_path,
             url,
         } => handle_domain_logon_cmd(&action, dll_path, url),
+        DomainCommands::OffboardPurge { username, all } => {
+            if all {
+                let purged = os_auth_broker::purge_all_cached_domain_users();
+                println!(
+                    "{} {} zwischengespeicherte Domänen-Nutzer restlos entfernt.",
+                    "✓".green(),
+                    purged.len()
+                );
+                Ok(())
+            } else if let Some(u) = username {
+                match os_auth_broker::purge_offboarded_user(&u)? {
+                    true => println!("{} Benutzer '{}' restlos entfernt.", "✓".green(), u),
+                    false => println!("ℹ Keine lokalen Reste für '{}' gefunden.", u),
+                }
+                Ok(())
+            } else {
+                Err("Bitte <USERNAME> oder --all angeben.".into())
+            }
+        }
     }
 }
 
@@ -5464,8 +5491,26 @@ async fn run_agent_loop(
                                     )
                                     .await
                                     {
-                                        if actions.iter().any(|a| a == "laps_rotate") {
-                                            remote_rotate_requested = true;
+                                        for action in &actions {
+                                            if action == "laps_rotate" {
+                                                remote_rotate_requested = true;
+                                            } else if let Some(user) =
+                                                action.strip_prefix("offboard_user:")
+                                            {
+                                                match os_auth_broker::purge_offboarded_user(user) {
+                                                    Ok(true) => println!(
+                                                        "  {} Offboarded user '{}' restlos entfernt.",
+                                                        "✓".green(),
+                                                        user
+                                                    ),
+                                                    Ok(false) => {}
+                                                    Err(err) => eprintln!(
+                                                        "  {} Offboarding-Purge für '{}' fehlgeschlagen: {err}",
+                                                        "!".yellow(),
+                                                        user
+                                                    ),
+                                                }
+                                            }
                                         }
                                     }
                                 }
