@@ -3,20 +3,25 @@
 //! Communicates with the local `sb-node-agent` OS Auth Broker over `/run/sb-node/auth.sock`
 //! (with fallback to `~/.sb/domain/auth.sock`) — no LDAP/LDAPS or Kerberos required.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+#[cfg(unix)]
+use serde::Serialize;
 use std::ffi::{c_char, c_int, c_void, CStr};
+#[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
 
 const PAM_SUCCESS: c_int = 0;
 const PAM_AUTH_ERR: c_int = 7;
 const PAM_USER_UNKNOWN: c_int = 10;
 
+#[cfg(unix)]
 #[derive(Serialize)]
 struct BrokerReq<'a> {
     username: &'a str,
     password: &'a str,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct BrokerResp {
     allowed: bool,

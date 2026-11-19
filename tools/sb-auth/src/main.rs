@@ -637,9 +637,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 primary,
                 title,
             } => {
-                let mut cfg = UiConfig::default();
-                cfg.primary_color = primary;
-                cfg.title = title;
+                let cfg = UiConfig {
+                    primary_color: primary,
+                    title,
+                    ..Default::default()
+                };
                 println!(
                     "{}",
                     "═══ S&B AUTH // FORMULAR-VORSCHAU ═══".bright_cyan().bold()
@@ -653,9 +655,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 primary,
                 title,
             } => {
-                let mut cfg = UiConfig::default();
-                cfg.primary_color = primary;
-                cfg.title = title;
+                let cfg = UiConfig {
+                    primary_color: primary,
+                    title,
+                    ..Default::default()
+                };
                 let html = render_login_page(&cfg);
                 std::fs::write(&out, html)?;
                 println!(

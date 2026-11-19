@@ -156,14 +156,16 @@ unsafe fn pack_interactive_credentials(
 unsafe fn create_sb_tile_bitmap() -> windows::core::Result<HBITMAP> {
     const SIZE: i32 = 128;
     const SS: i32 = 4;
-    let mut bmi = BITMAPINFO::default();
-    bmi.bmiHeader = BITMAPINFOHEADER {
-        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-        biWidth: SIZE,
-        biHeight: -SIZE, // top-down DIB
-        biPlanes: 1,
-        biBitCount: 32,
-        biCompression: BI_RGB.0,
+    let bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: SIZE,
+            biHeight: -SIZE, // top-down DIB
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let mut bits: *mut c_void = std::ptr::null_mut();
@@ -235,7 +237,7 @@ unsafe fn create_sb_tile_bitmap() -> windows::core::Result<HBITMAP> {
         // Skull silhouette: cranium + cheekbones + jaw
         let in_cranium = ((dx / 25.0).powi(2) + ((dy + 9.0) / 22.5).powi(2)) <= 1.0;
         let in_cheeks = ((dx / 21.0).powi(2) + ((dy - 3.0) / 13.0).powi(2)) <= 1.0;
-        let in_jaw = dx.abs() <= 13.5 && dy >= 7.0 && dy <= 26.5;
+        let in_jaw = dx.abs() <= 13.5 && (7.0..=26.5).contains(&dy);
         let jaw_round = ((dx / 13.5).powi(2) + ((dy - 22.0) / 6.0).powi(2)) <= 1.0;
         if in_cranium || in_cheeks || in_jaw || jaw_round {
             let shade = ((dx * 0.25 + dy * 0.35) / 40.0).clamp(-0.15, 0.18);
@@ -261,8 +263,8 @@ unsafe fn create_sb_tile_bitmap() -> windows::core::Result<HBITMAP> {
         }
 
         // Nasal cavity + teeth cutouts
-        let nasal = dy >= 3.5 && dy <= 10.5 && dx.abs() <= (dy - 2.5) * 0.48;
-        let teeth_sep = dy >= 19.5 && dy <= 28.5
+        let nasal = (3.5..=10.5).contains(&dy) && dx.abs() <= (dy - 2.5) * 0.48;
+        let teeth_sep = (19.5..=28.5).contains(&dy)
             && ((dx + 6.0).abs() <= 1.15 || dx.abs() <= 1.15 || (dx - 6.0).abs() <= 1.15);
         let teeth_bar = dx.abs() <= 10.5 && (dy - 19.0).abs() <= 0.7;
         if nasal || teeth_sep || teeth_bar {
@@ -681,6 +683,8 @@ impl IClassFactory_Impl for SBClassFactory_Impl {
     }
 }
 
+/// # Safety
+/// Called by the Windows loader when the DLL is attached or detached.
 #[no_mangle]
 pub unsafe extern "system" fn DllMain(
     hinst: HINSTANCE,
@@ -693,6 +697,8 @@ pub unsafe extern "system" fn DllMain(
     true
 }
 
+/// # Safety
+/// COM class factory entry point; `rclsid`, `riid`, and `ppv` must be valid pointers.
 #[no_mangle]
 pub unsafe extern "system" fn DllGetClassObject(
     rclsid: *const GUID,
@@ -749,6 +755,8 @@ fn reg_write_sz(root: HKEY, subkey: PCWSTR, value_name: Option<PCWSTR>, data: &[
     }
 }
 
+/// # Safety
+/// Registers this COM Credential Provider DLL in `HKCR` and `HKLM`.
 #[no_mangle]
 pub unsafe extern "system" fn DllRegisterServer() -> HRESULT {
     let mut path_buf = [0u16; 512];
@@ -763,21 +771,20 @@ pub unsafe extern "system" fn DllRegisterServer() -> HRESULT {
         .collect();
     let apt_w: Vec<u16> = "Apartment".encode_utf16().chain(std::iter::once(0)).collect();
 
-    let clsid_key: Vec<u16> = format!("CLSID\\{{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}}")
+    let clsid_key: Vec<u16> = "CLSID\\{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}"
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
     let inproc_key: Vec<u16> =
-        format!("CLSID\\{{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}}\\InprocServer32")
+        "CLSID\\{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}\\InprocServer32"
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
-    let cp_key: Vec<u16> = format!(
-        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}}"
-    )
-    .encode_utf16()
-    .chain(std::iter::once(0))
-    .collect();
+    let cp_key: Vec<u16> =
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
 
     let _ = reg_write_sz(HKEY_CLASSES_ROOT, PCWSTR(clsid_key.as_ptr()), None, &name_w);
     let _ = reg_write_sz(
@@ -795,18 +802,19 @@ pub unsafe extern "system" fn DllRegisterServer() -> HRESULT {
     reg_write_sz(HKEY_LOCAL_MACHINE, PCWSTR(cp_key.as_ptr()), None, &name_w)
 }
 
+/// # Safety
+/// Unregisters this COM Credential Provider DLL from `HKCR` and `HKLM`.
 #[no_mangle]
 pub unsafe extern "system" fn DllUnregisterServer() -> HRESULT {
-    let clsid_key: Vec<u16> = format!("CLSID\\{{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}}")
+    let clsid_key: Vec<u16> = "CLSID\\{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}"
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
-    let cp_key: Vec<u16> = format!(
-        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}}"
-    )
-    .encode_utf16()
-    .chain(std::iter::once(0))
-    .collect();
+    let cp_key: Vec<u16> =
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
     let _ = RegDeleteTreeW(HKEY_CLASSES_ROOT, PCWSTR(clsid_key.as_ptr()));
     let _ = RegDeleteTreeW(HKEY_LOCAL_MACHINE, PCWSTR(cp_key.as_ptr()));
     let _ = (CLSID_STR, PROVIDER_NAME);

@@ -397,19 +397,17 @@ pub fn serve_preview(port: u16, cfg: &UiConfig) -> std::io::Result<()> {
     );
     println!("  i Drücke Ctrl+C zum Beenden.");
 
-    for stream in listener.incoming() {
-        if let Ok(mut stream) = stream {
-            let mut buf = [0u8; 1024];
-            let _ = stream.read(&mut buf);
+    for mut stream in listener.incoming().flatten() {
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
 
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                html_bytes.len()
-            );
-            let _ = stream.write_all(response.as_bytes());
-            let _ = stream.write_all(html_bytes);
-            let _ = stream.flush();
-        }
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            html_bytes.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+        let _ = stream.write_all(html_bytes);
+        let _ = stream.flush();
     }
     Ok(())
 }
