@@ -16,10 +16,9 @@ use windows::Win32::Foundation::{
     S_FALSE, S_OK,
 };
 use windows::Win32::Security::Authentication::Identity::{
-    LsaConnectUntrusted, LsaDeregisterLogonProcess, LsaLookupAuthenticationPackage,
-    KERB_INTERACTIVE_LOGON, KERB_INTERACTIVE_UNLOCK_LOGON, KERB_LOGON_SUBMIT_TYPE,
-    LSA_STRING,
+    LsaConnectUntrusted, LsaDeregisterLogonProcess, LsaLookupAuthenticationPackage, LSA_STRING,
 };
+use windows::Win32::Security::Credentials::{CredPackAuthenticationBufferW, CRED_PACK_FLAGS};
 use windows::Win32::System::Com::{CoTaskMemAlloc, IClassFactory, IClassFactory_Impl};
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::System::Registry::{
@@ -30,7 +29,7 @@ use windows::Win32::UI::Shell::{
     ICredentialProvider, ICredentialProviderCredential, ICredentialProviderCredentialEvents,
     ICredentialProviderCredential_Impl, ICredentialProviderEvents, ICredentialProvider_Impl,
     CPFIS_FOCUSED, CPFIS_NONE, CPFS_DISPLAY_IN_BOTH, CPFS_DISPLAY_IN_SELECTED_TILE,
-    CPFS_HIDDEN, CPFT_EDIT_TEXT, CPFT_LARGE_TEXT, CPFT_PASSWORD_TEXT,
+    CPFS_HIDDEN, CPFT_EDIT_TEXT, CPFT_LARGE_TEXT, CPFT_PASSWORD_TEXT, CPFT_SUBMIT_BUTTON,
     CPGSR_NO_CREDENTIAL_NOT_FINISHED, CPGSR_RETURN_CREDENTIAL_FINISHED,
     CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION, CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR,
     CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE, CREDENTIAL_PROVIDER_FIELD_STATE,
@@ -90,6 +89,45 @@ unsafe fn alloc_co_task_pwstr(s: &str) -> windows::core::Result<PWSTR> {
     Ok(PWSTR(ptr))
 }
 
+/// Packs `username` and `password` into a `CoTaskMemAlloc`-allocated
+/// `KERB_INTERACTIVE_UNLOCK_LOGON` buffer with relative offsets via `CredPackAuthenticationBufferW`.
+unsafe fn pack_interactive_credentials(
+    username: &str,
+    password: &str,
+) -> Result<(*mut u8, u32), String> {
+    let mut user_w: Vec<u16> = username.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut pass_w: Vec<u16> = password.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut cb: u32 = 0;
+    let _ = CredPackAuthenticationBufferW(
+        CRED_PACK_FLAGS(0),
+        PWSTR(user_w.as_mut_ptr()),
+        PWSTR(pass_w.as_mut_ptr()),
+        None,
+        &mut cb,
+    );
+    if cb == 0 {
+        return Err("CredPackAuthenticationBufferW lieferte Länge 0".into());
+    }
+    let raw = CoTaskMemAlloc(cb as usize) as *mut u8;
+    if raw.is_null() {
+        return Err("CoTaskMemAlloc fehlgeschlagen".into());
+    }
+    std::ptr::write_bytes(raw, 0, cb as usize);
+    if CredPackAuthenticationBufferW(
+        CRED_PACK_FLAGS(0),
+        PWSTR(user_w.as_mut_ptr()),
+        PWSTR(pass_w.as_mut_ptr()),
+        Some(raw),
+        &mut cb,
+    )
+    .is_err()
+    {
+        windows::Win32::System::Com::CoTaskMemFree(Some(raw as *const c_void));
+        return Err("CredPackAuthenticationBufferW fehlgeschlagen".into());
+    }
+    Ok((raw, cb))
+}
+
 #[derive(Default)]
 struct CredFields {
     username: String,
@@ -145,6 +183,10 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
                     *pcpfs = CPFS_DISPLAY_IN_SELECTED_TILE;
                     *pcpfis = CPFIS_NONE;
                 }
+                3 => {
+                    *pcpfs = CPFS_DISPLAY_IN_SELECTED_TILE;
+                    *pcpfis = CPFIS_NONE;
+                }
                 _ => {
                     *pcpfs = CPFS_HIDDEN;
                     *pcpfis = CPFIS_NONE;
@@ -160,6 +202,7 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
             0 => "Bei Skulls & Bones anmelden",
             1 => guard.username.as_str(),
             2 => guard.password.as_str(),
+            3 => "Anmelden",
             _ => return Err(Error::from(E_INVALIDARG)),
         };
         unsafe { alloc_co_task_pwstr(val) }
@@ -178,8 +221,12 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
         Err(Error::from(E_NOTIMPL))
     }
 
-    fn GetSubmitButtonValue(&self, _dwfieldid: u32) -> windows::core::Result<u32> {
-        Err(Error::from(E_NOTIMPL))
+    fn GetSubmitButtonValue(&self, dwfieldid: u32) -> windows::core::Result<u32> {
+        if dwfieldid == 3 {
+            Ok(2)
+        } else {
+            Err(Error::from(E_INVALIDARG))
+        }
     }
 
     fn GetComboBoxValueCount(
@@ -228,10 +275,30 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
         if pcpgsr.is_null() || pcpcs.is_null() {
             return Err(Error::from(E_POINTER));
         }
+        unsafe {
+            std::ptr::write_bytes(pcpcs, 0, 1);
+            if !ppszoptionalstatustext.is_null() {
+                *ppszoptionalstatustext = PWSTR::null();
+            }
+        }
         let (user, pass) = {
             let guard = self.state.lock().map_err(|_| Error::from(E_FAIL))?;
             (guard.username.clone(), guard.password.clone())
         };
+
+        if user.trim().is_empty() || pass.is_empty() {
+            unsafe {
+                *pcpgsr = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+                if !ppszoptionalstatustext.is_null() {
+                    *ppszoptionalstatustext =
+                        alloc_co_task_pwstr("Bitte Benutzername und Passwort eingeben.")?;
+                }
+                if !pcpsioptionalstatusicon.is_null() {
+                    *pcpsioptionalstatusicon = windows::Win32::UI::Shell::CPSI_WARNING;
+                }
+            }
+            return Ok(());
+        }
 
         let resp = match query_local_broker(&user, &pass) {
             Ok(r) => r,
@@ -268,7 +335,8 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
             return Ok(());
         }
 
-        // Build KERB_INTERACTIVE_UNLOCK_LOGON for the synchronized local account.
+        // Pack KERB_INTERACTIVE_UNLOCK_LOGON using CredPackAuthenticationBufferW so all
+        // LSA_UNICODE_STRING.Buffer fields are relative offsets valid across winlogon/lsass.
         unsafe {
             let mut lsa_handle = windows::Win32::Foundation::HANDLE::default();
             if LsaConnectUntrusted(&mut lsa_handle).is_err() {
@@ -282,57 +350,36 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
                 Buffer: windows::core::PSTR(pkg_name.as_ptr() as *mut u8),
             };
             let mut auth_pkg: u32 = 0;
-            let _ = LsaLookupAuthenticationPackage(lsa_handle, &lsa_str, &mut auth_pkg);
+            let pkg_res = LsaLookupAuthenticationPackage(lsa_handle, &lsa_str, &mut auth_pkg);
             let _ = LsaDeregisterLogonProcess(lsa_handle);
-
-            let domain_w: Vec<u16> = ".".encode_utf16().collect();
-            let user_w: Vec<u16> = resp.username.encode_utf16().collect();
-            let pass_w: Vec<u16> = pass.encode_utf16().collect();
-
-            let hdr_size = std::mem::size_of::<KERB_INTERACTIVE_UNLOCK_LOGON>();
-            let total = hdr_size + (domain_w.len() + user_w.len() + pass_w.len()) * 2;
-            let raw = CoTaskMemAlloc(total) as *mut u8;
-            if raw.is_null() {
-                return Err(Error::from(E_POINTER));
+            if pkg_res.is_err() || auth_pkg == 0 {
+                *pcpgsr = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+                if !ppszoptionalstatustext.is_null() {
+                    *ppszoptionalstatustext =
+                        alloc_co_task_pwstr("Negotiate-Authentifizierungspaket nicht gefunden.")?;
+                }
+                return Ok(());
             }
-            std::ptr::write_bytes(raw, 0, total);
 
-            let mut offset = hdr_size;
-            let dom_ptr = raw.add(offset) as *mut u16;
-            std::ptr::copy_nonoverlapping(domain_w.as_ptr(), dom_ptr, domain_w.len());
-            offset += domain_w.len() * 2;
-
-            let usr_ptr = raw.add(offset) as *mut u16;
-            std::ptr::copy_nonoverlapping(user_w.as_ptr(), usr_ptr, user_w.len());
-            offset += user_w.len() * 2;
-
-            let pwd_ptr = raw.add(offset) as *mut u16;
-            std::ptr::copy_nonoverlapping(pass_w.as_ptr(), pwd_ptr, pass_w.len());
-
-            let unlock = &mut *(raw as *mut KERB_INTERACTIVE_UNLOCK_LOGON);
-            unlock.Logon = KERB_INTERACTIVE_LOGON {
-                MessageType: KERB_LOGON_SUBMIT_TYPE(2), // KerbInteractiveLogon
-                LogonDomainName: windows::Win32::Security::Authentication::Identity::LSA_UNICODE_STRING {
-                    Length: (domain_w.len() * 2) as u16,
-                    MaximumLength: (domain_w.len() * 2) as u16,
-                    Buffer: PWSTR(dom_ptr),
-                },
-                UserName: windows::Win32::Security::Authentication::Identity::LSA_UNICODE_STRING {
-                    Length: (user_w.len() * 2) as u16,
-                    MaximumLength: (user_w.len() * 2) as u16,
-                    Buffer: PWSTR(usr_ptr),
-                },
-                Password: windows::Win32::Security::Authentication::Identity::LSA_UNICODE_STRING {
-                    Length: (pass_w.len() * 2) as u16,
-                    MaximumLength: (pass_w.len() * 2) as u16,
-                    Buffer: PWSTR(pwd_ptr),
-                },
+            let local_user = format!(".\\{}", resp.username);
+            let (raw, total) = match pack_interactive_credentials(&local_user, &pass) {
+                Ok(v) => v,
+                Err(msg) => {
+                    *pcpgsr = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+                    if !ppszoptionalstatustext.is_null() {
+                        *ppszoptionalstatustext = alloc_co_task_pwstr(&msg)?;
+                    }
+                    if !pcpsioptionalstatusicon.is_null() {
+                        *pcpsioptionalstatusicon = windows::Win32::UI::Shell::CPSI_ERROR;
+                    }
+                    return Ok(());
+                }
             };
 
             *pcpcs = CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION {
                 ulAuthenticationPackage: auth_pkg,
                 clsidCredentialProvider: CLSID_SB_CRED_PROVIDER,
-                cbSerialization: total as u32,
+                cbSerialization: total,
                 rgbSerialization: raw,
             };
             *pcpgsr = CPGSR_RETURN_CREDENTIAL_FINISHED;
@@ -401,7 +448,7 @@ impl ICredentialProvider_Impl for SBCredentialProvider_Impl {
     }
 
     fn GetFieldDescriptorCount(&self) -> windows::core::Result<u32> {
-        Ok(3)
+        Ok(4)
     }
 
     fn GetFieldDescriptorAt(
@@ -412,6 +459,7 @@ impl ICredentialProvider_Impl for SBCredentialProvider_Impl {
             0 => (CPFT_LARGE_TEXT, "Bei Skulls & Bones anmelden"),
             1 => (CPFT_EDIT_TEXT, "Benutzername"),
             2 => (CPFT_PASSWORD_TEXT, "Passwort"),
+            3 => (CPFT_SUBMIT_BUTTON, "Anmelden"),
             _ => return Err(Error::from(E_INVALIDARG)),
         };
         unsafe {
@@ -601,4 +649,33 @@ pub unsafe extern "system" fn DllUnregisterServer() -> HRESULT {
     let _ = RegDeleteTreeW(HKEY_LOCAL_MACHINE, PCWSTR(cp_key.as_ptr()));
     let _ = (CLSID_STR, PROVIDER_NAME);
     S_OK
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Security::Authentication::Identity::KERB_INTERACTIVE_UNLOCK_LOGON;
+
+    #[test]
+    fn cred_pack_authentication_buffer_uses_relative_offsets() {
+        unsafe {
+            let (raw, cb) = pack_interactive_credentials(".\\leon.admin", "TestPass!123")
+                .expect("CredPackAuthenticationBufferW must succeed");
+            assert!(cb as usize > std::mem::size_of::<KERB_INTERACTIVE_UNLOCK_LOGON>());
+            let logon = &*(raw as *const KERB_INTERACTIVE_UNLOCK_LOGON);
+            let user_offset = logon.Logon.UserName.Buffer.0 as usize;
+            let pass_offset = logon.Logon.Password.Buffer.0 as usize;
+            assert!(
+                user_offset >= std::mem::size_of::<KERB_INTERACTIVE_UNLOCK_LOGON>()
+                    && user_offset < cb as usize,
+                "UserName.Buffer must be a relative offset inside the packed buffer, got {user_offset}"
+            );
+            assert!(
+                pass_offset >= std::mem::size_of::<KERB_INTERACTIVE_UNLOCK_LOGON>()
+                    && pass_offset < cb as usize,
+                "Password.Buffer must be a relative offset inside the packed buffer, got {pass_offset}"
+            );
+            windows::Win32::System::Com::CoTaskMemFree(Some(raw as *const c_void));
+        }
+    }
 }
