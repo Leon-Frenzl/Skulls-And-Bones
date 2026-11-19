@@ -37,6 +37,10 @@ if (-not [string]::IsNullOrWhiteSpace($LocalDir)) {
             Write-Warning "sb-node.exe wird gerade verwendet (z. B. vom Service); bitte bei Bedarf Dienst kurz stoppen."
         }
     }
+    $dllSrc = Join-Path $LocalDir "sb_cred_provider.dll"
+    if (Test-Path $dllSrc) {
+        Copy-Item -Path $dllSrc -Destination (Join-Path $InstallDir "sb_cred_provider.dll") -Force -ErrorAction SilentlyContinue
+    }
 } else {
     $zipName = "sb-$Version-windows-x86_64.zip"
     $url = "https://github.com/$Repo/releases/download/$Version/$zipName"

@@ -4833,7 +4833,7 @@ fn handle_domain_logon_cmd(
                     }
                     let dl_url = url.unwrap_or_else(|| {
                         std::env::var("SB_CRED_PROVIDER_URL").unwrap_or_else(|_| {
-                            "https://github.com/leonf/Skulls-And-Bones/releases/latest/download/sb_cred_provider.dll"
+                            "https://github.com/Leon-Frenzl/Skulls-And-Bones/releases/latest/download/sb_cred_provider.dll"
                                 .to_string()
                         })
                     });
@@ -4848,6 +4848,44 @@ fn handle_domain_logon_cmd(
                             "Konnte sb_cred_provider.dll nicht laden ({}). Gib --dll-path an oder baue mit cargo build --release -p sb-cred-provider.",
                             String::from_utf8_lossy(&dl.stderr).trim()
                         ));
+                    }
+                    // [SECURITY-HYPOTHESIS] CWE-494: Downloaded DLL without checksum verification
+                    // could register tampered native code in LogonUI.
+                    // [SECURITY-VERIFIED] Verifies SHA-256 against sibling SHA256SUMS.txt when
+                    // downloading from official GitHub Releases.
+                    if let Some(base) = dl_url.rsplit_once('/').map(|(b, _)| b) {
+                        let sums_url = format!("{base}/SHA256SUMS.txt");
+                        if let Ok(sums_out) = std::process::Command::new("curl.exe")
+                            .args(["-fsSL", &sums_url])
+                            .output()
+                        {
+                            if sums_out.status.success() {
+                                let sums_txt = String::from_utf8_lossy(&sums_out.stdout);
+                                if let Some(expected_hex) = sums_txt.lines().find_map(|l| {
+                                    let mut parts = l.split_whitespace();
+                                    let hex = parts.next()?;
+                                    let name = parts.next()?;
+                                    if name.ends_with("sb_cred_provider.dll") {
+                                        Some(hex.to_ascii_lowercase())
+                                    } else {
+                                        None
+                                    }
+                                }) {
+                                    use sha2::{Digest, Sha256};
+                                    let bytes = fs::read(&target_dll).map_err(|e| {
+                                        format!("Kann heruntergeladene DLL nicht lesen: {e}")
+                                    })?;
+                                    let actual_hex = hex::encode(Sha256::digest(&bytes));
+                                    if actual_hex != expected_hex {
+                                        let _ = fs::remove_file(&target_dll);
+                                        return Err(format!(
+                                            "SHA-256-Prüfung für sb_cred_provider.dll fehlgeschlagen (erwartet {expected_hex}, erhalten {actual_hex})."
+                                        ));
+                                    }
+                                    println!("{} SHA-256-Integrität verifiziert.", "✓".green());
+                                }
+                            }
+                        }
                     }
                 }
 
