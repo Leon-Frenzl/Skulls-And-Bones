@@ -151,9 +151,11 @@ unsafe fn pack_interactive_credentials(
     Ok((raw, cb))
 }
 
-/// Generates a 128x128 32-bit BGRA Skulls & Bones badge HBITMAP for `CPFT_TILE_IMAGE`.
+/// Generates a 128x128 32-bit premultiplied-BGRA Skulls & Bones emblem for `CPFT_TILE_IMAGE`
+/// using 4x4 supersampling for smooth anti-aliased edges on Windows LogonUI.
 unsafe fn create_sb_tile_bitmap() -> windows::core::Result<HBITMAP> {
     const SIZE: i32 = 128;
+    const SS: i32 = 4;
     let mut bmi = BITMAPINFO::default();
     bmi.bmiHeader = BITMAPINFOHEADER {
         biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -170,38 +172,128 @@ unsafe fn create_sb_tile_bitmap() -> windows::core::Result<HBITMAP> {
         return Err(Error::from(E_FAIL));
     }
     let pixels = std::slice::from_raw_parts_mut(bits as *mut u32, (SIZE * SIZE) as usize);
-    let cx = 63.5_f32;
-    let cy = 63.5_f32;
+
+    let dist_seg = |px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32| -> f32 {
+        let vx = bx - ax;
+        let vy = by - ay;
+        let wx = px - ax;
+        let wy = py - ay;
+        let len2 = vx * vx + vy * vy;
+        let t = if len2 > 0.0 {
+            ((wx * vx + wy * vy) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let dx = px - (ax + t * vx);
+        let dy = py - (ay + t * vy);
+        (dx * dx + dy * dy).sqrt()
+    };
+
+    let sample_pixel = |fx: f32, fy: f32| -> [f32; 4] {
+        let dx = fx - 63.5;
+        let dy = fy - 63.5;
+        let r = (dx * dx + dy * dy).sqrt();
+        if r > 61.5 {
+            return [0.0, 0.0, 0.0, 0.0];
+        }
+
+        // Radial dark obsidian-to-midnight background
+        let t = (r / 61.5).clamp(0.0, 1.0);
+        let mut cr = 18.0 - 10.0 * t;
+        let mut cg = 27.0 - 15.0 * t;
+        let mut cb = 46.0 - 24.0 * t;
+
+        // Subtle inner rim + glowing cyan outer ring (#0EA5E9 -> #38BDF8)
+        if r >= 56.2 {
+            let ring_t = ((r - 56.2) / 5.3).clamp(0.0, 1.0);
+            cr = 14.0 + 42.0 * ring_t;
+            cg = 165.0 + 24.0 * ring_t;
+            cb = 233.0 + 15.0 * ring_t;
+        } else if r >= 54.6 {
+            cr = 12.0;
+            cg = 74.0;
+            cb = 110.0;
+        }
+
+        // Crossed bones behind the skull
+        let bone1 = dist_seg(dx, dy, -30.0, -20.0, 30.0, 26.0) <= 3.6
+            || ((dx + 31.0).powi(2) + (dy + 22.0).powi(2)).sqrt() <= 4.4
+            || ((dx + 28.0).powi(2) + (dy + 17.0).powi(2)).sqrt() <= 4.4
+            || ((dx - 31.0).powi(2) + (dy - 24.0).powi(2)).sqrt() <= 4.4
+            || ((dx - 28.0).powi(2) + (dy - 29.0).powi(2)).sqrt() <= 4.4;
+        let bone2 = dist_seg(dx, dy, 30.0, -20.0, -30.0, 26.0) <= 3.6
+            || ((dx - 31.0).powi(2) + (dy + 22.0).powi(2)).sqrt() <= 4.4
+            || ((dx - 28.0).powi(2) + (dy + 17.0).powi(2)).sqrt() <= 4.4
+            || ((dx + 31.0).powi(2) + (dy - 24.0).powi(2)).sqrt() <= 4.4
+            || ((dx + 28.0).powi(2) + (dy - 29.0).powi(2)).sqrt() <= 4.4;
+        if bone1 || bone2 {
+            cr = 148.0;
+            cg = 163.0;
+            cb = 184.0;
+        }
+
+        // Skull silhouette: cranium + cheekbones + jaw
+        let in_cranium = ((dx / 25.0).powi(2) + ((dy + 9.0) / 22.5).powi(2)) <= 1.0;
+        let in_cheeks = ((dx / 21.0).powi(2) + ((dy - 3.0) / 13.0).powi(2)) <= 1.0;
+        let in_jaw = dx.abs() <= 13.5 && dy >= 7.0 && dy <= 26.5;
+        let jaw_round = ((dx / 13.5).powi(2) + ((dy - 22.0) / 6.0).powi(2)) <= 1.0;
+        if in_cranium || in_cheeks || in_jaw || jaw_round {
+            let shade = ((dx * 0.25 + dy * 0.35) / 40.0).clamp(-0.15, 0.18);
+            cr = (232.0 - shade * 55.0).clamp(0.0, 255.0);
+            cg = (238.0 - shade * 45.0).clamp(0.0, 255.0);
+            cb = (246.0 - shade * 30.0).clamp(0.0, 255.0);
+        }
+
+        // Glowing cyan eyes with bright core
+        let left_d = (((dx + 9.2) / 6.2).powi(2) + ((dy + 4.5) / 5.2).powi(2)).sqrt();
+        let right_d = (((dx - 9.2) / 6.2).powi(2) + ((dy + 4.5) / 5.2).powi(2)).sqrt();
+        let eye_d = left_d.min(right_d);
+        if eye_d <= 1.0 {
+            if eye_d <= 0.45 {
+                cr = 224.0;
+                cg = 242.0;
+                cb = 254.0;
+            } else {
+                cr = 56.0;
+                cg = 189.0;
+                cb = 248.0;
+            }
+        }
+
+        // Nasal cavity + teeth cutouts
+        let nasal = dy >= 3.5 && dy <= 10.5 && dx.abs() <= (dy - 2.5) * 0.48;
+        let teeth_sep = dy >= 19.5 && dy <= 28.5
+            && ((dx + 6.0).abs() <= 1.15 || dx.abs() <= 1.15 || (dx - 6.0).abs() <= 1.15);
+        let teeth_bar = dx.abs() <= 10.5 && (dy - 19.0).abs() <= 0.7;
+        if nasal || teeth_sep || teeth_bar {
+            cr = 15.0;
+            cg = 23.0;
+            cb = 42.0;
+        }
+
+        [cr, cg, cb, 255.0]
+    };
+
     for y in 0..SIZE {
         for x in 0..SIZE {
-            let dx = x as f32 - cx;
-            let dy = y as f32 - cy;
-            let dist = (dx * dx + dy * dy).sqrt();
-            let mut color: u32 = 0x0000_0000; // transparent outside badge
-            if dist <= 61.0 {
-                // Dark slate background (#0F172A) with cyan ring (#38BDF8)
-                color = if dist >= 56.5 { 0xFF38_BDF8 } else { 0xFF0F_172A };
-                // Stylized skull/shield silhouette in #E2E8F0
-                let in_cranium = ((dx / 26.0).powi(2) + ((dy + 6.0) / 24.0).powi(2)) <= 1.0;
-                let in_jaw = dx.abs() <= 14.0 && dy >= 10.0 && dy <= 28.0;
-                if in_cranium || in_jaw {
-                    color = 0xFFE2_E8F0;
-                }
-                // Cyan eyes (#38BDF8)
-                let left_eye = ((dx + 9.5).powi(2) + (dy + 3.0).powi(2)).sqrt() <= 5.2;
-                let right_eye = ((dx - 9.5).powi(2) + (dy + 3.0).powi(2)).sqrt() <= 5.2;
-                // Keyhole nose / jaw teeth cutouts
-                let nose = dx.abs() <= 2.5 && dy >= 5.0 && dy <= 11.0;
-                let tooth1 = (dx + 6.0).abs() <= 1.5 && dy >= 21.0 && dy <= 28.0;
-                let tooth2 = dx.abs() <= 1.5 && dy >= 21.0 && dy <= 28.0;
-                let tooth3 = (dx - 6.0).abs() <= 1.5 && dy >= 21.0 && dy <= 28.0;
-                if left_eye || right_eye {
-                    color = 0xFF38_BDF8;
-                } else if nose || tooth1 || tooth2 || tooth3 {
-                    color = 0xFF0F_172A;
+            let mut acc = [0.0_f32; 4];
+            for sy in 0..SS {
+                for sx in 0..SS {
+                    let fx = x as f32 + (sx as f32 + 0.5) / SS as f32;
+                    let fy = y as f32 + (sy as f32 + 0.5) / SS as f32;
+                    let s = sample_pixel(fx, fy);
+                    acc[0] += s[0] * (s[3] / 255.0);
+                    acc[1] += s[1] * (s[3] / 255.0);
+                    acc[2] += s[2] * (s[3] / 255.0);
+                    acc[3] += s[3];
                 }
             }
-            pixels[(y * SIZE + x) as usize] = color;
+            let n = (SS * SS) as f32;
+            let r = (acc[0] / n).round().clamp(0.0, 255.0) as u32;
+            let g = (acc[1] / n).round().clamp(0.0, 255.0) as u32;
+            let b = (acc[2] / n).round().clamp(0.0, 255.0) as u32;
+            let a = (acc[3] / n).round().clamp(0.0, 255.0) as u32;
+            pixels[(y * SIZE + x) as usize] = (a << 24) | (r << 16) | (g << 8) | b;
         }
     }
     Ok(hbmp)

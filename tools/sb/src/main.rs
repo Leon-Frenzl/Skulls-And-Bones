@@ -581,7 +581,13 @@ fn real_main() {
             handle_context_cmd(action);
         }
         Some(Commands::Use { name }) => {
-            handle_use_cmd(&name);
+            if name.eq_ignore_ascii_case("domain-logon") || name.eq_ignore_ascii_case("domain-login")
+            {
+                let args = vec!["domain".to_string(), "logon".to_string(), "enable".to_string()];
+                delegate_to("domain", "sb-node", &args);
+            } else {
+                handle_use_cmd(&name);
+            }
         }
         Some(Commands::Logs {
             server,

@@ -295,6 +295,18 @@ enum DomainCommands {
     },
     /// Zeigt den lokalen Domänen-Beitrittsstatus dieser Maschine
     Status,
+    /// Aktiviert, deaktiviert oder prüft den nativen OS-Domänen-Login (Credential Provider / PAM)
+    Logon {
+        /// Aktion: enable, disable oder status (Standard: enable)
+        #[arg(default_value = "enable")]
+        action: String,
+        /// Optionaler Pfad zu sb_cred_provider.dll (Windows)
+        #[arg(long)]
+        dll_path: Option<PathBuf>,
+        /// Optionale Download-URL für sb_cred_provider.dll
+        #[arg(long)]
+        url: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -4657,6 +4669,163 @@ async fn handle_domain_commands(sub: DomainCommands) -> Result<(), String> {
             println!("  ► Joined at:   {}", state.joined_at);
             Ok(())
         }
+        DomainCommands::Logon {
+            action,
+            dll_path,
+            url,
+        } => handle_domain_logon_cmd(&action, dll_path, url),
+    }
+}
+
+fn handle_domain_logon_cmd(
+    action: &str,
+    dll_path: Option<PathBuf>,
+    url: Option<String>,
+) -> Result<(), String> {
+    let act = action.trim().to_ascii_lowercase();
+    #[cfg(windows)]
+    {
+        const CLSID: &str = "{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}";
+        let cp_reg = format!(
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{CLSID}"
+        );
+        let inproc_reg = format!(r"HKLM\SOFTWARE\Classes\CLSID\{CLSID}\InprocServer32");
+        let target_dll = sb_core::paths::sb_home()
+            .join("bin")
+            .join("sb_cred_provider.dll");
+
+        match act.as_str() {
+            "status" => {
+                let cp_ok = std::process::Command::new("reg")
+                    .args(["query", &cp_reg])
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
+                let inproc_out = std::process::Command::new("reg")
+                    .args(["query", &inproc_reg, "/ve"])
+                    .output()
+                    .ok()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                    .unwrap_or_default();
+                println!("=== DOMAIN LOGON STATUS ===");
+                println!(
+                    "  ► Credential Provider: {}",
+                    if cp_ok { "AKTIV".green() } else { "INAKTIV".yellow() }
+                );
+                if let Some(line) = inproc_out.lines().find(|l| l.contains("REG_SZ")) {
+                    println!("  ► DLL: {}", line.trim());
+                }
+                Ok(())
+            }
+            "disable" | "off" => {
+                let dll_for_unreg = dll_path
+                    .filter(|p| p.exists())
+                    .or_else(|| target_dll.exists().then(|| target_dll.clone()))
+                    .unwrap_or_else(|| PathBuf::from("sb_cred_provider.dll"));
+                let out = std::process::Command::new("regsvr32")
+                    .args(["/u", "/s", &dll_for_unreg.to_string_lossy()])
+                    .output()
+                    .map_err(|e| format!("regsvr32 konnte nicht gestartet werden: {e}"))?;
+                if !out.status.success() {
+                    let _ = std::process::Command::new("reg")
+                        .args(["delete", &cp_reg, "/f"])
+                        .output();
+                }
+                println!("{} Domänen-Credential-Provider deaktiviert.", "✓".green());
+                Ok(())
+            }
+            "enable" | "on" => {
+                let mut candidates: Vec<PathBuf> = Vec::new();
+                if let Some(p) = dll_path {
+                    candidates.push(p);
+                }
+                if let Ok(exe) = std::env::current_exe() {
+                    if let Some(dir) = exe.parent() {
+                        candidates.push(dir.join("sb_cred_provider.dll"));
+                    }
+                }
+                candidates.push(target_dll.clone());
+                candidates.push(PathBuf::from(r"target\rel-stage\release\sb_cred_provider.dll"));
+                candidates.push(PathBuf::from(r"target\release\sb_cred_provider.dll"));
+
+                let found = candidates.into_iter().find(|p| p.is_file());
+                if let Some(src) = found {
+                    if src != target_dll {
+                        if let Some(parent) = target_dll.parent() {
+                            let _ = fs::create_dir_all(parent);
+                        }
+                        if fs::copy(&src, &target_dll).is_err() {
+                            // Fall back to registering src directly if target_dll is locked by LogonUI
+                            let status = std::process::Command::new("regsvr32")
+                                .args(["/s", &src.to_string_lossy()])
+                                .status()
+                                .map_err(|e| format!("regsvr32 fehlgeschlagen: {e}"))?;
+                            if !status.success() {
+                                return Err(
+                                    "regsvr32 fehlgeschlagen. Bitte als Administrator ausführen."
+                                        .into(),
+                                );
+                            }
+                            println!(
+                                "{} Domänen-Login aktiviert ({}).",
+                                "✓".green(),
+                                src.display()
+                            );
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    if let Some(parent) = target_dll.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+                    let dl_url = url.unwrap_or_else(|| {
+                        std::env::var("SB_CRED_PROVIDER_URL").unwrap_or_else(|_| {
+                            "https://github.com/leonf/Skulls-And-Bones/releases/latest/download/sb_cred_provider.dll"
+                                .to_string()
+                        })
+                    });
+                    println!("Lade sb_cred_provider.dll von {dl_url} ...");
+                    let dl = std::process::Command::new("curl.exe")
+                        .args(["-fsSL", &dl_url, "-o", &target_dll.to_string_lossy()])
+                        .output()
+                        .map_err(|e| format!("Download über curl.exe fehlgeschlagen: {e}"))?;
+                    if !dl.status.success() {
+                        let _ = fs::remove_file(&target_dll);
+                        return Err(format!(
+                            "Konnte sb_cred_provider.dll nicht laden ({}). Gib --dll-path an oder baue mit cargo build --release -p sb-cred-provider.",
+                            String::from_utf8_lossy(&dl.stderr).trim()
+                        ));
+                    }
+                }
+
+                let status = std::process::Command::new("regsvr32")
+                    .args(["/s", &target_dll.to_string_lossy()])
+                    .status()
+                    .map_err(|e| format!("regsvr32 fehlgeschlagen: {e}"))?;
+                if !status.success() {
+                    return Err(
+                        "regsvr32 fehlgeschlagen. Bitte Terminal als Administrator öffnen.".into(),
+                    );
+                }
+                println!(
+                    "{} Domänen-Login aktiviert: {}",
+                    "✓".green(),
+                    target_dll.display()
+                );
+                Ok(())
+            }
+            _ => Err(format!(
+                "Unbekannte Aktion '{action}'. Erlaubt: enable, disable, status"
+            )),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (dll_path, url);
+        println!(
+            "Domain-Logon ({act}): Auf Linux/macOS erfolgt die Integration über pam_sb.so bzw. SkullsAndBonesAuth.bundle gegen /run/sb-node/auth.sock."
+        );
+        Ok(())
     }
 }
 
