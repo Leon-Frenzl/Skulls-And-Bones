@@ -78,7 +78,12 @@ pub fn handle_use_cmd(name: &str) {
             sync_mesh_network_with_context(&ctx.name, ctx.mesh_swarm.as_deref());
         }
         Err(e) => {
-            eprintln!("  {} {}", "✗".red().bold(), e);
+            sb_core::logfmt::error(
+                "CONTEXT_USE_ERROR",
+                "sb::context",
+                "Kontext-Wechsel fehlgeschlagen",
+                &[("err", &e.to_string())],
+            );
             std::process::exit(1);
         }
     }
@@ -136,7 +141,12 @@ pub fn handle_context_cmd(action: Option<ContextAction>) {
                 );
             }
             Err(e) => {
-                eprintln!("  {} {}", "✗".red().bold(), e);
+                sb_core::logfmt::error(
+                    "CONTEXT_ADD_ERROR",
+                    "sb::context",
+                    "Kontext konnte nicht hinzugefuegt werden",
+                    &[("err", &e.to_string())],
+                );
                 std::process::exit(1);
             }
         },
@@ -145,7 +155,12 @@ pub fn handle_context_cmd(action: Option<ContextAction>) {
                 println!("  {} Kontext '{}' gelöscht.\n", "✓".green().bold(), name);
             }
             Err(e) => {
-                eprintln!("  {} {}", "✗".red().bold(), e);
+                sb_core::logfmt::error(
+                    "CONTEXT_REMOVE_ERROR",
+                    "sb::context",
+                    "Kontext konnte nicht geloescht werden",
+                    &[("err", &e.to_string())],
+                );
                 std::process::exit(1);
             }
         },

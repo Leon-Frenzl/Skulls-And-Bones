@@ -143,7 +143,12 @@ pub fn handle_ssh(args: &[String]) {
     let cfg_path = match sb_core::ssh_transport::ensure_sovereign_ssh_config() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("  {} {}", "✗".bright_red().bold(), e);
+            sb_core::logfmt::error(
+                "SSH_CONFIG_ERROR",
+                "sb::ssh",
+                "Sovereign SSH-Konfiguration fehlgeschlagen",
+                &[("err", &e.to_string())],
+            );
             std::process::exit(1);
         }
     };
@@ -169,13 +174,23 @@ pub fn handle_ssh(args: &[String]) {
                         .args(&scp_args)
                         .status()
                         .unwrap_or_else(|e| {
-                            eprintln!("Fehler beim Starten von scp: {}", e);
+                            sb_core::logfmt::error(
+                                "SSH_SCP_SPAWN_ERROR",
+                                "sb::ssh",
+                                "Fehler beim Starten von scp",
+                                &[("err", &e.to_string())],
+                            );
                             std::process::exit(1);
                         });
                     std::process::exit(status.code().unwrap_or(1));
                 }
                 Err(e) => {
-                    eprintln!("  {} {}", "✗".bright_red().bold(), e);
+                    sb_core::logfmt::error(
+                        "SSH_SCP_ARGS_ERROR",
+                        "sb::ssh",
+                        "SCP-Argumente konnten nicht erstellt werden",
+                        &[("err", &e.to_string())],
+                    );
                     std::process::exit(1);
                 }
             }
@@ -194,13 +209,23 @@ pub fn handle_ssh(args: &[String]) {
                         .args(&scp_args)
                         .status()
                         .unwrap_or_else(|e| {
-                            eprintln!("Fehler beim Starten von scp: {}", e);
+                            sb_core::logfmt::error(
+                                "SSH_SCP_SPAWN_ERROR",
+                                "sb::ssh",
+                                "Fehler beim Starten von scp",
+                                &[("err", &e.to_string())],
+                            );
                             std::process::exit(1);
                         });
                     std::process::exit(status.code().unwrap_or(1));
                 }
                 Err(e) => {
-                    eprintln!("  {} {}", "✗".bright_red().bold(), e);
+                    sb_core::logfmt::error(
+                        "SSH_SCP_ARGS_ERROR",
+                        "sb::ssh",
+                        "SCP-Argumente konnten nicht erstellt werden",
+                        &[("err", &e.to_string())],
+                    );
                     std::process::exit(1);
                 }
             }
@@ -218,13 +243,23 @@ pub fn handle_ssh(args: &[String]) {
                         .args(&ssh_args)
                         .status()
                         .unwrap_or_else(|e| {
-                            eprintln!("Fehler beim Starten von ssh: {}", e);
+                            sb_core::logfmt::error(
+                                "SSH_EXEC_SPAWN_ERROR",
+                                "sb::ssh",
+                                "Fehler beim Starten von ssh",
+                                &[("err", &e.to_string())],
+                            );
                             std::process::exit(1);
                         });
                     std::process::exit(status.code().unwrap_or(1));
                 }
                 Err(e) => {
-                    eprintln!("  {} {}", "✗".bright_red().bold(), e);
+                    sb_core::logfmt::error(
+                        "SSH_EXEC_ARGS_ERROR",
+                        "sb::ssh",
+                        "SSH-Exec-Argumente konnten nicht erstellt werden",
+                        &[("err", &e.to_string())],
+                    );
                     std::process::exit(1);
                 }
             }
@@ -233,7 +268,12 @@ pub fn handle_ssh(args: &[String]) {
             let ssh_bin = match sb_core::ssh_transport::resolve_system_ssh() {
                 Ok(b) => b,
                 Err(e) => {
-                    eprintln!("  {} {}", "✗".bright_red().bold(), e);
+                    sb_core::logfmt::error(
+                        "SSH_RESOLVE_ERROR",
+                        "sb::ssh",
+                        "System-OpenSSH nicht gefunden",
+                        &[("err", &e.to_string())],
+                    );
                     std::process::exit(1);
                 }
             };
@@ -257,7 +297,12 @@ pub fn handle_ssh(args: &[String]) {
                 .args(&ssh_args)
                 .status()
                 .unwrap_or_else(|e| {
-                    eprintln!("Fehler beim Starten von System-OpenSSH: {}", e);
+                    sb_core::logfmt::error(
+                        "SSH_SPAWN_ERROR",
+                        "sb::ssh",
+                        "Fehler beim Starten von System-OpenSSH",
+                        &[("err", &e.to_string())],
+                    );
                     std::process::exit(1);
                 });
             std::process::exit(status.code().unwrap_or(1));

@@ -1177,10 +1177,11 @@ async fn run() -> Result<(), String> {
                             m
                         );
                     } else {
-                        eprintln!(
-                            "  {} Keine aktive Subnetz-Route für '{}' gefunden.",
-                            "✗".bright_red(),
-                            cidr
+                        sb_core::logfmt::error(
+                            "MESH_ROUTE_NOT_FOUND",
+                            "sb-mesh::route",
+                            "Keine aktive Subnetz-Route gefunden",
+                            &[("cidr", &cidr)],
                         );
                     }
                 }
@@ -2181,10 +2182,11 @@ async fn run() -> Result<(), String> {
                     );
                 }
                 Err(e) => {
-                    eprintln!(
-                        "\n  {} Fehler beim Beitreten: {}",
-                        "✗".bright_red().bold(),
-                        e
+                    sb_core::logfmt::error(
+                        "MESH_JOIN_ERROR",
+                        "sb-mesh::join",
+                        "Fehler beim Beitreten zum Mesh",
+                        &[("err", &e.to_string())],
                     );
                     std::process::exit(1);
                 }
@@ -2407,10 +2409,11 @@ async fn run() -> Result<(), String> {
                             target_mesh
                         );
                     } else {
-                        eprintln!(
-                            "  {} Einladungs-Token '{}' nicht gefunden.",
-                            "✗".bright_red(),
-                            token
+                        sb_core::logfmt::error(
+                            "MESH_INVITE_NOT_FOUND",
+                            "sb-mesh::invite",
+                            "Einladungs-Token nicht gefunden",
+                            &[("token", &token)],
                         );
                     }
                 }
@@ -2543,10 +2546,11 @@ async fn run() -> Result<(), String> {
                             println!("  {} Domain-Namen im Mesh (z.B. node-xyz.sbm, service.sbm) werden nun transparent lokal aufgelöst.", "●".bright_cyan());
                         }
                         Err(err) => {
-                            eprintln!(
-                                "  {} Split-DNS Einrichtung fehlgeschlagen: {}",
-                                "✗".bright_red().bold(),
-                                err
+                            sb_core::logfmt::error(
+                                "MESH_SPLIT_DNS_FAILED",
+                                "sb-mesh::dns",
+                                "Split-DNS Einrichtung fehlgeschlagen",
+                                &[("err", &err.to_string())],
                             );
                             #[cfg(target_os = "windows")]
                             {

@@ -95,10 +95,11 @@ fn handle_env_sync(server: &str, env: &str, json: bool) {
         match ensure_encrypted_local_vault(env) {
             Ok(t) => t,
             Err(e) => {
-                eprintln!(
-                    "  {} Vault-Initialisierung fehlgeschlagen: {}",
-                    "✗".bright_red().bold(),
-                    e
+                sb_core::logfmt::error(
+                    "ENV_VAULT_INIT_ERROR",
+                    "sb::env",
+                    "Vault-Initialisierung fehlgeschlagen",
+                    &[("env", env), ("err", &e.to_string())],
                 );
                 std::process::exit(1);
             }
@@ -110,10 +111,11 @@ fn handle_env_sync(server: &str, env: &str, json: bool) {
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
         .collect();
     if safe_env.is_empty() {
-        eprintln!(
-            "  {} Ungültiger Environment-Name '{}'",
-            "✗".bright_red().bold(),
-            env
+        sb_core::logfmt::error(
+            "ENV_INVALID_NAME",
+            "sb::env",
+            "Ungueltiger Environment-Name",
+            &[("env", env)],
         );
         std::process::exit(1);
     }
@@ -141,7 +143,12 @@ printf "REMOTE_SHA256=%s\nREMOTE_PATH=%s/.sb/vault/%s.sbvault\n" "$REM_SHA" "$HO
         match sb_core::ssh_transport::build_ssh_exec_args(&ssh_dest, &remote_script) {
             Ok(pair) => pair,
             Err(e) => {
-                eprintln!("  {} SSH-Transportfehler: {}", "✗".bright_red().bold(), e);
+                sb_core::logfmt::error(
+                    "ENV_SSH_TRANSPORT_ERROR",
+                    "sb::env",
+                    "SSH-Transportfehler",
+                    &[("dest", &ssh_dest), ("err", &e.to_string())],
+                );
                 std::process::exit(1);
             }
         };
@@ -153,10 +160,11 @@ printf "REMOTE_SHA256=%s\nREMOTE_PATH=%s/.sb/vault/%s.sbvault\n" "$REM_SHA" "$HO
     let output = match Command::new(&ssh_bin).args(&ssh_args).output() {
         Ok(o) => o,
         Err(e) => {
-            eprintln!(
-                "  {} Konnte OpenSSH nicht starten: {}",
-                "✗".bright_red().bold(),
-                e
+            sb_core::logfmt::error(
+                "ENV_SSH_SPAWN_ERROR",
+                "sb::env",
+                "Konnte OpenSSH nicht starten",
+                &[("dest", &ssh_dest), ("err", &e.to_string())],
             );
             std::process::exit(1);
         }
@@ -164,11 +172,11 @@ printf "REMOTE_SHA256=%s\nREMOTE_PATH=%s/.sb/vault/%s.sbvault\n" "$REM_SHA" "$HO
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!(
-            "  {} Vault-Synchronisation auf '{}' fehlgeschlagen: {}",
-            "✗".bright_red().bold(),
-            ssh_dest,
-            stderr.trim()
+        sb_core::logfmt::error(
+            "ENV_VAULT_SYNC_FAILED",
+            "sb::env",
+            "Vault-Synchronisation fehlgeschlagen",
+            &[("dest", &ssh_dest), ("err", stderr.trim())],
         );
         std::process::exit(1);
     }
@@ -305,9 +313,11 @@ pub fn handle_sb_env(action: EnvAction) {
                 std::process::exit(1);
             }
             if command.is_empty() {
-                eprintln!(
-                    "  {} Kein Befehl angegeben. Verwendung: sb env run -- npm run dev",
-                    "✗".bright_red()
+                sb_core::logfmt::error(
+                    "ENV_RUN_NO_COMMAND",
+                    "sb::env",
+                    "Kein Befehl angegeben; Verwendung: sb env run -- npm run dev",
+                    &[],
                 );
                 std::process::exit(1);
             }
@@ -379,21 +389,25 @@ pub fn handle_sb_env(action: EnvAction) {
                 std::process::exit(1);
             }
             if !file.exists() {
-                eprintln!(
-                    "  {} Datei '{}' nicht gefunden.",
-                    "✗".bright_red(),
-                    file.display()
+                sb_core::logfmt::error(
+                    "ENV_IMPORT_FILE_NOT_FOUND",
+                    "sb::env",
+                    "Import-Datei nicht gefunden",
+                    &[("path", &file.display().to_string())],
                 );
                 std::process::exit(1);
             }
             let content = match fs::read_to_string(&file) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!(
-                        "  {} Fehler beim Lesen von '{}': {}",
-                        "✗".bright_red(),
-                        file.display(),
-                        e
+                    sb_core::logfmt::error(
+                        "ENV_IMPORT_READ_ERROR",
+                        "sb::env",
+                        "Fehler beim Lesen der Import-Datei",
+                        &[
+                            ("path", &file.display().to_string()),
+                            ("err", &e.to_string()),
+                        ],
                     );
                     std::process::exit(1);
                 }
@@ -436,10 +450,11 @@ pub fn handle_sb_env(action: EnvAction) {
                         );
                     }
                     _ => {
-                        eprintln!(
-                            "    {} Fehler beim Importieren von '{}'",
-                            "✗".bright_red(),
-                            k
+                        sb_core::logfmt::error(
+                            "ENV_IMPORT_SECRET_ERROR",
+                            "sb::env",
+                            "Fehler beim Importieren der Variable",
+                            &[("key", k), ("env", &env)],
                         );
                     }
                 }

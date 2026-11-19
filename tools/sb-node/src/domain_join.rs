@@ -5531,7 +5531,7 @@ mod tests {
             revoked: false,
             revoked_reason: None,
         });
-        reg.save().unwrap();
+        std::fs::write(&reg_path, serde_json::to_string_pretty(&reg).unwrap()).unwrap();
 
         let mut users =
             crate::directory_users::IdentityDirectory::load_or_create(&users_path, "corp.eu")

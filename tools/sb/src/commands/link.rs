@@ -222,10 +222,11 @@ pub fn handle_link(target: &str, alias_opt: Option<String>, mesh_opt: Option<Str
     // 2. Ensure local Dual-CA & Ephemeral User Cert & Local Mesh Identity are initialized
     if !sb_ca::SshCa::status().initialized {
         if let Err(e) = sb_ca::init_all(false) {
-            eprintln!(
-                "  {} Konnte lokale Dual-CA nicht initialisieren: {}",
-                "✗".bright_red().bold(),
-                e
+            sb_core::logfmt::error(
+                "LINK_CA_INIT_ERROR",
+                "sb::link",
+                "Konnte lokale Dual-CA nicht initialisieren",
+                &[("err", &e.to_string())],
             );
             std::process::exit(1);
         }
@@ -235,10 +236,11 @@ pub fn handle_link(target: &str, alias_opt: Option<String>, mesh_opt: Option<Str
     let ca_pub_openssh = match sb_ca::SshCa::ca_public_key_openssh() {
         Ok(k) => k.trim().to_string(),
         Err(e) => {
-            eprintln!(
-                "  {} Konnte lokalen SSH-CA Public Key nicht laden: {}",
-                "✗".bright_red().bold(),
-                e
+            sb_core::logfmt::error(
+                "LINK_CA_PUBKEY_ERROR",
+                "sb::link",
+                "Konnte lokalen SSH-CA Public Key nicht laden",
+                &[("err", &e.to_string())],
             );
             std::process::exit(1);
         }
@@ -247,10 +249,11 @@ pub fn handle_link(target: &str, alias_opt: Option<String>, mesh_opt: Option<Str
     let (local_node_id, local_pubkey) = match ensure_local_mesh_identity(&local_mesh) {
         Ok(pair) => pair,
         Err(e) => {
-            eprintln!(
-                "  {} Konnte lokale sb-mesh Identität nicht initialisieren: {}",
-                "✗".bright_red().bold(),
-                e
+            sb_core::logfmt::error(
+                "LINK_MESH_IDENTITY_ERROR",
+                "sb::link",
+                "Konnte lokale sb-mesh Identitaet nicht initialisieren",
+                &[("err", &e.to_string())],
             );
             std::process::exit(1);
         }
@@ -284,11 +287,11 @@ printf "HOST_PUB=%s\nNODE_ID=%s\nWG_PUB=%s\n" "$HOST_PUB" "$NODE_ID" "$WG_PUB"
     let probe_out = match run_remote_ssh(&ssh_dest, probe_script) {
         Ok(out) => out,
         Err(e) => {
-            eprintln!(
-                "  {} SSH-Verbindung zu '{}' fehlgeschlagen: {}",
-                "✗".bright_red().bold(),
-                ssh_dest,
-                e
+            sb_core::logfmt::error(
+                "LINK_REMOTE_SSH_ERROR",
+                "sb::link",
+                "SSH-Verbindung fehlgeschlagen",
+                &[("dest", &ssh_dest), ("err", &e.to_string())],
             );
             std::process::exit(1);
         }
@@ -309,10 +312,11 @@ printf "HOST_PUB=%s\nNODE_ID=%s\nWG_PUB=%s\n" "$HOST_PUB" "$NODE_ID" "$WG_PUB"
     }
 
     if remote_host_pub.is_empty() {
-        eprintln!(
-            "  {} Konnte /etc/ssh/ssh_host_ed25519_key.pub auf '{}' nicht auslesen.",
-            "✗".bright_red().bold(),
-            ssh_dest
+        sb_core::logfmt::error(
+            "LINK_HOST_PUBKEY_EMPTY",
+            "sb::link",
+            "Konnte /etc/ssh/ssh_host_ed25519_key.pub auf Remote-Host nicht auslesen",
+            &[("dest", &ssh_dest)],
         );
         std::process::exit(1);
     }
@@ -327,10 +331,11 @@ printf "HOST_PUB=%s\nNODE_ID=%s\nWG_PUB=%s\n" "$HOST_PUB" "$NODE_ID" "$WG_PUB"
     ) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!(
-                "  {} Fehler beim Signieren des Host-Zertifikats: {}",
-                "✗".bright_red().bold(),
-                e
+            sb_core::logfmt::error(
+                "LINK_HOST_CERT_SIGN_ERROR",
+                "sb::link",
+                "Fehler beim Signieren des Host-Zertifikats",
+                &[("err", &e.to_string())],
             );
             std::process::exit(1);
         }
@@ -409,10 +414,11 @@ echo "LINK_APPLY_OK"
     let apply_out = match run_remote_ssh(&ssh_dest, &apply_script) {
         Ok(o) => o,
         Err(e) => {
-            eprintln!(
-                "  {} Fehler beim Konfigurieren des Remote-Servers: {}",
-                "✗".bright_red().bold(),
-                e
+            sb_core::logfmt::error(
+                "LINK_REMOTE_APPLY_ERROR",
+                "sb::link",
+                "Fehler beim Konfigurieren des Remote-Servers",
+                &[("dest", &ssh_dest), ("err", &e.to_string())],
             );
             std::process::exit(1);
         }

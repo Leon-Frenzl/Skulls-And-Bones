@@ -74,15 +74,17 @@ pub fn handle_share(port: Option<u16>, name: Option<String>) {
             );
             let candidates = detect_active_dev_ports();
             if candidates.is_empty() {
-                eprintln!(
-                    "  {} Kein aktiver Entwicklungs-Server auf Standard-Ports gefunden.",
-                    "✗".red().bold()
+                sb_core::logfmt::error(
+                    "SHARE_NO_DEV_SERVER",
+                    "sb::share",
+                    "Kein aktiver Entwicklungs-Server auf Standard-Ports gefunden",
+                    &[],
                 );
-                eprintln!(
+                println!(
                     "  💡 Bitte gib den Port explizit an: {}",
                     "sb share <PORT>".bright_yellow()
                 );
-                eprintln!(
+                println!(
                     "     Beispiel: {}",
                     "sb share 3000 --name preview-app".bright_cyan()
                 );

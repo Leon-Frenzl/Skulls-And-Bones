@@ -63,7 +63,12 @@ pub fn handle_uninstall(requested: &[String]) {
     let (targets, include_cli) = match resolve_tools(requested) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("  {} {}", "✗".bright_red(), e);
+            sb_core::logfmt::error(
+                "PKG_UNINSTALL_RESOLVE_ERROR",
+                "sb::pkg",
+                "Deinstallations-Ziele konnten nicht aufgeloest werden",
+                &[("err", &e.to_string())],
+            );
             return;
         }
     };
@@ -87,9 +92,11 @@ pub fn handle_uninstall(requested: &[String]) {
     for filename in filenames {
         let path = bin_dir.join(&filename);
         if current_exe.as_ref() == path.canonicalize().ok().as_ref() {
-            eprintln!(
-                "  {} Überspringe die aktuell laufende sb-Binary.",
-                "i".bright_yellow()
+            sb_core::logfmt::warn(
+                "PKG_UNINSTALL_SKIP_SELF",
+                "sb::pkg",
+                "Ueberspringe die aktuell laufende sb-Binary",
+                &[("path", &path.display().to_string())],
             );
             continue;
         }
@@ -102,10 +109,14 @@ pub fn handle_uninstall(requested: &[String]) {
                     filename
                 );
             }
-            Err(error) => eprintln!(
-                "  {} {} kann nicht entfernt werden: {error}",
-                "✗".bright_red(),
-                path.display()
+            Err(error) => sb_core::logfmt::error(
+                "PKG_UNINSTALL_REMOVE_ERROR",
+                "sb::pkg",
+                "Binary kann nicht entfernt werden",
+                &[
+                    ("path", &path.display().to_string()),
+                    ("err", &error.to_string()),
+                ],
             ),
         }
     }
@@ -588,9 +599,11 @@ pub fn handle_identity() {
             id_file.display().to_string().bright_black()
         );
     } else {
-        eprintln!(
-            "  {} Fehler beim Speichern der Identität.",
-            "✗".bright_red()
+        sb_core::logfmt::error(
+            "PKG_IDENTITY_SAVE_ERROR",
+            "sb::pkg",
+            "Fehler beim Speichern der Identitaet",
+            &[("path", &id_file.display().to_string())],
         );
     }
 }

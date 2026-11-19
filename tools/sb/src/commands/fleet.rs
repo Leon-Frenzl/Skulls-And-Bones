@@ -304,7 +304,12 @@ pub fn handle_server_token(name: &str) {
     let ca_key = match get_or_detect_ca_pubkey() {
         Ok(k) => k,
         Err(e) => {
-            eprintln!("  {} {}", "✗".bright_red(), e);
+            sb_core::logfmt::error(
+                "FLEET_CA_PUBKEY_ERROR",
+                "sb::fleet",
+                "CA-Public-Key konnte nicht geladen werden",
+                &[("err", &e.to_string())],
+            );
             return;
         }
     };
@@ -398,18 +403,20 @@ pub fn handle_server_init(
     };
 
     if !is_valid_username(initial_user) {
-        eprintln!(
-            "  {} Ungültiger Initial-Benutzername: '{}'",
-            "✗".bright_red(),
-            initial_user
+        sb_core::logfmt::error(
+            "FLEET_INVALID_INITIAL_USER",
+            "sb::fleet",
+            "Ungueltiger Initial-Benutzername",
+            &[("user", initial_user)],
         );
         return;
     }
     if !is_valid_host(host_part) {
-        eprintln!(
-            "  {} Ungültige Host-Adresse: '{}'",
-            "✗".bright_red(),
-            host_part
+        sb_core::logfmt::error(
+            "FLEET_INVALID_HOST",
+            "sb::fleet",
+            "Ungueltige Host-Adresse",
+            &[("host", host_part)],
         );
         return;
     }
@@ -428,18 +435,20 @@ pub fn handle_server_init(
     });
 
     if !is_valid_username(&dev_user) {
-        eprintln!(
-            "  {} Ungültiger Entwickler-Benutzername: '{}'",
-            "✗".bright_red(),
-            dev_user
+        sb_core::logfmt::error(
+            "FLEET_INVALID_DEV_USER",
+            "sb::fleet",
+            "Ungueltiger Entwickler-Benutzername",
+            &[("user", &dev_user)],
         );
         return;
     }
     if !is_valid_nodename(&node_name) {
-        eprintln!(
-            "  {} Ungültiger Knoten-Name: '{}'",
-            "✗".bright_red(),
-            node_name
+        sb_core::logfmt::error(
+            "FLEET_INVALID_NODE_NAME",
+            "sb::fleet",
+            "Ungueltiger Knoten-Name",
+            &[("node", &node_name)],
         );
         return;
     }
@@ -447,21 +456,36 @@ pub fn handle_server_init(
     let ca_key = match get_or_detect_ca_pubkey() {
         Ok(k) => k,
         Err(e) => {
-            eprintln!("  {} {}", "✗".bright_red(), e);
+            sb_core::logfmt::error(
+                "FLEET_CA_PUBKEY_ERROR",
+                "sb::fleet",
+                "CA-Public-Key konnte nicht geladen werden",
+                &[("err", &e.to_string())],
+            );
             return;
         }
     };
     let ca_key = ca_key.trim();
     if ca_key.is_empty() || ca_key.contains('\n') || ca_key.contains('\r') || ca_key.contains('\'')
     {
-        eprintln!("  {} Ungültiger CA-Public-Key", "✗".bright_red());
+        sb_core::logfmt::error(
+            "FLEET_INVALID_CA_PUBKEY",
+            "sb::fleet",
+            "Ungueltiger CA-Public-Key",
+            &[],
+        );
         return;
     }
 
     let swarm = get_swarm_name();
     let token = build_pairing_token(&swarm, &node_name, ca_key);
     if token.contains('\'') || token.contains('\n') || token.contains('\r') {
-        eprintln!("  {} Ungültiges Pairing-Token", "✗".bright_red());
+        sb_core::logfmt::error(
+            "FLEET_INVALID_PAIRING_TOKEN",
+            "sb::fleet",
+            "Ungueltiges Pairing-Token",
+            &[],
+        );
         return;
     }
 
@@ -581,19 +605,22 @@ pub fn handle_server_init(
             );
         }
         Ok(s) => {
-            eprintln!(
-                "\n  {} Initial-Bootstrap fehlgeschlagen (Exit Code: {}).",
-                "✗".bright_red().bold(),
-                s.code().unwrap_or(-1)
+            let code_str = s.code().unwrap_or(-1).to_string();
+            sb_core::logfmt::error(
+                "FLEET_BOOTSTRAP_FAILED",
+                "sb::fleet",
+                "Initial-Bootstrap fehlgeschlagen",
+                &[("exit_code", &code_str)],
             );
             println!("  ► Manueller Bootstrap via Token:");
             println!("    sb-node init --token {}", token);
         }
         Err(e) => {
-            eprintln!(
-                "\n  {} Konnte SSH-Verbindung nicht ausführen: {}",
-                "✗".bright_red().bold(),
-                e
+            sb_core::logfmt::error(
+                "FLEET_SSH_EXEC_ERROR",
+                "sb::fleet",
+                "Konnte SSH-Verbindung nicht ausfuehren",
+                &[("err", &e.to_string())],
             );
         }
     }
@@ -651,7 +678,12 @@ pub fn handle_invite_client(name: &str, role: &str, ttl_mins: u64) {
     let ca_key = match get_or_detect_ca_pubkey() {
         Ok(k) => k,
         Err(e) => {
-            eprintln!("  {} {}", "✗".bright_red(), e);
+            sb_core::logfmt::error(
+                "FLEET_CA_PUBKEY_ERROR",
+                "sb::fleet",
+                "CA-Public-Key konnte nicht geladen werden",
+                &[("err", &e.to_string())],
+            );
             return;
         }
     };
@@ -812,10 +844,11 @@ pub fn handle_approve(request_id: &str, approver_override: Option<&str>) {
     {
         Some(p) => p,
         None => {
-            eprintln!(
-                "  {} Keine Beitrittsanfrage mit ID '{}' gefunden.",
-                "✗".bright_red(),
-                request_id
+            sb_core::logfmt::error(
+                "FLEET_INVITE_NOT_FOUND",
+                "sb::fleet",
+                "Keine Beitrittsanfrage gefunden",
+                &[("request_id", request_id)],
             );
             println!(
                 "  ► Alle Anträge einsehen mit: {}",
@@ -832,11 +865,14 @@ pub fn handle_approve(request_id: &str, approver_override: Option<&str>) {
     // 1. Expiration check: Abgelaufene Anträge nicht mehr freigeben
     if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&reqs[pos].expires_at) {
         if exp.with_timezone(&chrono::Utc) < chrono::Utc::now() {
-            eprintln!(
-                "  {} Beitrittsantrag '{}' für '{}' ist abgelaufen (Gültigkeit überschritten).",
-                "✗".bright_red(),
-                reqs[pos].request_id,
-                reqs[pos].candidate_name.bold()
+            sb_core::logfmt::error(
+                "FLEET_INVITE_EXPIRED",
+                "sb::fleet",
+                "Beitrittsantrag ist abgelaufen",
+                &[
+                    ("request_id", &reqs[pos].request_id),
+                    ("candidate", &reqs[pos].candidate_name),
+                ],
             );
             reqs[pos].status = "expired".to_string();
             let _ = save_team_requests(&reqs);
@@ -857,10 +893,11 @@ pub fn handle_approve(request_id: &str, approver_override: Option<&str>) {
 
     // 2. Candidate self-approval check: Kandidat darf sich nicht selbst genehmigen
     if approver == reqs[pos].candidate_name {
-        eprintln!(
-            "  {} 4-Augen-Prinzip: Der Kandidat '{}' kann seinen eigenen Beitrittsantrag nicht genehmigen!",
-            "✗".bright_red(),
-            approver.bold()
+        sb_core::logfmt::error(
+            "FLEET_INVITE_SELF_APPROVAL",
+            "sb::fleet",
+            "4-Augen-Prinzip: Kandidat kann eigenen Beitrittsantrag nicht genehmigen",
+            &[("approver", &approver)],
         );
         return;
     }
@@ -868,21 +905,23 @@ pub fn handle_approve(request_id: &str, approver_override: Option<&str>) {
     // 3. Authorized member check: Approver muss Teammitglied sein, sofern Mitglieder hinterlegt sind
     let members = load_team_members();
     if !members.is_empty() && !members.iter().any(|m| m.name == approver) {
-        eprintln!(
-            "  {} 4-Augen-Prinzip: Prüfer '{}' ist kein autorisiertes Mitglied dieses Teams!",
-            "✗".bright_red(),
-            approver.bold()
+        sb_core::logfmt::error(
+            "FLEET_INVITE_UNAUTHORIZED_APPROVER",
+            "sb::fleet",
+            "4-Augen-Prinzip: Pruefer ist kein autorisiertes Teammitglied",
+            &[("approver", &approver)],
         );
         return;
     }
 
     if reqs[pos].approvals.contains(&approver) {
-        eprintln!(
-            "  {} 4-Augen-Prinzip: Prüfer '{}' hat diesen Antrag bereits genehmigt!",
-            "✗".bright_red(),
-            approver.bold()
+        sb_core::logfmt::error(
+            "FLEET_INVITE_DUPLICATE_APPROVAL",
+            "sb::fleet",
+            "4-Augen-Prinzip: Pruefer hat diesen Antrag bereits genehmigt",
+            &[("approver", &approver)],
         );
-        eprintln!(
+        println!(
             "    Es wird die Genehmigung eines anderen autorisierten Teammitglieds benötigt."
         );
         return;
@@ -945,7 +984,12 @@ pub fn handle_join(token: &str, name_override: Option<String>) {
     let (swarm, node_name, ca_pubkey) = match parse_pairing_token(token) {
         Ok(res) => res,
         Err(e) => {
-            eprintln!("  {} Ungültiger Einladungs-Token: {}", "✗".bright_red(), e);
+            sb_core::logfmt::error(
+                "FLEET_INVALID_INVITE_TOKEN",
+                "sb::fleet",
+                "Ungueltiger Einladungs-Token",
+                &[("err", &e.to_string())],
+            );
             return;
         }
     };
@@ -959,18 +1003,19 @@ pub fn handle_join(token: &str, name_override: Option<String>) {
         .find(|r| r.candidate_name == final_name || r.token == token)
     {
         if req.status == "pending" {
-            eprintln!(
-                "  {} Beitritt abgelehnt: 4-Augen-Freigabe noch nicht abgeschlossen!",
-                "✗".bright_red().bold()
+            let approvals_count = req.approvals.len().to_string();
+            let quorum_str = req.required_quorum.to_string();
+            sb_core::logfmt::error(
+                "FLEET_JOIN_QUORUM_PENDING",
+                "sb::fleet",
+                "Beitritt abgelehnt: 4-Augen-Freigabe noch nicht abgeschlossen",
+                &[
+                    ("request_id", &req.request_id),
+                    ("approvals", &approvals_count),
+                    ("quorum", &quorum_str),
+                ],
             );
-            eprintln!(
-                "    Antrag '{}' benötigt {} Genehmigungen (bisher: {}/{}).",
-                req.request_id,
-                req.required_quorum,
-                req.approvals.len(),
-                req.required_quorum
-            );
-            eprintln!(
+            println!(
                 "    Bitte ein autorisiertes Teammitglied um Freigabe via: {}",
                 format!("sb approve {}", req.request_id).bright_yellow()
             );
@@ -978,26 +1023,32 @@ pub fn handle_join(token: &str, name_override: Option<String>) {
         }
 
         if req.status == "revoked" {
-            eprintln!(
-                "  {} Beitritt abgelehnt: Einladungs-Token wurde widerrufen!",
-                "✗".bright_red().bold()
+            sb_core::logfmt::error(
+                "FLEET_JOIN_TOKEN_REVOKED",
+                "sb::fleet",
+                "Beitritt abgelehnt: Einladungs-Token wurde widerrufen",
+                &[("request_id", &req.request_id)],
             );
             return;
         }
 
         if req.status == "expired" {
-            eprintln!(
-                "  {} Beitritt abgelehnt: Einladungs-Token ist abgelaufen!",
-                "✗".bright_red().bold()
+            sb_core::logfmt::error(
+                "FLEET_JOIN_TOKEN_EXPIRED",
+                "sb::fleet",
+                "Beitritt abgelehnt: Einladungs-Token ist abgelaufen",
+                &[("request_id", &req.request_id)],
             );
             return;
         }
 
         if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&req.expires_at) {
             if exp.with_timezone(&chrono::Utc) < chrono::Utc::now() {
-                eprintln!(
-                    "  {} Beitritt abgelehnt: Einladungs-Token ist abgelaufen (Gültigkeit überschritten)!",
-                    "✗".bright_red().bold()
+                sb_core::logfmt::error(
+                    "FLEET_JOIN_TOKEN_EXPIRED",
+                    "sb::fleet",
+                    "Beitritt abgelehnt: Einladungs-Token ist abgelaufen",
+                    &[("request_id", &req.request_id)],
                 );
                 return;
             }
@@ -1068,10 +1119,11 @@ pub fn handle_revoke(name: &str, reason: &str) {
     );
 
     if !is_valid_username(name) && !is_valid_nodename(name) {
-        eprintln!(
-            "  {} Sicherheits-Abbruch: Ungültiger Ziel-Name '{}'",
-            "✗".bright_red(),
-            name
+        sb_core::logfmt::error(
+            "FLEET_REVOKE_INVALID_TARGET",
+            "sb::fleet",
+            "Sicherheits-Abbruch: Ungueltiger Ziel-Name",
+            &[("target", name)],
         );
         return;
     }
@@ -1373,7 +1425,12 @@ pub fn handle_domain_bootstrap(
     let dc_url = match resolve_dc_url(domain, dc_override) {
         Ok(u) => u,
         Err(e) => {
-            eprintln!("  {} {e}", "✗".bright_red().bold());
+            sb_core::logfmt::error(
+                "FLEET_DC_RESOLVE_ERROR",
+                "sb::fleet",
+                "Domain Controller URL konnte nicht aufgeloest werden",
+                &[("domain", domain), ("err", &e.to_string())],
+            );
             std::process::exit(1);
         }
     };
@@ -1389,9 +1446,11 @@ pub fn handle_domain_bootstrap(
                 let _ = std::io::stdout().flush();
                 let mut input = String::new();
                 if std::io::stdin().read_line(&mut input).is_err() {
-                    eprintln!(
-                        "  {} Benutzername konnte nicht gelesen werden.",
-                        "✗".bright_red()
+                    sb_core::logfmt::error(
+                        "FLEET_LOGIN_READ_USER_ERROR",
+                        "sb::fleet",
+                        "Benutzername konnte nicht gelesen werden",
+                        &[("domain", domain)],
                     );
                     std::process::exit(1);
                 }
@@ -1403,7 +1462,12 @@ pub fn handle_domain_bootstrap(
             None => match read_password_hidden(&format!("  Passwort für {user}@{domain}: ")) {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("  {} {e}", "✗".bright_red());
+                    sb_core::logfmt::error(
+                        "FLEET_LOGIN_READ_PW_ERROR",
+                        "sb::fleet",
+                        "Passwort konnte nicht gelesen werden",
+                        &[("err", &e.to_string())],
+                    );
                     std::process::exit(1);
                 }
             },
@@ -1417,7 +1481,12 @@ pub fn handle_domain_bootstrap(
         match tok_res {
             Ok(t) => t,
             Err(e) => {
-                eprintln!("  {} {e}", "✗".bright_red().bold());
+                sb_core::logfmt::error(
+                    "FLEET_JOIN_TOKEN_LOGIN_ERROR",
+                    "sb::fleet",
+                    "Domain-Login fehlgeschlagen",
+                    &[("dc", &dc_url), ("err", &e.to_string())],
+                );
                 std::process::exit(1);
             }
         }
@@ -1461,17 +1530,23 @@ pub fn handle_domain_bootstrap(
     match join_status {
         Ok(s) if s.success() => {}
         Ok(s) => {
-            eprintln!(
-                "  {} sb-node domain join beendet mit {s}",
-                "✗".bright_red().bold()
+            sb_core::logfmt::error(
+                "FLEET_NODE_JOIN_FAILED",
+                "sb::fleet",
+                "sb-node domain join fehlgeschlagen",
+                &[("status", &s.to_string())],
             );
             std::process::exit(1);
         }
         Err(e) => {
-            eprintln!(
-                "  {} sb-node nicht gefunden ({}): {e}",
-                "✗".bright_red().bold(),
-                sb_node.display()
+            sb_core::logfmt::error(
+                "FLEET_NODE_SPAWN_ERROR",
+                "sb::fleet",
+                "sb-node nicht gefunden",
+                &[
+                    ("path", &sb_node.display().to_string()),
+                    ("err", &e.to_string()),
+                ],
             );
             std::process::exit(1);
         }
@@ -1509,9 +1584,11 @@ pub fn handle_domain_bootstrap(
         .args(&gpo_args)
         .status();
     if !matches!(gpo_status, Ok(s) if s.success()) {
-        eprintln!(
-            "  {} GPO-Apply meldete Warnung (ggf. Admin-Rechte erforderlich).",
-            "!".yellow()
+        sb_core::logfmt::warn(
+            "FLEET_GPO_APPLY_WARN",
+            "sb::fleet",
+            "GPO-Apply meldete Warnung (ggf. Admin-Rechte erforderlich)",
+            &[("domain", domain)],
         );
     } else if !elevated {
         println!(
@@ -1542,10 +1619,11 @@ pub fn handle_domain_bootstrap(
                 .args(["service", "install", "--dc", &dc_url])
                 .status();
             if !matches!(svc_status, Ok(s) if s.success()) {
-                eprintln!(
-                    "  {} Dienst-Installation fehlgeschlagen — später mit 'sb-node service install --dc {}' nachholen.",
-                    "!".yellow(),
-                    dc_url
+                sb_core::logfmt::warn(
+                    "FLEET_SERVICE_INSTALL_WARN",
+                    "sb::fleet",
+                    "Dienst-Installation fehlgeschlagen; spaeter mit sb-node service install nachholen",
+                    &[("dc", &dc_url)],
                 );
             }
         }
@@ -1625,9 +1703,11 @@ pub fn handle_tunnel(machine: &str, remote_port: u16, local_port: u16, dc_overri
 
     print_banner();
     if remote_port == 0 || local_port == 0 {
-        eprintln!(
-            "  {} Ungültiger Port: remote_port und local_port müssen >= 1 sein.",
-            "✗".bright_red()
+        sb_core::logfmt::error(
+            "FLEET_TUNNEL_INVALID_PORT",
+            "sb::fleet",
+            "Ungueltiger Port: remote_port und local_port muessen >= 1 sein",
+            &[],
         );
         std::process::exit(1);
     }
@@ -1635,7 +1715,12 @@ pub fn handle_tunnel(machine: &str, remote_port: u16, local_port: u16, dc_overri
     let (dc, token) = match load_domain_session_credentials(dc_override) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("  {} {e}", "✗".bright_red());
+            sb_core::logfmt::error(
+                "FLEET_SESSION_CREDENTIALS_ERROR",
+                "sb::fleet",
+                "Domain-Session-Zugangsdaten konnten nicht geladen werden",
+                &[("err", &e.to_string())],
+            );
             std::process::exit(1);
         }
     };
@@ -1644,9 +1729,11 @@ pub fn handle_tunnel(machine: &str, remote_port: u16, local_port: u16, dc_overri
     let listener = match TcpListener::bind(&bind_addr) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!(
-                "  {} Lokaler Port {bind_addr} konnte nicht gebunden werden: {e}",
-                "✗".bright_red()
+            sb_core::logfmt::error(
+                "FLEET_TUNNEL_BIND_ERROR",
+                "sb::fleet",
+                "Lokaler Port konnte nicht gebunden werden",
+                &[("addr", &bind_addr), ("err", &e.to_string())],
             );
             std::process::exit(1);
         }
@@ -1680,21 +1767,36 @@ pub fn handle_tunnel(machine: &str, remote_port: u16, local_port: u16, dc_overri
             {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("  {} Tunnel-Open fehlgeschlagen: {e}", "✗".bright_red());
+                    sb_core::logfmt::error(
+                        "FLEET_TUNNEL_OPEN_ERROR",
+                        "sb::fleet",
+                        "Tunnel-Open fehlgeschlagen",
+                        &[("machine", &mach_c), ("err", &e.to_string())],
+                    );
                     return;
                 }
             };
             let info_raw = match resp.into_string() {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("  {} Ungültige Tunnel-Antwort: {e}", "✗".bright_red());
+                    sb_core::logfmt::error(
+                        "FLEET_TUNNEL_RESPONSE_ERROR",
+                        "sb::fleet",
+                        "Ungueltige Tunnel-Antwort",
+                        &[("err", &e.to_string())],
+                    );
                     return;
                 }
             };
             let info: serde_json::Value = match serde_json::from_str(&info_raw) {
                 Ok(v) => v,
                 Err(e) => {
-                    eprintln!("  {} Ungültiges Tunnel-JSON: {e}", "✗".bright_red());
+                    sb_core::logfmt::error(
+                        "FLEET_TUNNEL_JSON_ERROR",
+                        "sb::fleet",
+                        "Ungueltiges Tunnel-JSON",
+                        &[("err", &e.to_string())],
+                    );
                     return;
                 }
             };
@@ -1703,7 +1805,12 @@ pub fn handle_tunnel(machine: &str, remote_port: u16, local_port: u16, dc_overri
                 .and_then(|v| v.as_str())
                 .map(String::from)
             else {
-                eprintln!("  {} Keine tunnel_id erhalten", "✗".bright_red());
+                sb_core::logfmt::error(
+                    "FLEET_TUNNEL_NO_ID",
+                    "sb::fleet",
+                    "Keine tunnel_id erhalten",
+                    &[("machine", &mach_c)],
+                );
                 return;
             };
 
