@@ -551,7 +551,7 @@ impl PortForwardTunnel {
                     let (mut lr, mut lw) = local_stream.split();
                     let (mut rr, mut rw) = remote_stream.split();
 
-                    let _ = tokio::select! {
+                    tokio::select! {
                         _ = tokio::io::copy(&mut lr, &mut rw) => (),
                         _ = tokio::io::copy(&mut rr, &mut lw) => (),
                     };
@@ -625,7 +625,7 @@ impl MeshPortShareServer {
                     let (mut cr, mut cw) = client_stream.split();
                     let (mut tr, mut tw) = target_stream.split();
 
-                    let _ = tokio::select! {
+                    tokio::select! {
                         _ = tokio::io::copy(&mut cr, &mut tw) => (),
                         _ = tokio::io::copy(&mut tr, &mut cw) => (),
                     };

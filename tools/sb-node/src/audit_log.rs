@@ -30,6 +30,7 @@ pub fn default_audit_log_path() -> PathBuf {
     local_domain_dir().join("audit.jsonl")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_event_hash(
     seq: u64,
     timestamp: &str,

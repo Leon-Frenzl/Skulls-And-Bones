@@ -970,6 +970,7 @@ fn authorize_catalog_stream(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_cross_mesh_denial(
     socket: &tokio::net::UdpSocket,
     target: SocketAddr,
@@ -2009,6 +2010,7 @@ fn remove_ast_lock_route(config: &mut CrossMeshRulesFile, mesh: &str) -> Result<
     Ok(removed)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_node_fec_sender(
     mut rx: tokio::sync::mpsc::Receiver<NodeFecCommand>,
     session_id: u64,
@@ -6219,7 +6221,7 @@ async fn run_agent_pty_session(
             }
         });
 
-        let _ = tokio::select! {
+        tokio::select! {
             _ = out_task => {},
             _ = in_task => {},
         };
@@ -6589,8 +6591,8 @@ fn handle_member_commands(sub: MemberCommands) {
                         );
                     } else {
                         println!(
-                            "  {:<16} {:<10} {:<14} {:<10} {}",
-                            "NAME", "ROLLE", "NODE ID", "STATUS", "CAPABILITIES"
+                            "  {:<16} {:<10} {:<14} {:<10} CAPABILITIES",
+                            "NAME", "ROLLE", "NODE ID", "STATUS"
                         );
                         println!("  {}", "─".repeat(70).dimmed());
                         for m in &store.members {

@@ -387,6 +387,7 @@ async fn handle_graph_request(
     ))
 }
 
+#[allow(clippy::result_large_err)]
 async fn collect_bounded_body(body: Incoming) -> Result<Vec<u8>, Response<Full<Bytes>>> {
     let collected = body.collect().await.map_err(|_| {
         json_response(
@@ -883,6 +884,7 @@ pub fn build_openapi_spec() -> serde_json::Value {
     })
 }
 
+#[allow(clippy::result_large_err)]
 fn require_auth_claims(
     verifier: Option<&AuthVerifier>,
     auth_header: Option<&str>,

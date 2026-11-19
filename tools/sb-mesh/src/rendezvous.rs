@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::RwLock;
 
-pub const KAD_MAGIC: [u8; 4] = [b'S', b'B', b'K', b'1'];
+pub const KAD_MAGIC: [u8; 4] = *b"SBK1";
 pub const KAD_BUCKET_SIZE: usize = 20;
 
 /// 256-bit Kademlia XOR metric distance
@@ -90,7 +90,7 @@ impl KadMessage {
     }
 
     pub fn deserialize(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.len() < 4 || &bytes[0..4] != &KAD_MAGIC {
+        if bytes.len() < 4 || bytes[0..4] != KAD_MAGIC {
             return Err("Invalid SBM Kademlia packet magic".to_string());
         }
         serde_json::from_slice(&bytes[4..]).map_err(|e| format!("Deserialization error: {}", e))
@@ -101,6 +101,7 @@ impl KadMessage {
 pub struct KadRoutingTable {
     pub local_node_id: [u8; 32],
     pub contacts: Vec<KadContact>,
+    #[allow(clippy::type_complexity)]
     pub rendezvous_store: HashMap<[u8; 32], Vec<(Vec<u8>, DateTime<Utc>)>>,
 }
 

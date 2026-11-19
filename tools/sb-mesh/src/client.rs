@@ -131,6 +131,7 @@ where
     Ok(filled)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_fec_symbol_network(
     socket: &UdpSocket,
     anchor_addr: SocketAddr,
@@ -178,6 +179,7 @@ async fn send_fec_symbol_network(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_fec_block_end_network(
     socket: &UdpSocket,
     anchor_addr: SocketAddr,
@@ -1252,7 +1254,9 @@ impl MeshClient {
                 client_io,
                 expected_bytes,
             ))
-        } else if self.udp_socket.is_some() && self.anchor_addr.is_some() {
+        } else if let (Some(udp_socket), Some(anchor_addr)) =
+            (self.udp_socket.as_ref(), self.anchor_addr)
+        {
             let _connect_guard = self.connect_lock.lock().await;
             let (ack_tx, ack_rx) = oneshot::channel();
             let (data_tx, mut data_rx) = mpsc::channel::<Vec<u8>>(2048);
@@ -1306,12 +1310,7 @@ impl MeshClient {
             };
 
             let (mut stream_read, mut stream_write) = tokio::io::split(server_io);
-            let socket = self
-                .udp_socket
-                .as_ref()
-                .expect("network socket checked")
-                .clone();
-            let anchor_addr = self.anchor_addr.expect("network anchor checked");
+            let socket = udp_socket.clone();
             let mesh_name = self.mesh_name.clone();
             let target_mesh_name = target_mesh.to_string();
             let node_id = self.identity.node_id.clone();

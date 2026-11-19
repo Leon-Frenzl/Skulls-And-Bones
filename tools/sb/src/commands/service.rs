@@ -139,11 +139,10 @@ pub fn ensure_service_prerequisites() -> Result<Vec<String>, String> {
     let mut actions = Vec::new();
 
     // 1. Ensure Unified Dual-CA (OpenSSH + X.509) is initialized so sb-proxy & sb-node have CA keys
-    if !sb_ca::SshCa::status().initialized {
-        if sb_ca::init_all(false).is_ok() {
+    if !sb_ca::SshCa::status().initialized
+        && sb_ca::init_all(false).is_ok() {
             actions.push("Initialized Unified Dual-CA (OpenSSH + X.509)".to_string());
         }
-    }
 
     // 2. Ensure ~/.sb-mesh/instances/default/identity.json and ~/.sb-mesh/networks.json exist and match
     let mesh_dir = sb_mesh::identity::default_data_dir()?;

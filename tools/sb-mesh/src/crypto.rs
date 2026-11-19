@@ -6,8 +6,8 @@ use hkdf::Hkdf;
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-pub const PACKET_MAGIC: [u8; 4] = [b'S', b'B', b'M', b'1'];
-pub const PACKET_MAGIC_V2: [u8; 4] = [b'S', b'B', b'M', b'2'];
+pub const PACKET_MAGIC: [u8; 4] = *b"SBM1";
+pub const PACKET_MAGIC_V2: [u8; 4] = *b"SBM2";
 
 /// Derive deterministic 8-byte Swarm Tag from topic name for Single-Port Dispatching
 pub fn derive_swarm_tag(topic: &str) -> [u8; 8] {
@@ -159,6 +159,7 @@ pub fn pack_message(
 }
 
 /// Parse and validate header of an incoming packet
+#[allow(clippy::type_complexity)]
 pub fn unpack_header(packet: &[u8]) -> Result<(PacketType, [u8; 32], u64, &[u8]), String> {
     if packet.len() < 45 {
         return Err("Packet too short (< 45 bytes header)".to_string());
@@ -205,6 +206,7 @@ pub fn pack_message_v2(
 }
 
 /// Parse and validate header of an incoming V2 multi-tenant packet
+#[allow(clippy::type_complexity)]
 pub fn unpack_header_v2(
     packet: &[u8],
 ) -> Result<(PacketType, [u8; 8], [u8; 32], u64, &[u8]), String> {
@@ -271,7 +273,7 @@ pub fn ratchet_forward(
     hasher.update(b"SBM_PFS_RATCHET_FORWARD_V1");
     hasher.update(current_key);
     hasher.update(ephemeral_shared);
-    hasher.update(&epoch.to_be_bytes());
+    hasher.update(epoch.to_be_bytes());
     let result = hasher.finalize();
     let mut new_key = [0u8; 32];
     new_key.copy_from_slice(&result);

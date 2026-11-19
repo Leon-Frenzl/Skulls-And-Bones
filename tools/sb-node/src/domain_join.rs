@@ -4476,6 +4476,7 @@ pub async fn agent_pull_pty_input(
     Ok((data, resize, closed))
 }
 
+#[allow(clippy::type_complexity)]
 static LOGIN_FAILURES: std::sync::OnceLock<
     tokio::sync::RwLock<std::collections::HashMap<String, (u32, chrono::DateTime<chrono::Utc>)>>,
 > = std::sync::OnceLock::new();
@@ -4535,6 +4536,7 @@ async fn clear_login_failures(username: &str) {
 /// - **Likelihood & Exploitability:** Low (2/10); uses pinned `webpki_roots` TLS 1.2/1.3 and bounded buffers.
 /// - **Applied Mitigation:** Uses `cached_tls_connector()`, enforces 512 KiB max response size, and reconnects cleanly on EOF.
 pub struct PersistentDcClient {
+    #[allow(dead_code)]
     endpoint: String,
     use_tls: bool,
     host: String,

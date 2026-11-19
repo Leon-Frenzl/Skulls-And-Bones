@@ -87,7 +87,7 @@ impl SovereignTunnelHub {
                 format!("Kein aktiver Sovereign Tunnel für '{}' verbunden", clean)
             })?;
             reg.streams_served.fetch_add(1, Ordering::Relaxed);
-            let stream_id = format!("st-{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
+            let stream_id = format!("st-{}", &uuid::Uuid::new_v4().to_string()[..8]);
             (reg.control_tx.clone(), stream_id)
         };
 

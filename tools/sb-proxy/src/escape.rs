@@ -212,7 +212,7 @@ impl EscapeSpaceStore {
             ));
         }
 
-        let id = format!("esc-{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
+        let id = format!("esc-{}", &uuid::Uuid::new_v4().to_string()[..8]);
         let space = EscapeSpace {
             id,
             domain: clean_domain,
@@ -264,7 +264,7 @@ impl EscapeSpaceStore {
             ));
         }
 
-        let id = format!("esc-{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
+        let id = format!("esc-{}", &uuid::Uuid::new_v4().to_string()[..8]);
         let space = EscapeSpace {
             id,
             domain: clean_domain,
@@ -314,7 +314,7 @@ impl EscapeSpaceStore {
             ));
         }
 
-        let id = format!("esc-{}", uuid::Uuid::new_v4().to_string()[..8].to_string());
+        let id = format!("esc-{}", &uuid::Uuid::new_v4().to_string()[..8]);
         let space = EscapeSpace {
             id,
             domain: clean_domain,

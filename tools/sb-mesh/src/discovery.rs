@@ -22,6 +22,12 @@ pub struct DiscoveryManager {
     pub devices: Arc<RwLock<HashMap<String, DiscoveredDevice>>>,
 }
 
+impl Default for DiscoveryManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DiscoveryManager {
     pub fn new() -> Self {
         Self {

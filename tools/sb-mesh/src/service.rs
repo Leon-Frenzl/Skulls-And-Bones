@@ -307,10 +307,7 @@ fn install_service(anchor: bool, port: Option<u16>, mesh: Option<&str>) -> Resul
             ])
             .output();
 
-        let sch_success = match sch_out {
-            Ok(ref o) if o.status.success() => true,
-            _ => false,
-        };
+        let sch_success = matches!(sch_out, Ok(ref o) if o.status.success());
 
         // Also save PowerShell installer script in data dir for manual execution
         let data_dir = dirs::home_dir()
@@ -351,7 +348,7 @@ fn install_service(anchor: bool, port: Option<u16>, mesh: Option<&str>) -> Resul
         let unit_content = generate_systemd_unit(&current_exe, anchor, port, mesh);
         let system_unit_path = Path::new("/etc/systemd/system/sb-mesh.service");
 
-        if let Ok(_) = fs::write(system_unit_path, &unit_content) {
+        if fs::write(system_unit_path, &unit_content).is_ok() {
             let _ = Command::new("systemctl").arg("daemon-reload").status();
             let _ = Command::new("systemctl")
                 .args(["enable", "sb-mesh"])
@@ -372,7 +369,7 @@ fn install_service(anchor: bool, port: Option<u16>, mesh: Option<&str>) -> Resul
             let _ = fs::create_dir_all(&user_unit_dir);
             let user_unit_path = user_unit_dir.join("sb-mesh.service");
 
-            if let Ok(_) = fs::write(&user_unit_path, &unit_content) {
+            if fs::write(&user_unit_path, &unit_content).is_ok() {
                 let _ = Command::new("systemctl")
                     .args(["--user", "daemon-reload"])
                     .status();
@@ -535,10 +532,7 @@ fn status_service() -> Result<(), String> {
             .args(["/Query", "/TN", SERVICE_NAME, "/FO", "LIST"])
             .output();
 
-        let task_registered = match q_task {
-            Ok(ref o) if o.status.success() => true,
-            _ => false,
-        };
+        let task_registered = matches!(q_task, Ok(ref o) if o.status.success());
 
         // Query active process
         let p_out = Command::new("tasklist.exe")

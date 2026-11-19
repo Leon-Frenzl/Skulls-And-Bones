@@ -534,6 +534,7 @@ pub async fn run_dual_proxy_server(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_dual_proxy_server_with_acme(
     http_bind: &str,
     gateway_bind: &str,

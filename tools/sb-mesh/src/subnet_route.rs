@@ -231,11 +231,10 @@ pub async fn tunnel_tcp_to_vpc(
                         if tag == exp_tag && ptype == PacketType::Data {
                             if let Ok(dec) = decrypt_payload(s_key.as_bytes(), c, payload) {
                                 if let Ok(frame) = StreamFrame::decode(&dec) {
-                                    if frame.stream_id == expected_stream_id {
-                                        if tx.send(frame).await.is_err() {
+                                    if frame.stream_id == expected_stream_id
+                                        && tx.send(frame).await.is_err() {
                                             break;
                                         }
-                                    }
                                 }
                             }
                         }
@@ -532,7 +531,7 @@ pub async fn run_vpc_bridge(
     );
 
     if let Some(cidr) = advertised_cidr {
-        let ep = format!("0.0.0.0:58888");
+        let ep = "0.0.0.0:58888".to_string();
         let route =
             route_store.advertise(cidr, &identity.node_id, &identity.wireguard_pubkey, &ep)?;
         println!(

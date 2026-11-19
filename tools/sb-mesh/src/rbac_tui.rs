@@ -684,13 +684,12 @@ impl RbacTuiApp {
                         self.selected_audit_idx -= 1;
                     }
                 }
-                KeyCode::Down => {
+                KeyCode::Down
                     if !self.store.audit_log.is_empty()
                         && self.selected_audit_idx + 1 < self.store.audit_log.len()
-                    {
+                    => {
                         self.selected_audit_idx += 1;
                     }
-                }
                 _ => {}
             },
 
@@ -2469,11 +2468,7 @@ impl RbacTuiApp {
                 Span::styled(&inv.swarm_topic, Style::default().fg(Color::Cyan)),
             ]));
 
-            let remaining_secs = if inv.expires_at > now {
-                inv.expires_at - now
-            } else {
-                0
-            };
+            let remaining_secs = inv.expires_at.saturating_sub(now);
             lines.push(Line::from(vec![
                 Span::styled("Gültigkeit:      ", Style::default().fg(Color::Gray)),
                 Span::styled(

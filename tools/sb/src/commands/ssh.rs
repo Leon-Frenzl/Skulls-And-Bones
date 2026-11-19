@@ -265,7 +265,7 @@ pub fn handle_ssh(args: &[String]) {
     }
 }
 
-fn render_ssh_status(cfg_path: &PathBuf, install_include: bool) {
+fn render_ssh_status(cfg_path: &std::path::Path, install_include: bool) {
     print_banner();
     println!(
         "  {} {}\n",

@@ -70,6 +70,7 @@ impl MeshRole {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().trim() {
             "admin" => Some(MeshRole::Admin),
@@ -323,16 +324,15 @@ impl SovereignAcl {
             if ace.ace_type == AceType::Deny {
                 let matches_principal =
                     ace.principal == u_clean || g_cleans.contains(&ace.principal);
-                if matches_principal {
-                    if (required.read && ace.permissions.read)
+                if matches_principal
+                    && ((required.read && ace.permissions.read)
                         || (required.write && ace.permissions.write)
                         || (required.execute && ace.permissions.execute)
                         || (required.delete && ace.permissions.delete)
-                        || (required.take_ownership && ace.permissions.take_ownership)
+                        || (required.take_ownership && ace.permissions.take_ownership))
                     {
                         return false; // Hard Deny!
                     }
-                }
             }
         }
 
@@ -379,6 +379,7 @@ impl MachinePrivilege {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.trim().to_lowercase().as_str() {
             "view" | "read" | "audit" => Some(MachinePrivilege::View),

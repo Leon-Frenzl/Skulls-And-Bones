@@ -268,7 +268,7 @@ impl FecEncoder {
     /// Creates an encoder that splits `data` into `k` equal-sized source chunks.
     pub fn new(data: &[u8], k: usize) -> Self {
         assert!(k > 0, "k must be at least 1");
-        let chunk_size = (data.len() + k - 1) / k;
+        let chunk_size = data.len().div_ceil(k);
         let mut original_chunks = Vec::with_capacity(k);
 
         for i in 0..k {
@@ -375,7 +375,7 @@ pub struct FecDecoder {
 
 impl FecDecoder {
     pub fn new(k: usize, original_len: usize) -> Self {
-        let chunk_size = (original_len + k - 1) / k;
+        let chunk_size = original_len.div_ceil(k);
         Self {
             k,
             chunk_size,
@@ -418,10 +418,12 @@ impl FecDecoder {
             let factor = row[lead_col];
             if factor != 0 {
                 // row = row ^ (factor * existing_row)
+                #[allow(clippy::needless_range_loop)]
                 for c in 0..self.k {
                     let term = Gf256::mul(factor, self.matrix[i][c]);
                     row[c] = Gf256::add(row[c], term);
                 }
+                #[allow(clippy::needless_range_loop)]
                 for b in 0..self.chunk_size {
                     let term = Gf256::mul(factor, self.payloads[i][b]);
                     payload[b] = Gf256::add(payload[b], term);
@@ -433,9 +435,11 @@ impl FecDecoder {
         if let Some(pivot_col) = row.iter().position(|&x| x != 0) {
             let inv_pivot = Gf256::inv(row[pivot_col]);
             // Normalize pivot to 1
+            #[allow(clippy::needless_range_loop)]
             for c in 0..self.k {
                 row[c] = Gf256::mul(row[c], inv_pivot);
             }
+            #[allow(clippy::needless_range_loop)]
             for b in 0..self.chunk_size {
                 payload[b] = Gf256::mul(payload[b], inv_pivot);
             }
@@ -444,10 +448,12 @@ impl FecDecoder {
             for i in 0..self.matrix.len() {
                 let factor = self.matrix[i][pivot_col];
                 if factor != 0 {
+                    #[allow(clippy::needless_range_loop)]
                     for c in 0..self.k {
                         let term = Gf256::mul(factor, row[c]);
                         self.matrix[i][c] = Gf256::add(self.matrix[i][c], term);
                     }
+                    #[allow(clippy::needless_range_loop)]
                     for b in 0..self.chunk_size {
                         let term = Gf256::mul(factor, payload[b]);
                         self.payloads[i][b] = Gf256::add(self.payloads[i][b], term);
@@ -545,6 +551,7 @@ impl StreamFecReceiver {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_indexed_symbol(
         &mut self,
         block_id: u64,

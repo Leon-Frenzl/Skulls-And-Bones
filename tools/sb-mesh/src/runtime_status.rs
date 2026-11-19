@@ -65,6 +65,7 @@ impl MeshRuntimeStatus {
             && now_unix - self.heartbeat_unix <= RUNTIME_STATUS_MAX_AGE_SECS
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn from_live_state(
         mesh_name: String,
         description: String,

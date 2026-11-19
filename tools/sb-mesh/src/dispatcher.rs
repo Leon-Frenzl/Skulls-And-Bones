@@ -173,7 +173,7 @@ impl SinglePortDispatcher {
                     let raw_packet = buf[..len].to_vec();
 
                     // 2. Case A: V2 Multi-Tenant Swarm Tag (SBM2)
-                    if len >= 12 && &buf[..4] == &PACKET_MAGIC_V2 {
+                    if len >= 12 && buf[..4] == PACKET_MAGIC_V2 {
                         let mut swarm_tag = [0u8; 8];
                         swarm_tag.copy_from_slice(&buf[4..12]);
 
@@ -201,7 +201,7 @@ impl SinglePortDispatcher {
                     }
 
                     // 3. Case B: Multi-Hop Blind Relay (SBMR)
-                    if len >= 7 && &buf[..4] == &RELAY_MAGIC {
+                    if len >= 7 && buf[..4] == RELAY_MAGIC {
                         let relay_opt = self.relay_handler.read().await;
                         if let Some(ref relay_tx) = *relay_opt {
                             let pkt = DispatchedPacket {
@@ -221,7 +221,7 @@ impl SinglePortDispatcher {
                     }
 
                     // 4. Case C: Legacy SBM1 WireGuard Paket
-                    if len >= 45 && &buf[..4] == &PACKET_MAGIC {
+                    if len >= 45 && buf[..4] == PACKET_MAGIC {
                         let def_opt = self.default_tenant.read().await;
                         if let Some(ref def_tx) = *def_opt {
                             let pkt = DispatchedPacket {

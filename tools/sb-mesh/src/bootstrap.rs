@@ -131,7 +131,7 @@ pub fn run_bootstrap(opts: BootstrapOptions) -> Result<(), String> {
 
     let anchor_port = anchor_ep
         .split(':')
-        .last()
+        .next_back()
         .and_then(|p| p.parse::<u16>().ok())
         .unwrap_or(58888);
 

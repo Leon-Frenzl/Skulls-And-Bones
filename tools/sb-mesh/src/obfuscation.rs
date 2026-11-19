@@ -70,7 +70,7 @@ pub fn mask_header(header: &[u8], session_salt: &[u8; 32], counter: u64) -> Vec<
     let mut hasher = Sha256::new();
     hasher.update(HEADER_MASK_SEPARATOR);
     hasher.update(session_salt);
-    hasher.update(&counter.to_be_bytes());
+    hasher.update(counter.to_be_bytes());
     let mask = hasher.finalize();
 
     let mut masked = Vec::with_capacity(header.len());
@@ -85,7 +85,7 @@ pub fn unmask_header(masked: &[u8], session_salt: &[u8; 32], counter: u64) -> Ve
     mask_header(masked, session_salt, counter)
 }
 
-pub const CHAFF_MAGIC: [u8; 4] = [b'S', b'B', b'M', b'C'];
+pub const CHAFF_MAGIC: [u8; 4] = *b"SBMC";
 
 /// Generates a Maybenot/WTF-PAD cover traffic dummy packet (Chaff) indistinguishable from regular encrypted traffic
 pub fn generate_chaff_packet(target_bucket: usize) -> Vec<u8> {
@@ -100,7 +100,7 @@ pub fn generate_chaff_packet(target_bucket: usize) -> Vec<u8> {
 
 /// Identifies if a decrypted or unpacked payload is a dummy cover packet to be dropped silently
 pub fn is_chaff_packet(payload: &[u8]) -> bool {
-    payload.len() >= 4 && &payload[0..4] == &CHAFF_MAGIC
+    payload.len() >= 4 && payload[0..4] == CHAFF_MAGIC
 }
 
 /// Computes a stochastic micro-timing jitter (in milliseconds) to destroy Inter-Packet Arrival Time (IAT) AI classifiers

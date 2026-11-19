@@ -148,6 +148,7 @@ pub fn get_swarm_name() -> String {
 /// - byte string: "ssh-ed25519" (11 bytes)
 /// - uint32 key length: 32 (0x00, 0x00, 0x00, 0x20)
 /// - raw 32 bytes verifying key
+///
 /// Total length: 51 bytes (encodes to 68 Base64 characters without padding).
 ///
 /// SECURITY AUDIT:
@@ -1424,9 +1425,8 @@ pub fn handle_domain_bootstrap(
 
     if dry_run {
         println!(
-            "  {} Dry-Run: würde '{}', CA-Export, 'policy apply' und {} ausführen.",
+            "  {} Dry-Run: würde 'sb-node domain join {domain} --dc {dc_url}', CA-Export, 'policy apply' und {} ausführen.",
             "✓".green().bold(),
-            format!("sb-node domain join {domain} --dc {dc_url}"),
             if no_service {
                 "keinen Dienst"
             } else {

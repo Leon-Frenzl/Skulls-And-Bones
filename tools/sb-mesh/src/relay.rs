@@ -1,7 +1,7 @@
 use crate::peer::PeerTable;
 use std::net::SocketAddr;
 
-pub const RELAY_MAGIC: [u8; 4] = [b'S', b'B', b'M', b'R'];
+pub const RELAY_MAGIC: [u8; 4] = *b"SBMR";
 pub const MAX_RELAY_HOPS: u8 = 8;
 
 /// Zero-Knowledge Encrypted Multi-Hop Relay Packet
@@ -53,7 +53,7 @@ impl RelayPacket {
             return Err("Packet too short for relay header".to_string());
         }
 
-        if &raw[0..4] != &RELAY_MAGIC {
+        if raw[0..4] != RELAY_MAGIC {
             return Err("Invalid relay magic bytes".to_string());
         }
 

@@ -77,6 +77,7 @@ struct MachineRelayQueue {
 
 static SESSIONS: OnceLock<Arc<RwLock<HashMap<String, WebSshSession>>>> = OnceLock::new();
 static RELAY_QUEUES: OnceLock<Arc<RwLock<HashMap<String, MachineRelayQueue>>>> = OnceLock::new();
+#[allow(clippy::type_complexity)]
 static RELAY_RESULTS: OnceLock<
     Arc<RwLock<HashMap<String, (Arc<Notify>, Option<WebSshExecResult>)>>>,
 > = OnceLock::new();
@@ -89,6 +90,7 @@ fn relay_queues() -> &'static Arc<RwLock<HashMap<String, MachineRelayQueue>>> {
     RELAY_QUEUES.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
 }
 
+#[allow(clippy::type_complexity)]
 fn relay_results() -> &'static Arc<RwLock<HashMap<String, (Arc<Notify>, Option<WebSshExecResult>)>>>
 {
     RELAY_RESULTS.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))

@@ -149,9 +149,7 @@ fn run_tui_loop<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> io:
                         return Ok(());
                     }
                     KeyCode::Up => {
-                        if selected_idx > 0 {
-                            selected_idx -= 1;
-                        }
+                        selected_idx = selected_idx.saturating_sub(1);
                     }
                     KeyCode::Down => {
                         if spaces_len > 0 && selected_idx + 1 < spaces_len {
@@ -168,9 +166,9 @@ fn run_tui_loop<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> io:
                             }
                         }
                     }
-                    KeyCode::Char('d') | KeyCode::Char('D') => {
+                    KeyCode::Char('d') | KeyCode::Char('D')
                         // Trigger DNS Check
-                        if selected_idx < spaces_len {
+                        if selected_idx < spaces_len => {
                             let domain = spaces[selected_idx].domain.clone();
                             let suite_cfg = sb_core::config::SuiteConfig::load();
                             let node_ip = suite_cfg
@@ -187,7 +185,6 @@ fn run_tui_loop<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> io:
                                 )
                             };
                         }
-                    }
                     _ => {}
                 }
             }

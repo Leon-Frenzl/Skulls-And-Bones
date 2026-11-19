@@ -207,7 +207,7 @@ impl CrossMeshPolicy {
             let cap_token = token.ok_or(CrossMeshError::TokenMissing)?;
             cap_token
                 .verify(current_epoch)
-                .map_err(|e| CrossMeshError::TokenInvalid(e))?;
+                .map_err(CrossMeshError::TokenInvalid)?;
 
             if !cap_token.allowed_ports.is_empty()
                 && !cap_token.allowed_ports.contains(&target_port)
@@ -218,7 +218,7 @@ impl CrossMeshPolicy {
             // Falls freiwillig übergeben, trotzdem Signatur prüfen
             cap_token
                 .verify(current_epoch)
-                .map_err(|e| CrossMeshError::TokenInvalid(e))?;
+                .map_err(CrossMeshError::TokenInvalid)?;
         }
 
         Ok(())
@@ -1183,6 +1183,7 @@ impl CrossMeshBridge {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn handle_stream_fec_symbol(
         &self,
         session_id: u64,

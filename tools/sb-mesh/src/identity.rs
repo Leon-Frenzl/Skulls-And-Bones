@@ -31,7 +31,7 @@ pub fn compute_pow_hash(public_key: &[u8; 32], nonce: u64) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(POW_DOMAIN_SEPARATOR);
     hasher.update(public_key);
-    hasher.update(&nonce.to_be_bytes());
+    hasher.update(nonce.to_be_bytes());
     let result = hasher.finalize();
     let mut out = [0u8; 32];
     out.copy_from_slice(&result);
@@ -211,7 +211,7 @@ impl NodeIdentity {
             // Applied Mitigation: Automatically update placeholder key in network store to match verified local identity.
             if network.wireguard_pubkey == "sbm_node_fleet_anchor_pubkey=" {
                 if let Ok(mut store) = crate::network::NetworkStore::load_existing(&networks_path) {
-                    if let Some(net) = store.networks.get_mut(&*mesh_name) {
+                    if let Some(net) = store.networks.get_mut(mesh_name) {
                         net.wireguard_pubkey = identity.wireguard_pubkey.clone();
                         let _ = store.save();
                     }

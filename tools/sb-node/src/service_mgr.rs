@@ -476,6 +476,7 @@ where
     };
 
     struct ServiceCtx {
+        #[allow(clippy::type_complexity)]
         runner: Option<Box<dyn FnOnce(Arc<AtomicBool>) -> Result<(), String> + Send>>,
         stop_flag: Arc<AtomicBool>,
         status_handle: isize,

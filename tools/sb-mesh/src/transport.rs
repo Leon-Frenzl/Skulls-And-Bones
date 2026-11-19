@@ -136,14 +136,14 @@ impl MeshTransport {
                     }
 
                     // Zero-Knowledge Multi-Hop Relay & Autonomous Routing Interceptor
-                    if len >= 7 && &buf[..4] == &crate::relay::RELAY_MAGIC {
+                    if len >= 7 && buf[..4] == crate::relay::RELAY_MAGIC {
                         if let Ok(relay_pkt) = crate::relay::RelayPacket::from_bytes(&buf[..len]) {
                             let p_table = self.peer_table.read().await;
                             let r_table = self.routing_table.read().await;
                             let action = crate::relay::RelayManager::process_packet_with_routing(
                                 relay_pkt,
                                 &self.identity.node_id,
-                                &*p_table,
+                                &p_table,
                                 Some(&*r_table),
                             );
                             drop(p_table);
@@ -162,7 +162,7 @@ impl MeshTransport {
                     }
 
                     // V2 Multi-Tenant & SBM-TEP Ticket Knocks Interceptor (SBM2)
-                    if len >= 53 && &buf[..4] == &crate::crypto::PACKET_MAGIC_V2 {
+                    if len >= 53 && buf[..4] == crate::crypto::PACKET_MAGIC_V2 {
                         let packet_data = &buf[..len];
                         if let Ok((ptype, _swarm_tag, sender_pubkey_bytes, _counter, _payload)) =
                             crate::crypto::unpack_header_v2(packet_data)
@@ -213,7 +213,7 @@ impl MeshTransport {
                                             BASE64_STANDARD.encode(sender_pubkey_bytes);
                                         let mut peer_table = self.peer_table.write().await;
                                         mark_ticket_recipient(
-                                            &mut *peer_table,
+                                            &mut peer_table,
                                             &sender_pubkey_b64,
                                             sender_addr,
                                         );

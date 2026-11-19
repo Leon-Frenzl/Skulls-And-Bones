@@ -669,7 +669,7 @@ impl StealthStreamClient {
                                         let mut read_h = read_half;
                                         let mut write_h = write_half;
 
-                                        let _ = tokio::select! {
+                                        tokio::select! {
                                             _ = &mut read_h => {
                                                 write_h.abort();
                                             }

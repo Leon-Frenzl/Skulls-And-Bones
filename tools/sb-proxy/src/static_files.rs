@@ -91,17 +91,11 @@ pub(crate) enum ResolveError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub(crate) struct StaticFileOptions {
     pub spa_fallback: bool,
 }
 
-impl Default for StaticFileOptions {
-    fn default() -> Self {
-        Self {
-            spa_fallback: false,
-        }
-    }
-}
 
 pub(crate) fn resolve_file(root: &Path, request_target: &str) -> Result<PathBuf, ResolveError> {
     resolve_file_with_options(root, request_target, StaticFileOptions::default())

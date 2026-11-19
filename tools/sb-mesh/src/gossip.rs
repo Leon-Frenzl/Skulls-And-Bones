@@ -69,7 +69,7 @@ impl GossipMessage {
         let mut hasher = Sha256::new();
         hasher.update(b"SBM_GOSSIP_V1:");
         hasher.update(origin_node.as_bytes());
-        hasher.update(&epoch.to_le_bytes());
+        hasher.update(epoch.to_le_bytes());
         let kind_bytes = serde_json::to_vec(kind).unwrap_or_default();
         hasher.update(&kind_bytes);
         hasher.finalize().into()
@@ -96,6 +96,7 @@ impl GossipMessage {
 }
 
 /// Outcome of processing an incoming epidemic gossip message
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GossipAction {
     /// Forward message to neighboring peers (Epidemic fanout)

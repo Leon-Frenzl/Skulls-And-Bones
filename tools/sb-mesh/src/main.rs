@@ -525,7 +525,7 @@ async fn run() -> Result<(), String> {
                 let mut table = PeerTable::load_from_file(&peers_path)?;
                 let cfg = PeerConfig {
                     callsign: callsign.clone(),
-                    node_id: format!("peer-{}", &public_key.chars().take(8).collect::<String>()),
+                    node_id: format!("peer-{}", public_key.chars().take(8).collect::<String>()),
                     public_key_base64: public_key.clone(),
                     endpoint,
                     overlay_ip,
@@ -967,7 +967,7 @@ async fn run() -> Result<(), String> {
                 "  {:<24} {}",
                 "Server Public Key:",
                 base64::prelude::BASE64_STANDARD
-                    .encode(&remote_pk_bytes)
+                    .encode(remote_pk_bytes)
                     .bright_yellow()
             );
             println!(
@@ -1140,7 +1140,7 @@ async fn run() -> Result<(), String> {
                     let m = m_opt.unwrap_or(target_mesh);
                     let identity = NodeIdentity::load_registered_for_mesh(&m)?;
                     let mut store = sb_mesh::subnet_route::SubnetRouteStore::load_or_create(&m)?;
-                    let ep = endpoint.unwrap_or_else(|| format!("127.0.0.1:58888"));
+                    let ep = endpoint.unwrap_or_else(|| "127.0.0.1:58888".to_string());
                     let route = store.advertise(
                         &cidr,
                         &identity.node_id,
@@ -1435,8 +1435,8 @@ async fn run() -> Result<(), String> {
                             .black()
                     );
                     println!(
-                        "  {:<18} {:<18} {:<24} {}",
-                        "NAME", "SUBNET", "SWARM TOPIC", "STATUS"
+                        "  {:<18} {:<18} {:<24} STATUS",
+                        "NAME", "SUBNET", "SWARM TOPIC"
                     );
                     println!("  {}", "─".repeat(66).black());
 
@@ -1582,13 +1582,10 @@ async fn run() -> Result<(), String> {
                         target_mesh.bright_cyan().bold()
                     );
                     println!(
-                        "  {:<24} {}",
+                        "  {:<24} {} ({})",
                         "Eigene Identität:",
-                        format!(
-                            "{} ({})",
-                            identity.node_id.bold(),
-                            identity.wireguard_pubkey.yellow()
-                        )
+                        identity.node_id.bold(),
+                        identity.wireguard_pubkey.yellow()
                     );
                     println!();
                     println!("  {} Sende Pre-Auth Knock...", "►".bright_cyan());
@@ -1698,11 +1695,7 @@ async fn run() -> Result<(), String> {
                     match sb_mesh::ticket::load_cached_ticket(&target_mesh) {
                         Some(ticket) => {
                             let now = chrono::Utc::now().timestamp() as u64;
-                            let remaining = if ticket.grant.valid_until > now {
-                                ticket.grant.valid_until - now
-                            } else {
-                                0
-                            };
+                            let remaining = ticket.grant.valid_until.saturating_sub(now);
                             println!("  {:<24} {}", "Mesh:", target_mesh.bright_cyan().bold());
                             println!("  {:<24} {}", "Server:", ticket.server_addr.bright_yellow());
                             println!(
@@ -1833,8 +1826,8 @@ async fn run() -> Result<(), String> {
                         println!("  {} Füge ein Mitglied hinzu mit: {}", "Tipp:".dimmed(), format!("sb-mesh rbac add --mesh {} --name <user> --pubkey <key> --role <role>", target_mesh).yellow());
                     } else {
                         println!(
-                            "  {:<16} {:<10} {:<14} {:<10} {}",
-                            "NAME", "ROLLE", "NODE ID", "STATUS", "CAPABILITIES"
+                            "  {:<16} {:<10} {:<14} {:<10} CAPABILITIES",
+                            "NAME", "ROLLE", "NODE ID", "STATUS"
                         );
                         println!("  {}", "─".repeat(70).dimmed());
                         for m in &store.members {
@@ -1879,8 +1872,8 @@ async fn run() -> Result<(), String> {
                         println!("Keine ausstehenden Beitrittsanfragen in '{}'.", target_mesh);
                     } else {
                         println!(
-                            "{:<34} {:<18} {:<14} {:<12} {}",
-                            "REQUEST ID", "NAME", "ROLE", "NODE ID", "CREATED"
+                            "{:<34} {:<18} {:<14} {:<12} CREATED",
+                            "REQUEST ID", "NAME", "ROLE", "NODE ID"
                         );
                         for request in pending {
                             println!(
@@ -2046,7 +2039,7 @@ async fn run() -> Result<(), String> {
                         println!("  {}", "Keine Audit-Ereignisse protokolliert.".dimmed());
                     } else {
                         let count = store.audit_log.len();
-                        let start = if count > limit { count - limit } else { 0 };
+                        let start = count.saturating_sub(limit);
                         println!(
                             "  {:<20} {:<18} {:<16} {:<20} {}",
                             "ZEITPUNKT".bold(),

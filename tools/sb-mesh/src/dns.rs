@@ -91,9 +91,9 @@ impl NameRecord {
         if let Some(ref ep) = self.target_endpoint {
             hasher.update(ep.as_bytes());
         }
-        hasher.update(&self.target_port.to_be_bytes());
-        hasher.update(&self.epoch.to_be_bytes());
-        hasher.update(&self.ttl_secs.to_be_bytes());
+        hasher.update(self.target_port.to_be_bytes());
+        hasher.update(self.epoch.to_be_bytes());
+        hasher.update(self.ttl_secs.to_be_bytes());
         let result = hasher.finalize();
         let mut out = [0u8; 64];
         out.copy_from_slice(&result);
@@ -101,6 +101,7 @@ impl NameRecord {
     }
 
     /// Signs the name record using a Zone Authority's private scalar key
+    #[allow(clippy::too_many_arguments)]
     pub fn sign_record(
         service: &str,
         zone: &str,
@@ -136,9 +137,9 @@ impl NameRecord {
 
         let mut chal_hasher = Sha512::new();
         chal_hasher.update(DNS_DOMAIN_SEPARATOR);
-        chal_hasher.update(&commitment_r);
-        chal_hasher.update(&authority_pub);
-        chal_hasher.update(&digest);
+        chal_hasher.update(commitment_r);
+        chal_hasher.update(authority_pub);
+        chal_hasher.update(digest);
         let chal_hash: [u8; 64] = chal_hasher.finalize().into();
         let challenge = Scalar::from_bytes_mod_order_wide(&chal_hash);
 
@@ -179,9 +180,9 @@ impl NameRecord {
 
         let mut chal_hasher = Sha512::new();
         chal_hasher.update(DNS_DOMAIN_SEPARATOR);
-        chal_hasher.update(&self.signature_r);
-        chal_hasher.update(&self.authority_pubkey);
-        chal_hasher.update(&digest);
+        chal_hasher.update(self.signature_r);
+        chal_hasher.update(self.authority_pubkey);
+        chal_hasher.update(digest);
         let chal_hash: [u8; 64] = chal_hasher.finalize().into();
         let challenge = Scalar::from_bytes_mod_order_wide(&chal_hash);
 

@@ -130,7 +130,7 @@ pub fn sanitize_tui_string(input: &str) -> String {
                 if next == '[' {
                     // CSI sequence: ESC [ ... [0x40..=0x7E]
                     chars.next();
-                    while let Some(seq_char) = chars.next() {
+                    for seq_char in chars.by_ref() {
                         if (0x40..=0x7E).contains(&(seq_char as u32)) {
                             break;
                         }
@@ -369,12 +369,10 @@ fn probe_mesh_daemon(timeout: Duration) -> (DaemonHealth, Vec<PeerSummaryPayload
                     break;
                 }
             }
-            if let Ok(resp) = serde_json::from_slice::<sb_core::mesh_ipc::IpcResponse>(&buf) {
-                if let sb_core::mesh_ipc::IpcResponse::Ok(sb_core::mesh_ipc::IpcPayload::Peers(p)) =
-                    resp
-                {
-                    peers = p;
-                }
+            if let Ok(sb_core::mesh_ipc::IpcResponse::Ok(sb_core::mesh_ipc::IpcPayload::Peers(p))) =
+                serde_json::from_slice::<sb_core::mesh_ipc::IpcResponse>(&buf)
+            {
+                peers = p;
             }
         }
     }
@@ -615,7 +613,7 @@ fn load_audit_events(limit: usize) -> (Vec<AuditEvent>, Vec<String>) {
         if let Ok(file) = std::fs::File::open(&sessions_path) {
             use std::io::{BufRead, BufReader};
             let reader = BufReader::new(file);
-            let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+            let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
             for line in lines.into_iter().rev().take(limit) {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
                     let ts = v
@@ -651,7 +649,7 @@ fn load_audit_events(limit: usize) -> (Vec<AuditEvent>, Vec<String>) {
         if let Ok(file) = std::fs::File::open(&errors_path) {
             use std::io::{BufRead, BufReader};
             let reader = BufReader::new(file);
-            let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+            let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
             for line in lines.into_iter().rev().take(limit) {
                 if let Ok(rec) = serde_json::from_str::<crate::logger::ErrorRecord>(&line) {
                     events.push(AuditEvent {
@@ -1475,8 +1473,7 @@ fn toggle_selected_daemon(daemon: &DaemonHealth) -> String {
         let _ = crate::commands::service::ensure_service_prerequisites();
         if crate::commands::service::is_systemd_available()
             && std::path::Path::new(&format!("/etc/systemd/system/{}.service", bin)).exists()
-        {
-            if std::process::Command::new("systemctl")
+            && std::process::Command::new("systemctl")
                 .args(["restart", &format!("{}.service", bin)])
                 .status()
                 .map(|s| s.success())
@@ -1484,7 +1481,6 @@ fn toggle_selected_daemon(daemon: &DaemonHealth) -> String {
             {
                 return format!("Daemon '{}' via systemd gestartet", bin);
             }
-        }
         let mut cmd = std::process::Command::new(bin);
         match bin {
             "sb-node" => {
@@ -1634,14 +1630,10 @@ fn run_interactive_loop(
                     }
                     KeyCode::Up | KeyCode::Char('k') => match focus {
                         CockpitFocusPanel::Daemons => {
-                            if selected_daemon > 0 {
-                                selected_daemon -= 1;
-                            }
+                            selected_daemon = selected_daemon.saturating_sub(1);
                         }
                         CockpitFocusPanel::Peers | CockpitFocusPanel::Audit => {
-                            if selected_peer > 0 {
-                                selected_peer -= 1;
-                            }
+                            selected_peer = selected_peer.saturating_sub(1);
                         }
                     },
                     KeyCode::Down | KeyCode::Char('j') => match focus {
