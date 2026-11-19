@@ -1866,7 +1866,7 @@ async fn handle_join_http_connection(
             )
             .await;
         }
-        let revoke_machines = query_param(query, "revoke_machines") != Some("false");
+        let revoke_machines = query_param(query, "revoke_machines") == Some("true");
         let base_dir = registry_path
             .and_then(|p| p.parent())
             .map(PathBuf::from)
