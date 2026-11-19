@@ -742,9 +742,27 @@ async fn handle_join_http_connection(
             .and_then(|p| p.parent())
             .map(PathBuf::from)
             .unwrap_or_else(local_domain_dir);
+        if let Some(retry_secs) = check_login_lockout(username).await {
+            let msg = serde_json::json!({
+                "error": format!("Zu viele fehlgeschlagene Anmeldeversuche. Bitte in {retry_secs}s erneut versuchen.")
+            })
+            .to_string();
+            return write_http_json(stream, 429, "Too Many Requests", &msg).await;
+        }
         let creds = crate::oidc::CredentialStore::load(&base_dir.join("credentials.json"))
             .unwrap_or_default();
         if !creds.verify(username, password) {
+            let locked = record_login_failure(username).await;
+            if locked {
+                let _ = crate::audit_log::append_audit_event(
+                    &base_dir.join("audit.jsonl"),
+                    username,
+                    "auth.lockout",
+                    "password",
+                    "denied",
+                    serde_json::json!({ "reason": "max_failed_attempts" }),
+                );
+            }
             return write_http_json(
                 stream,
                 401,
@@ -753,6 +771,7 @@ async fn handle_join_http_connection(
             )
             .await;
         }
+        clear_login_failures(username).await;
         let dir = crate::directory_users::IdentityDirectory::load_or_create(
             &base_dir.join("users.json"),
             "skulls-and-bones.sb",
@@ -2845,28 +2864,45 @@ async fn handle_join_http_connection(
         || path.starts_with("/v1/ssh/pty/")
         || path.starts_with("/v1/tunnels/")
     {
-        let token_opt = extract_bearer_token(&header_lines).or_else(|| {
-            if path.ends_with("/ws") {
-                query_param(query, "token")
+        let claims = if method == "GET" && path.starts_with("/v1/ssh/pty/") && path.ends_with("/ws")
+        {
+            if let Some(ticket) = query_param(query, "ticket") {
+                let pid = path
+                    .trim_start_matches("/v1/ssh/pty/")
+                    .trim_end_matches("/ws");
+                match crate::web_ssh::consume_pty_ws_ticket(ticket, pid).await {
+                    Ok(c) => c,
+                    Err((code, err)) => {
+                        let msg = serde_json::json!({ "error": err }).to_string();
+                        return write_http_json(stream, code, "Unauthorized", &msg).await;
+                    }
+                }
             } else {
-                None
+                return write_http_json(
+                    stream,
+                    401,
+                    "Unauthorized",
+                    r#"{"error":"missing single-use websocket ticket"}"#,
+                )
+                .await;
             }
-        });
-        let Some(token) = token_opt else {
-            return write_http_json(
-                stream,
-                401,
-                "Unauthorized",
-                r#"{"error":"missing bearer token"}"#,
-            )
-            .await;
-        };
-        let claims = match verifier.verify_token(token) {
-            Ok(c) => c,
-            Err(e) => {
-                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
-                    .to_string();
-                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+        } else {
+            let Some(token) = extract_bearer_token(&header_lines) else {
+                return write_http_json(
+                    stream,
+                    401,
+                    "Unauthorized",
+                    r#"{"error":"missing bearer token"}"#,
+                )
+                .await;
+            };
+            match verifier.verify_token(token) {
+                Ok(c) => c,
+                Err(e) => {
+                    let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                        .to_string();
+                    return write_http_json(stream, 401, "Unauthorized", &msg).await;
+                }
             }
         };
         let base_dir = registry_path
@@ -3141,6 +3177,19 @@ async fn handle_join_http_connection(
 
         if path.starts_with("/v1/ssh/pty/") {
             let tail = path.trim_start_matches("/v1/ssh/pty/");
+            if method == "POST" && tail.ends_with("/ticket") {
+                let pid = tail.trim_end_matches("/ticket");
+                return match crate::web_ssh::issue_pty_ws_ticket(&claims, pid).await {
+                    Ok(ticket) => {
+                        let json = serde_json::json!({ "ticket": ticket }).to_string();
+                        write_http_json(stream, 200, "OK", &json).await
+                    }
+                    Err((code, err)) => {
+                        let msg = serde_json::json!({ "error": err }).to_string();
+                        write_http_json(stream, code, "Error", &msg).await
+                    }
+                };
+            }
             if method == "GET" && tail.ends_with("/ws") {
                 let pid = tail.trim_end_matches("/ws");
                 return handle_browser_pty_ws(stream, &header_lines, &claims, pid).await;
@@ -4184,6 +4233,57 @@ pub async fn agent_pull_pty_input(
             .map_err(|e| format!("Invalid PTY base64: {e}"))?
     };
     Ok((data, resize, closed))
+}
+
+static LOGIN_FAILURES: std::sync::OnceLock<
+    tokio::sync::RwLock<std::collections::HashMap<String, (u32, chrono::DateTime<chrono::Utc>)>>,
+> = std::sync::OnceLock::new();
+
+fn login_failures() -> &'static tokio::sync::RwLock<
+    std::collections::HashMap<String, (u32, chrono::DateTime<chrono::Utc>)>,
+> {
+    LOGIN_FAILURES.get_or_init(|| tokio::sync::RwLock::new(std::collections::HashMap::new()))
+}
+
+async fn check_login_lockout(username: &str) -> Option<i64> {
+    let key = username.trim().to_ascii_lowercase();
+    if key.is_empty() {
+        return None;
+    }
+    let now = chrono::Utc::now();
+    let mut guard = login_failures().write().await;
+    guard.retain(|_, (_, until)| *until > now - chrono::Duration::minutes(10));
+    if let Some((count, until)) = guard.get(&key) {
+        if *count >= 5 && *until > now {
+            return Some((*until - now).num_seconds().max(1));
+        }
+    }
+    None
+}
+
+async fn record_login_failure(username: &str) -> bool {
+    let key = username.trim().to_ascii_lowercase();
+    if key.is_empty() {
+        return false;
+    }
+    let now = chrono::Utc::now();
+    let mut guard = login_failures().write().await;
+    let entry = guard
+        .entry(key)
+        .or_insert((0, now + chrono::Duration::minutes(5)));
+    if entry.1 <= now && entry.0 < 5 {
+        entry.0 = 0;
+    }
+    entry.0 += 1;
+    entry.1 = now + chrono::Duration::minutes(5);
+    entry.0 >= 5
+}
+
+async fn clear_login_failures(username: &str) {
+    let key = username.trim().to_ascii_lowercase();
+    if !key.is_empty() {
+        login_failures().write().await.remove(&key);
+    }
 }
 
 /// Persistent HTTP/1.1 keep-alive client over TLS (or local TCP) for low-latency PTY streaming.

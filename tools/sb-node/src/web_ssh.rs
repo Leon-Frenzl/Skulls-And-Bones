@@ -812,13 +812,10 @@ pub async fn open_pty_session(
     if !user.enabled {
         return Err((403, format!("User '{}' is disabled", claims.subject)));
     }
-    if !claims.has_role("admin")
-        && !claims.has_capability("domain:admin")
-        && !claims.has_capability("ssh:connect")
-    {
+    if !claims.has_role("admin") && !claims.has_capability("domain:admin") {
         return Err((
             403,
-            "Token lacks ssh:connect or domain:admin capability".into(),
+            "Interaktive ConPTY/PTY-Shell erfordert admin oder domain:admin".into(),
         ));
     }
 
@@ -1066,6 +1063,67 @@ pub async fn verify_pty_owner(claims: &SovereignClaims, pty_id: &str) -> Result<
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+struct WsTicketRecord {
+    pty_id: String,
+    claims: SovereignClaims,
+    expires_at: DateTime<Utc>,
+}
+
+static WS_TICKETS: OnceLock<Arc<RwLock<HashMap<String, WsTicketRecord>>>> = OnceLock::new();
+
+fn ws_tickets() -> &'static Arc<RwLock<HashMap<String, WsTicketRecord>>> {
+    WS_TICKETS.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
+}
+
+/// Issues a single-use, 30-second WebSocket ticket bound to `pty_id` so long-lived
+/// bearer tokens never appear in WebSocket URL query strings.
+///
+/// # Security Audit
+/// - **Dynamic Threat Vector:** Bearer token exposure in proxy/server URL access logs.
+/// - **CWE Mapping:** CWE-598 (Use of GET Request Method With Sensitive Query Strings).
+/// - **Likelihood & Exploitability:** Medium (5/10) when browser `WebSocket` APIs cannot send custom headers.
+/// - **Applied Mitigation:** Binds a 128-bit random `wst_` ticket to `pty_id`, caps TTL at 30s, and consumes it once.
+pub async fn issue_pty_ws_ticket(
+    claims: &SovereignClaims,
+    pty_id: &str,
+) -> Result<String, (u16, String)> {
+    verify_pty_owner(claims, pty_id).await?;
+    let now = Utc::now();
+    let ticket = format!("wst_{}", hex::encode(rand::random::<[u8; 16]>()));
+    let mut guard = ws_tickets().write().await;
+    guard.retain(|_, v| v.expires_at > now);
+    if guard.len() >= 128 {
+        return Err((429, "Too many pending WebSocket tickets".into()));
+    }
+    guard.insert(
+        ticket.clone(),
+        WsTicketRecord {
+            pty_id: pty_id.to_string(),
+            claims: claims.clone(),
+            expires_at: now + Duration::seconds(30),
+        },
+    );
+    Ok(ticket)
+}
+
+/// Consumes a single-use WebSocket ticket and verifies its `pty_id` binding and 30s expiry.
+pub async fn consume_pty_ws_ticket(
+    ticket: &str,
+    pty_id: &str,
+) -> Result<SovereignClaims, (u16, String)> {
+    let now = Utc::now();
+    let mut guard = ws_tickets().write().await;
+    guard.retain(|_, v| v.expires_at > now);
+    let Some(rec) = guard.remove(ticket) else {
+        return Err((401, "Invalid or expired WebSocket ticket".into()));
+    };
+    if rec.pty_id != pty_id {
+        return Err((403, "WebSocket ticket bound to another PTY session".into()));
+    }
+    Ok(rec.claims)
+}
+
 /// Executes a structured file-explorer operation (`file_list`, `file_read`, `file_write`)
 /// over the HTTPS-443 reverse relay and returns the JSON payload from `stdout`.
 ///
@@ -1095,13 +1153,10 @@ pub async fn exec_relay_file_op(
     if !user.enabled {
         return Err((403, format!("User '{}' is disabled", claims.subject)));
     }
-    if !claims.has_role("admin")
-        && !claims.has_capability("domain:admin")
-        && !claims.has_capability("ssh:connect")
-    {
+    if !claims.has_role("admin") && !claims.has_capability("domain:admin") {
         return Err((
             403,
-            "Token lacks ssh:connect or domain:admin capability".into(),
+            "Interaktive ConPTY/PTY-Shell erfordert admin oder domain:admin".into(),
         ));
     }
 
@@ -1314,5 +1369,52 @@ mod tests {
         drop(pair.master);
         let text = String::from_utf8_lossy(&out);
         assert!(text.contains("PTY_OK"), "unexpected pty output: {text:?}");
+    }
+
+    #[tokio::test]
+    async fn pty_ws_ticket_is_single_use_and_bound_to_pty_id() {
+        let claims = SovereignClaims {
+            token_id: "tok_ws".to_string(),
+            token_type: sb_auth::claims::TokenType::Access,
+            subject: "leon.admin".to_string(),
+            session_id: None,
+            user_epoch: 1,
+            roles: vec!["admin".to_string()],
+            capabilities: vec!["domain:admin".to_string()],
+            audience: None,
+            issuer: "test".to_string(),
+            issued_at: 0,
+            not_before: 0,
+            expires_at: 9_999_999_999,
+            metadata: serde_json::Value::Null,
+        };
+        let pid = "pty_ticket_test_1";
+        {
+            let mut guard = relay_ptys().write().await;
+            guard.insert(
+                pid.to_string(),
+                PtySessionState {
+                    owner: "leon.admin".to_string(),
+                    input_buf: VecDeque::new(),
+                    output_buf: VecDeque::new(),
+                    input_notify: Arc::new(Notify::new()),
+                    output_notify: Arc::new(Notify::new()),
+                    closed: false,
+                    expires_at: Utc::now() + Duration::minutes(5),
+                },
+            );
+        }
+        let ticket = issue_pty_ws_ticket(&claims, pid)
+            .await
+            .expect("issue ticket");
+        assert!(ticket.starts_with("wst_"));
+        assert!(consume_pty_ws_ticket(&ticket, "pty_wrong").await.is_err());
+
+        let ticket2 = issue_pty_ws_ticket(&claims, pid)
+            .await
+            .expect("issue ticket2");
+        let verified = consume_pty_ws_ticket(&ticket2, pid).await.expect("consume");
+        assert_eq!(verified.subject, "leon.admin");
+        assert!(consume_pty_ws_ticket(&ticket2, pid).await.is_err());
     }
 }

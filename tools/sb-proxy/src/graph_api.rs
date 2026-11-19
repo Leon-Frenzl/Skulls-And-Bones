@@ -634,6 +634,11 @@ fn try_serve_console_asset(dist_dir: &Path, uri_path: &str) -> Option<Response<F
             .header("Content-Type", mime)
             .header("X-Content-Type-Options", "nosniff")
             .header("X-Frame-Options", "DENY")
+            .header("Referrer-Policy", "no-referrer")
+            .header(
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: https:; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'self'",
+            )
             .body(Full::new(Bytes::from(bytes)))
             .unwrap(),
     )
@@ -941,7 +946,11 @@ fn json_response(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
     Response::builder()
         .status(status)
         .header("Content-Type", "application/json")
-        .header("Access-Control-Allow-Origin", "*")
+        .header(
+            "Access-Control-Allow-Origin",
+            "https://console.skulls-and-bones.org",
+        )
+        .header("Vary", "Origin")
         .header(
             "Access-Control-Allow-Headers",
             "Authorization, Content-Type",

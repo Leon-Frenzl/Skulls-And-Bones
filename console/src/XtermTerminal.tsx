@@ -183,12 +183,17 @@ export function XtermTerminal({
         }
       }, 60);
 
-      const authHeader = authHeaders()["Authorization"] || authHeaders()["authorization"] || "";
-      const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
+      const ticketResp = await fetch(`/v1/ssh/pty/${encodeURIComponent(ptyId)}/ticket`, {
+        method: "POST",
+        headers: { ...authHeaders() },
+      }).catch(() => null);
+      const ticketData = ticketResp && ticketResp.ok ? await ticketResp.json().catch(() => ({})) : {};
+      const wsTicket = typeof ticketData.ticket === "string" ? ticketData.ticket : "";
       const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${wsProto}//${window.location.host}/v1/ssh/pty/${encodeURIComponent(ptyId)}/ws?token=${encodeURIComponent(bearer)}`;
+      const wsUrl = `${wsProto}//${window.location.host}/v1/ssh/pty/${encodeURIComponent(ptyId)}/ws?ticket=${encodeURIComponent(wsTicket)}`;
 
-      const wsWorked = await new Promise<boolean>((resolve) => {
+      const wsWorked = wsTicket
+        ? await new Promise<boolean>((resolve) => {
         let opened = false;
         const ws = new WebSocket(wsUrl);
         ws.binaryType = "arraybuffer";
@@ -224,7 +229,8 @@ export function XtermTerminal({
           }
           resolve(true);
         };
-      });
+      })
+        : false;
 
       if (wsWorked || cancelled) return;
 
