@@ -37,6 +37,7 @@ portable-pty = "0.9"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 sha1 = "0.10"
+zeroize = { version = "1.8", features = ["derive"] }
 sb-core = { version = "0.2.0", path = "../sb-core" }
 sb-mesh = { version = "0.3.0", path = "../sb-mesh" }
 sb-auth = { version = "0.2.0", path = "../sb-auth" }

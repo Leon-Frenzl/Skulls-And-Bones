@@ -10,15 +10,58 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct OsAuthRequest {
+    #[zeroize(skip)]
     pub username: String,
     pub password: String,
+}
+
+const OFFLINE_MAX_FAILURES: u32 = 5;
+const OFFLINE_LOCKOUT_SECS: u64 = 60;
+
+static OFFLINE_FAILURES: OnceLock<Mutex<HashMap<String, (u32, Instant)>>> = OnceLock::new();
+
+fn offline_failures() -> &'static Mutex<HashMap<String, (u32, Instant)>> {
+    OFFLINE_FAILURES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn check_offline_lockout(username: &str) -> Option<u64> {
+    let mut map = offline_failures().lock().ok()?;
+    let (count, last) = map.get(username)?;
+    if *count >= OFFLINE_MAX_FAILURES {
+        let elapsed = last.elapsed();
+        let lockout = Duration::from_secs(OFFLINE_LOCKOUT_SECS);
+        if elapsed < lockout {
+            return Some((lockout - elapsed).as_secs().max(1));
+        }
+        map.remove(username);
+    }
+    None
+}
+
+fn record_offline_failure(username: &str) {
+    if let Ok(mut map) = offline_failures().lock() {
+        let entry = map
+            .entry(username.to_string())
+            .or_insert((0, Instant::now()));
+        entry.0 = entry.0.saturating_add(1);
+        entry.1 = Instant::now();
+    }
+}
+
+fn clear_offline_failure(username: &str) {
+    if let Ok(mut map) = offline_failures().lock() {
+        map.remove(username);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,10 +277,21 @@ pub async fn authenticate_os_user(
         }
     }
 
-    // Offline fallback using AES-256-GCM encrypted Argon2id cache
+    // Offline fallback using AES-256-GCM encrypted Argon2id cache (with local brute-force lockout)
+    if let Some(retry_secs) = check_offline_lockout(&clean_user) {
+        return OsAuthResponse {
+            allowed: false,
+            username: clean_user,
+            is_local_admin: false,
+            groups: Vec::new(),
+            ou: String::new(),
+            error: format!("Offline-Anmeldung gesperrt. Bitte in {retry_secs}s erneut versuchen."),
+        };
+    }
     let cache = load_offline_cache();
     if let Some(entry) = cache.users.get(&clean_user) {
         if sb_auth::crypto::verify_password(&req.password, &entry.verifier_hash).is_ok() {
+            clear_offline_failure(&clean_user);
             let _ = ensure_local_os_account(&clean_user, &req.password, entry.is_local_admin);
             return OsAuthResponse {
                 allowed: true,
@@ -248,6 +302,7 @@ pub async fn authenticate_os_user(
                 error: String::new(),
             };
         }
+        record_offline_failure(&clean_user);
     }
 
     OsAuthResponse {
@@ -401,13 +456,15 @@ pub fn purge_offboarded_user(username: &str) -> Result<bool, String> {
                 .args(["/F", "/FI", &filter])
                 .output();
 
-            // 3. Remove Windows user profile (registry + C:\Users\<clean>).
-            let ps_cmd = format!(
-                "Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue | Where-Object {{ $_.LocalPath -and ([System.IO.Path]::GetFileName($_.LocalPath) -ieq '{}') }} | Remove-CimInstance -ErrorAction SilentlyContinue",
-                clean
-            );
+            // 3. Remove Windows user profile (registry + C:\Users\<clean>) via env var (no string interpolation).
             let _ = Command::new("powershell")
-                .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+                .env("SB_PURGE_USER", &clean)
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue | Where-Object { $_.LocalPath -and ([System.IO.Path]::GetFileName($_.LocalPath) -ieq $env:SB_PURGE_USER) } | Remove-CimInstance -ErrorAction SilentlyContinue",
+                ])
                 .output();
 
             let profile_dir = PathBuf::from(format!(r"C:\Users\{clean}"));
@@ -651,5 +708,18 @@ mod tests {
         assert!(!is_protected_system_account("leon.admin"));
         assert!(purge_offboarded_user("sb-rescue").is_err());
         assert!(purge_offboarded_user("Administrator").is_err());
+    }
+
+    #[test]
+    fn offline_lockout_blocks_after_five_failures() {
+        let user = "lockout.test.user";
+        clear_offline_failure(user);
+        for _ in 0..5 {
+            assert!(check_offline_lockout(user).is_none());
+            record_offline_failure(user);
+        }
+        assert!(check_offline_lockout(user).is_some());
+        clear_offline_failure(user);
+        assert!(check_offline_lockout(user).is_none());
     }
 }

@@ -10,6 +10,7 @@ use std::ffi::c_void;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::{Arc, Mutex};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 use windows::core::{implement, w, Error, Interface, GUID, HRESULT, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
     BOOL, CLASS_E_CLASSNOTAVAILABLE, E_INVALIDARG, E_NOTIMPL, E_POINTER, HINSTANCE, NTSTATUS,
@@ -301,8 +302,9 @@ unsafe fn create_sb_tile_bitmap() -> windows::core::Result<HBITMAP> {
     Ok(hbmp)
 }
 
-#[derive(Default)]
+#[derive(Default, Zeroize, ZeroizeOnDrop)]
 struct CredFields {
+    #[zeroize(skip)]
     username: String,
     password: String,
 }
@@ -453,7 +455,7 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
                 *ppszoptionalstatustext = PWSTR::null();
             }
         }
-        let (user, pass) = {
+        let (user, mut pass) = {
             let guard = self.state.lock().map_err(|_| Error::from(E_FAIL))?;
             (guard.username.clone(), guard.password.clone())
         };
@@ -525,7 +527,12 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
             };
 
             let local_user = format!(".\\{}", resp.username);
-            let (raw, total) = match pack_interactive_credentials(&local_user, &pass) {
+            let packed = pack_interactive_credentials(&local_user, &pass);
+            pass.zeroize();
+            if let Ok(mut guard) = self.state.lock() {
+                guard.password.zeroize();
+            }
+            let (raw, total) = match packed {
                 Ok(v) => v,
                 Err(msg) => {
                     *pcpgsr = CPGSR_NO_CREDENTIAL_NOT_FINISHED;

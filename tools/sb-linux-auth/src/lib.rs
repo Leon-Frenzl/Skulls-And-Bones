@@ -54,20 +54,77 @@ fn query_broker(_username: &str, _password: &str) -> Result<BrokerResp, ()> {
     Err(())
 }
 
+#[cfg(target_os = "linux")]
+#[link(name = "pam")]
+extern "C" {
+    fn pam_get_user(
+        pamh: *mut c_void,
+        user: *mut *const c_char,
+        prompt: *const c_char,
+    ) -> c_int;
+    fn pam_get_authtok(
+        pamh: *mut c_void,
+        item_type: c_int,
+        authtok: *mut *const c_char,
+        prompt: *const c_char,
+    ) -> c_int;
+}
+
+#[cfg(target_os = "linux")]
+const PAM_AUTHTOK_ITEM: c_int = 6;
+
+#[cfg(target_os = "linux")]
+unsafe fn read_pam_credentials(pamh: *mut c_void) -> (Option<String>, Option<String>) {
+    let mut user_ptr: *const c_char = std::ptr::null();
+    let user = if !pamh.is_null()
+        && pam_get_user(pamh, &mut user_ptr, std::ptr::null()) == PAM_SUCCESS
+        && !user_ptr.is_null()
+    {
+        CStr::from_ptr(user_ptr).to_str().ok().map(String::from)
+    } else {
+        None
+    };
+    let mut tok_ptr: *const c_char = std::ptr::null();
+    let pass = if !pamh.is_null()
+        && pam_get_authtok(pamh, PAM_AUTHTOK_ITEM, &mut tok_ptr, std::ptr::null()) == PAM_SUCCESS
+        && !tok_ptr.is_null()
+    {
+        CStr::from_ptr(tok_ptr).to_str().ok().map(String::from)
+    } else {
+        None
+    };
+    (user, pass)
+}
+
 /// Standard Linux PAM entry point (`pam_sm_authenticate`).
 ///
 /// # Safety
 /// Called by `libpam` with valid C pointers (`pamh`, `argv`).
 #[no_mangle]
 pub unsafe extern "C" fn pam_sm_authenticate(
-    _pamh: *mut c_void,
+    pamh: *mut c_void,
     _flags: c_int,
     argc: c_int,
     argv: *const *const c_char,
 ) -> c_int {
-    // Expected arguments or PAM conversation: supports `user=<name>` / `SB_AUTH_TEST` or PAM env.
-    let mut user_opt: Option<String> = std::env::var("PAM_USER").ok();
-    let pass_opt: Option<String> = std::env::var("PAM_AUTHTOK").ok();
+    #[cfg(target_os = "linux")]
+    let (mut user_opt, mut pass_opt) = read_pam_credentials(pamh);
+    #[cfg(not(target_os = "linux"))]
+    let (mut user_opt, pass_opt) = {
+        let _ = pamh;
+        (None::<String>, None::<String>)
+    };
+
+    if user_opt.is_none() {
+        user_opt = std::env::var("PAM_USER").ok();
+    }
+    #[cfg(target_os = "linux")]
+    if pass_opt.is_none() {
+        pass_opt = std::env::var("PAM_AUTHTOK").ok();
+    }
+    #[cfg(not(target_os = "linux"))]
+    let pass_opt = pass_opt.or_else(|| std::env::var("PAM_AUTHTOK").ok());
+
     if !argv.is_null() && argc > 0 {
         for i in 0..(argc as isize) {
             let ptr = *argv.offset(i);

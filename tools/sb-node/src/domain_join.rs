@@ -1078,11 +1078,32 @@ async fn handle_join_http_connection(
                 .iter()
                 .any(|c| c == "domain:join" || c == "domain:admin")
             {
-                return write_http_json(
+                return write_problem_json(
                     stream,
                     403,
                     "Forbidden",
-                    r#"{"error":"token lacks domain:join or domain:admin"}"#,
+                    "missing-capability",
+                    "Forbidden",
+                    "token lacks domain:join or domain:admin",
+                    path,
+                )
+                .await;
+            }
+            // [SECURITY-HYPOTHESIS] CWE-639 (IDOR): Any machine with domain:join could post
+            // heartbeats for another machine_id.
+            // [SECURITY-VERIFIED] Enforces subject binding unless caller holds admin role/capability.
+            if claims.subject != machine_id
+                && !claims.has_role("admin")
+                && !claims.has_capability("domain:admin")
+            {
+                return write_problem_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    "machine-id-mismatch",
+                    "Forbidden",
+                    "token subject does not match target machine_id",
+                    path,
                 )
                 .await;
             }
@@ -3038,11 +3059,32 @@ async fn handle_join_http_connection(
                 .trim_start_matches("/v1/machines/")
                 .trim_end_matches("/os-auth");
             if !claims.has_capability("domain:join") && !claims.has_role("admin") {
-                return write_http_json(
+                return write_problem_json(
                     stream,
                     403,
                     "Forbidden",
-                    r#"{"error":"token lacks domain:join or admin"}"#,
+                    "missing-capability",
+                    "Forbidden",
+                    "token lacks domain:join or admin",
+                    path,
+                )
+                .await;
+            }
+            // [SECURITY-HYPOTHESIS] CWE-639 (IDOR): Machine A could query /os-auth for Machine B
+            // to bypass allowed_machines restrictions or harvest offline verifiers.
+            // [SECURITY-VERIFIED] Enforces claims.sub == machine_id unless caller is domain admin.
+            if claims.subject != machine_id
+                && !claims.has_role("admin")
+                && !claims.has_capability("domain:admin")
+            {
+                return write_problem_json(
+                    stream,
+                    403,
+                    "Forbidden",
+                    "machine-id-mismatch",
+                    "Forbidden",
+                    "token subject does not match target machine_id",
+                    path,
                 )
                 .await;
             }
@@ -3056,11 +3098,19 @@ async fn handle_join_http_connection(
             let username = payload["username"].as_str().unwrap_or("").trim();
             let password = payload["password"].as_str().unwrap_or("");
             if let Some(retry_secs) = check_login_lockout(username).await {
-                let msg = serde_json::json!({
-                    "error": format!("Zu viele Fehlversuche. Bitte in {retry_secs}s erneut versuchen.")
-                })
-                .to_string();
-                return write_http_json(stream, 429, "Too Many Requests", &msg).await;
+                let detail = format!(
+                    "Zu viele Fehlversuche. Bitte in {retry_secs}s erneut versuchen."
+                );
+                return write_problem_json(
+                    stream,
+                    429,
+                    "Too Many Requests",
+                    "login-rate-limited",
+                    "Too Many Requests",
+                    &detail,
+                    path,
+                )
+                .await;
             }
             let creds = crate::oidc::CredentialStore::load(&base_dir.join("credentials.json"))
                 .unwrap_or_default();
@@ -3074,11 +3124,14 @@ async fn handle_join_http_connection(
                     "denied",
                     serde_json::json!({ "reason": "invalid_credentials" }),
                 );
-                return write_http_json(
+                return write_problem_json(
                     stream,
                     401,
                     "Unauthorized",
-                    r#"{"error":"Benutzername oder Passwort ungültig"}"#,
+                    "invalid-credentials",
+                    "Unauthorized",
+                    "Benutzername oder Passwort ungültig",
+                    path,
                 )
                 .await;
             }
@@ -3964,6 +4017,35 @@ fn load_local_auth_engine() -> Result<sb_auth::AuthEngine, String> {
     let rev_store = sb_auth::FileRevocationStore::open(auth_dir.join("revocations.json"))
         .map_err(|e| format!("Revocation store error: {e}"))?;
     Ok(sb_auth::AuthEngine::new(keypair, Arc::new(rev_store)))
+}
+
+async fn write_problem_json(
+    stream: &mut TcpStream,
+    code: u16,
+    reason: &str,
+    type_slug: &str,
+    title: &str,
+    detail: &str,
+    instance: &str,
+) -> Result<(), String> {
+    let body = serde_json::json!({
+        "type": format!("https://console.skulls-and-bones.org/problems/{type_slug}"),
+        "title": title,
+        "status": code,
+        "detail": detail,
+        "instance": instance,
+        "error": detail,
+    })
+    .to_string();
+    let resp = format!(
+        "HTTP/1.1 {code} {reason}\r\nContent-Type: application/problem+json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    stream
+        .write_all(resp.as_bytes())
+        .await
+        .map_err(|e| format!("Write error: {e}"))
 }
 
 async fn write_http_json(
