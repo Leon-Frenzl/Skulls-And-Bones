@@ -722,4 +722,21 @@ mod tests {
         clear_offline_failure(user);
         assert!(check_offline_lockout(user).is_none());
     }
+
+    #[test]
+    fn offline_cache_entry_can_be_inserted_and_purged() {
+        let mut cache = OfflineAuthCache::default();
+        cache.users.insert(
+            "alice.dev".to_string(),
+            OfflineUserEntry {
+                verifier_hash: "argon2id-stub".to_string(),
+                is_local_admin: false,
+                groups: vec!["eng".to_string()],
+                ou: "/Engineering".to_string(),
+            },
+        );
+        assert!(cache.users.contains_key("alice.dev"));
+        assert!(cache.users.remove("alice.dev").is_some());
+        assert!(!cache.users.contains_key("alice.dev"));
+    }
 }

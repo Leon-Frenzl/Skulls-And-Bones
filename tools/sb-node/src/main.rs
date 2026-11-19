@@ -5558,6 +5558,14 @@ async fn run_agent_loop(
                                     .await
                                     {
                                         if actions.iter().any(|a| a == "machine_offboard") {
+                                            sb_core::logfmt::log_event(
+                                                sb_core::logfmt::LogLevel::Warn,
+                                                "MACHINE_OFFBOARD_START",
+                                                &state.machine_id,
+                                                "node.agent",
+                                                "Machine offboarding triggered by DC heartbeat",
+                                                &[("fqdn", &state.fqdn)],
+                                            );
                                             let _ = offboard_this_machine();
                                             break;
                                         }
@@ -5568,16 +5576,22 @@ async fn run_agent_loop(
                                                 action.strip_prefix("offboard_user:")
                                             {
                                                 match os_auth_broker::purge_offboarded_user(user) {
-                                                    Ok(true) => println!(
-                                                        "  {} Offboarded user '{}' restlos entfernt.",
-                                                        "✓".green(),
-                                                        user
+                                                    Ok(true) => sb_core::logfmt::log_event(
+                                                        sb_core::logfmt::LogLevel::Info,
+                                                        "USER_OFFBOARD_PURGED",
+                                                        &state.machine_id,
+                                                        "node.offboard",
+                                                        "Purged offboarded user from machine",
+                                                        &[("user", user)],
                                                     ),
                                                     Ok(false) => {}
-                                                    Err(err) => eprintln!(
-                                                        "  {} Offboarding-Purge für '{}' fehlgeschlagen: {err}",
-                                                        "!".yellow(),
-                                                        user
+                                                    Err(err) => sb_core::logfmt::log_event(
+                                                        sb_core::logfmt::LogLevel::Warn,
+                                                        "ERR_USER_OFFBOARD_PURGE",
+                                                        &state.machine_id,
+                                                        "node.offboard",
+                                                        "Failed to purge offboarded user",
+                                                        &[("user", user), ("error", &err)],
                                                     ),
                                                 }
                                             }

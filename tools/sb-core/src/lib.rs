@@ -9,6 +9,7 @@ pub mod domain;
 pub mod dto;
 pub mod identity;
 pub mod ipam;
+pub mod logfmt;
 pub mod mesh_ipc;
 pub mod paths;
 pub mod policy;

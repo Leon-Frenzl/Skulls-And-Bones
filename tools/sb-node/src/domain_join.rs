@@ -5503,4 +5503,77 @@ mod tests {
 
         let _ = fs::remove_dir_all(&temp);
     }
+
+    #[test]
+    fn offboard_user_preserves_shared_machines_when_revoke_machines_is_false() {
+        let temp = std::env::temp_dir().join(format!(
+            "sb_node_shared_offboard_{}_{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&temp).unwrap();
+
+        let reg_path = temp.join("machines.json");
+        let users_path = temp.join("users.json");
+        let audit_path = temp.join("audit.jsonl");
+
+        let mut reg = DomainRegistry::load_from_path(&reg_path, "corp.eu").unwrap();
+        reg.machines.push(JoinedMachineRecord {
+            machine_id: "mach_shared01".into(),
+            hostname: "ws01".into(),
+            fqdn: "ws01.corp.eu".into(),
+            os: "windows".into(),
+            mesh_ip: "100.64.0.10".into(),
+            machine_public_key_b64: String::new(),
+            ssh_host_pubkey: None,
+            joined_by: "alice.admin".into(),
+            joined_at: "2026-11-20T00:00:00Z".into(),
+            revoked: false,
+            revoked_reason: None,
+        });
+        reg.save(&reg_path).unwrap();
+
+        let mut users =
+            crate::directory_users::IdentityDirectory::load_or_create(&users_path, "corp.eu")
+                .unwrap();
+        users
+            .upsert_user(sb_core::identity::DomainUser {
+                username: "alice.admin".into(),
+                display_name: "Alice".into(),
+                email: "alice@corp.eu".into(),
+                ou: "/".into(),
+                groups: vec!["admins".into()],
+                ssh_public_key: None,
+                enabled: true,
+                created_at: String::new(),
+                updated_at: String::new(),
+            })
+            .unwrap();
+        users.save(&users_path).unwrap();
+
+        let report = offboard_user(
+            "alice.admin",
+            "Left company",
+            false,
+            &users_path,
+            &reg_path,
+            &audit_path,
+        )
+        .unwrap();
+        assert!(report.user_disabled);
+        assert_eq!(report.revoked_machines.len(), 0);
+
+        let updated_reg = DomainRegistry::load_from_path(&reg_path, "corp.eu").unwrap();
+        assert!(!updated_reg.machines[0].revoked);
+
+        let updated_users =
+            crate::directory_users::IdentityDirectory::load_or_create(&users_path, "corp.eu")
+                .unwrap();
+        assert!(updated_users
+            .evaluate_machine_login("alice.admin", "mach_shared01", "ws01.corp.eu")
+            .is_err());
+
+        let _ = fs::remove_dir_all(&temp);
+    }
 }
