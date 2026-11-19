@@ -1109,6 +1109,18 @@ async fn handle_join_http_connection(
             let laps_meta = crate::laps::LapsMetaStore::load(&base_dir.join("laps_meta.json"))
                 .unwrap_or_default();
             let mut actions: Vec<String> = Vec::new();
+            let reg_path = registry_path
+                .map(PathBuf::from)
+                .unwrap_or_else(|| base_dir.join("machines.json"));
+            if let Ok(reg) = DomainRegistry::load_from_path(&reg_path, "corp.eu") {
+                if reg
+                    .machines
+                    .iter()
+                    .any(|m| m.machine_id == machine_id && m.revoked)
+                {
+                    actions.push("machine_offboard".to_string());
+                }
+            }
             if let Some(entry) = laps_meta.entries.get(machine_id) {
                 if entry.rotate_requested || entry.rotate_pending {
                     actions.push("laps_rotate".to_string());

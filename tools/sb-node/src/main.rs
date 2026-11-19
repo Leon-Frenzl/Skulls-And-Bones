@@ -315,6 +315,8 @@ enum DomainCommands {
         #[arg(long)]
         all: bool,
     },
+    /// Führt ein vollständiges lokales Machine-Offboarding durch (löscht Nutzer, Credential Provider & Domain-Keys)
+    Leave,
 }
 
 #[derive(Subcommand, Debug)]
@@ -4701,7 +4703,31 @@ async fn handle_domain_commands(sub: DomainCommands) -> Result<(), String> {
                 Err("Bitte <USERNAME> oder --all angeben.".into())
             }
         }
+        DomainCommands::Leave => offboard_this_machine(),
     }
+}
+
+/// Performs complete zero-residue machine offboarding on this host:
+/// purges all cached domain OS accounts/profiles, disables the OS Credential Provider,
+/// wipes all local domain keys/state under `~/.sb/domain`, and stops the agent.
+///
+/// // [SECURITY-HYPOTHESIS] CWE-284 / CWE-459: Revoked machines retain domain keys,
+/// // cached OS user accounts, Credential Provider registration, and policy artifacts.
+/// // [SECURITY-VERIFIED] Purges all cached domain users, unregisters Credential Provider,
+/// // and removes all files/directories inside `local_domain_dir()`.
+pub fn offboard_this_machine() -> Result<(), String> {
+    let purged = os_auth_broker::purge_all_cached_domain_users();
+    let _ = handle_domain_logon_cmd("disable", None, None);
+    let domain_dir = sb_core::domain::local_domain_dir();
+    if domain_dir.exists() {
+        let _ = fs::remove_dir_all(&domain_dir);
+    }
+    println!(
+        "{} Machine-Offboarding abgeschlossen ({} Domänen-Konten entfernt, Domain-Keys gelöscht, Credential Provider deaktiviert).",
+        "✓".green(),
+        purged.len()
+    );
+    Ok(())
 }
 
 fn handle_domain_logon_cmd(
@@ -5491,6 +5517,10 @@ async fn run_agent_loop(
                                     )
                                     .await
                                     {
+                                        if actions.iter().any(|a| a == "machine_offboard") {
+                                            let _ = offboard_this_machine();
+                                            break;
+                                        }
                                         for action in &actions {
                                             if action == "laps_rotate" {
                                                 remote_rotate_requested = true;
@@ -5524,6 +5554,14 @@ async fn run_agent_loop(
                 }
             }
             Err(e) => {
+                if e.contains("machine is revoked") {
+                    eprintln!(
+                        "  {} Maschine wurde vom Domain Controller widerrufen — starte vollständiges Offboarding.",
+                        "!".yellow()
+                    );
+                    let _ = offboard_this_machine();
+                    break;
+                }
                 eprintln!(
                     "  {} GPO-Sync fehlgeschlagen (Offline-Modus): {e}",
                     "!".yellow()
