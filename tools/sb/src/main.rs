@@ -580,11 +580,12 @@ fn real_main() {
         Some(Commands::Context { action }) => {
             handle_context_cmd(action);
         }
-        Some(Commands::Use { name }) => {
+        Some(Commands::Use { name, args }) => {
             if name.eq_ignore_ascii_case("domain-logon") || name.eq_ignore_ascii_case("domain-login")
             {
-                let args = vec!["domain".to_string(), "logon".to_string(), "enable".to_string()];
-                delegate_to("domain", "sb-node", &args);
+                let mut full = vec!["domain".to_string(), "logon".to_string(), "enable".to_string()];
+                full.extend(args);
+                delegate_to("domain", "sb-node", &full);
             } else {
                 handle_use_cmd(&name);
             }

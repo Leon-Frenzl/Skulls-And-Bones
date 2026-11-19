@@ -449,8 +449,11 @@ pub enum Commands {
     /// Blitzschneller Shortcut zum Umschalten des aktiven Kontexts (sb use <name>)
     #[command(alias = "u")]
     Use {
-        /// Name des zu aktivierenden Kontexts (z. B. 'acme-corp', 'homelab')
+        /// Name des zu aktivierenden Kontexts (z. B. 'acme-corp', 'homelab', 'domain-logon')
         name: String,
+        /// Optionale Zusatzargumente (z. B. --dll-path bei 'sb use domain-logon')
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
 
     /// Live-Log-Streaming und Smart Crash Inspector von Flottenknoten und lokalen Diensten (sb logs)
