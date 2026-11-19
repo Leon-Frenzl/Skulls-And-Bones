@@ -15,6 +15,9 @@ use windows::Win32::Foundation::{
     BOOL, CLASS_E_CLASSNOTAVAILABLE, E_INVALIDARG, E_NOTIMPL, E_POINTER, HINSTANCE, NTSTATUS,
     S_FALSE, S_OK,
 };
+use windows::Win32::Graphics::Gdi::{
+    CreateDIBSection, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP,
+};
 use windows::Win32::Security::Authentication::Identity::{
     LsaConnectUntrusted, LsaDeregisterLogonProcess, LsaLookupAuthenticationPackage, LSA_STRING,
 };
@@ -30,7 +33,7 @@ use windows::Win32::UI::Shell::{
     ICredentialProviderCredential_Impl, ICredentialProviderEvents, ICredentialProvider_Impl,
     CPFIS_FOCUSED, CPFIS_NONE, CPFS_DISPLAY_IN_BOTH, CPFS_DISPLAY_IN_SELECTED_TILE,
     CPFS_HIDDEN, CPFT_EDIT_TEXT, CPFT_LARGE_TEXT, CPFT_PASSWORD_TEXT, CPFT_SUBMIT_BUTTON,
-    CPGSR_NO_CREDENTIAL_NOT_FINISHED, CPGSR_RETURN_CREDENTIAL_FINISHED,
+    CPFT_TILE_IMAGE, CPGSR_NO_CREDENTIAL_NOT_FINISHED, CPGSR_RETURN_CREDENTIAL_FINISHED,
     CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION, CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR,
     CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE, CREDENTIAL_PROVIDER_FIELD_STATE,
     CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE, CREDENTIAL_PROVIDER_STATUS_ICON,
@@ -128,11 +131,66 @@ unsafe fn pack_interactive_credentials(
     Ok((raw, cb))
 }
 
+/// Generates a 128x128 32-bit BGRA Skulls & Bones badge HBITMAP for `CPFT_TILE_IMAGE`.
+unsafe fn create_sb_tile_bitmap() -> windows::core::Result<HBITMAP> {
+    const SIZE: i32 = 128;
+    let mut bmi = BITMAPINFO::default();
+    bmi.bmiHeader = BITMAPINFOHEADER {
+        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+        biWidth: SIZE,
+        biHeight: -SIZE, // top-down DIB
+        biPlanes: 1,
+        biBitCount: 32,
+        biCompression: BI_RGB.0,
+        ..Default::default()
+    };
+    let mut bits: *mut c_void = std::ptr::null_mut();
+    let hbmp = CreateDIBSection(None, &bmi, DIB_RGB_COLORS, &mut bits, None, 0)?;
+    if bits.is_null() {
+        return Err(Error::from(E_FAIL));
+    }
+    let pixels = std::slice::from_raw_parts_mut(bits as *mut u32, (SIZE * SIZE) as usize);
+    let cx = 63.5_f32;
+    let cy = 63.5_f32;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let mut color: u32 = 0x0000_0000; // transparent outside badge
+            if dist <= 61.0 {
+                // Dark slate background (#0F172A) with cyan ring (#38BDF8)
+                color = if dist >= 56.5 { 0xFF38_BDF8 } else { 0xFF0F_172A };
+                // Stylized skull/shield silhouette in #E2E8F0
+                let in_cranium = ((dx / 26.0).powi(2) + ((dy + 6.0) / 24.0).powi(2)) <= 1.0;
+                let in_jaw = dx.abs() <= 14.0 && dy >= 10.0 && dy <= 28.0;
+                if in_cranium || in_jaw {
+                    color = 0xFFE2_E8F0;
+                }
+                // Cyan eyes (#38BDF8)
+                let left_eye = ((dx + 9.5).powi(2) + (dy + 3.0).powi(2)).sqrt() <= 5.2;
+                let right_eye = ((dx - 9.5).powi(2) + (dy + 3.0).powi(2)).sqrt() <= 5.2;
+                // Keyhole nose / jaw teeth cutouts
+                let nose = dx.abs() <= 2.5 && dy >= 5.0 && dy <= 11.0;
+                let tooth1 = (dx + 6.0).abs() <= 1.5 && dy >= 21.0 && dy <= 28.0;
+                let tooth2 = dx.abs() <= 1.5 && dy >= 21.0 && dy <= 28.0;
+                let tooth3 = (dx - 6.0).abs() <= 1.5 && dy >= 21.0 && dy <= 28.0;
+                if left_eye || right_eye {
+                    color = 0xFF38_BDF8;
+                } else if nose || tooth1 || tooth2 || tooth3 {
+                    color = 0xFF0F_172A;
+                }
+            }
+            pixels[(y * SIZE + x) as usize] = color;
+        }
+    }
+    Ok(hbmp)
+}
+
 #[derive(Default)]
 struct CredFields {
     username: String,
     password: String,
-    last_error: String,
 }
 
 #[implement(ICredentialProviderCredential)]
@@ -171,19 +229,15 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
         }
         unsafe {
             match dwfieldid {
-                0 => {
+                0 | 1 => {
                     *pcpfs = CPFS_DISPLAY_IN_BOTH;
                     *pcpfis = CPFIS_NONE;
                 }
-                1 => {
+                2 => {
                     *pcpfs = CPFS_DISPLAY_IN_SELECTED_TILE;
                     *pcpfis = CPFIS_FOCUSED;
                 }
-                2 => {
-                    *pcpfs = CPFS_DISPLAY_IN_SELECTED_TILE;
-                    *pcpfis = CPFIS_NONE;
-                }
-                3 => {
+                3 | 4 => {
                     *pcpfs = CPFS_DISPLAY_IN_SELECTED_TILE;
                     *pcpfis = CPFIS_NONE;
                 }
@@ -199,17 +253,21 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
     fn GetStringValue(&self, dwfieldid: u32) -> windows::core::Result<PWSTR> {
         let guard = self.state.lock().map_err(|_| Error::from(E_FAIL))?;
         let val = match dwfieldid {
-            0 => "Bei Skulls & Bones anmelden",
-            1 => guard.username.as_str(),
-            2 => guard.password.as_str(),
-            3 => "Anmelden",
+            1 => "Bei Skulls & Bones anmelden",
+            2 => guard.username.as_str(),
+            3 => guard.password.as_str(),
+            4 => "Anmelden",
             _ => return Err(Error::from(E_INVALIDARG)),
         };
         unsafe { alloc_co_task_pwstr(val) }
     }
 
-    fn GetBitmapValue(&self, _dwfieldid: u32) -> windows::core::Result<windows::Win32::Graphics::Gdi::HBITMAP> {
-        Err(Error::from(E_NOTIMPL))
+    fn GetBitmapValue(&self, dwfieldid: u32) -> windows::core::Result<HBITMAP> {
+        if dwfieldid == 0 {
+            unsafe { create_sb_tile_bitmap() }
+        } else {
+            Err(Error::from(E_INVALIDARG))
+        }
     }
 
     fn GetCheckboxValue(
@@ -222,8 +280,8 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
     }
 
     fn GetSubmitButtonValue(&self, dwfieldid: u32) -> windows::core::Result<u32> {
-        if dwfieldid == 3 {
-            Ok(2)
+        if dwfieldid == 4 {
+            Ok(3)
         } else {
             Err(Error::from(E_INVALIDARG))
         }
@@ -246,8 +304,8 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
         let text = unsafe { psz.to_string().unwrap_or_default() };
         let mut guard = self.state.lock().map_err(|_| Error::from(E_FAIL))?;
         match dwfieldid {
-            1 => guard.username = text,
-            2 => guard.password = text,
+            2 => guard.username = text,
+            3 => guard.password = text,
             _ => return Err(Error::from(E_INVALIDARG)),
         }
         Ok(())
@@ -448,7 +506,7 @@ impl ICredentialProvider_Impl for SBCredentialProvider_Impl {
     }
 
     fn GetFieldDescriptorCount(&self) -> windows::core::Result<u32> {
-        Ok(4)
+        Ok(5)
     }
 
     fn GetFieldDescriptorAt(
@@ -456,10 +514,11 @@ impl ICredentialProvider_Impl for SBCredentialProvider_Impl {
         dwindex: u32,
     ) -> windows::core::Result<*mut CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR> {
         let (ftype, label) = match dwindex {
-            0 => (CPFT_LARGE_TEXT, "Bei Skulls & Bones anmelden"),
-            1 => (CPFT_EDIT_TEXT, "Benutzername"),
-            2 => (CPFT_PASSWORD_TEXT, "Passwort"),
-            3 => (CPFT_SUBMIT_BUTTON, "Anmelden"),
+            0 => (CPFT_TILE_IMAGE, "Skulls & Bones"),
+            1 => (CPFT_LARGE_TEXT, "Bei Skulls & Bones anmelden"),
+            2 => (CPFT_EDIT_TEXT, "Benutzername"),
+            3 => (CPFT_PASSWORD_TEXT, "Passwort"),
+            4 => (CPFT_SUBMIT_BUTTON, "Anmelden"),
             _ => return Err(Error::from(E_INVALIDARG)),
         };
         unsafe {
@@ -684,9 +743,9 @@ mod tests {
         unsafe {
             let provider: ICredentialProvider = SBCredentialProvider::new().into();
             provider.SetUsageScenario(CPUS_LOGON, 0).unwrap();
-            assert_eq!(provider.GetFieldDescriptorCount().unwrap(), 4);
+            assert_eq!(provider.GetFieldDescriptorCount().unwrap(), 5);
 
-            for idx in 0..4 {
+            for idx in 0..5 {
                 let desc = provider.GetFieldDescriptorAt(idx).unwrap();
                 assert_eq!((*desc).dwFieldID, idx);
                 windows::Win32::System::Com::CoTaskMemFree(Some((*desc).pszLabel.0 as *const c_void));
@@ -705,7 +764,10 @@ mod tests {
             let cred = provider.GetCredentialAt(0).unwrap();
             let sel_autologon = cred.SetSelected().unwrap();
             assert!(!sel_autologon.as_bool(), "SetSelected must NOT auto-logon");
-            assert_eq!(cred.GetSubmitButtonValue(3).unwrap(), 2);
+            assert_eq!(cred.GetSubmitButtonValue(4).unwrap(), 3);
+            let hbmp = cred.GetBitmapValue(0).unwrap();
+            assert!(!hbmp.is_invalid());
+            let _ = windows::Win32::Graphics::Gdi::DeleteObject(hbmp.into());
 
             let mut resp = CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE::default();
             let mut ser = CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION::default();

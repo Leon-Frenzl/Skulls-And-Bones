@@ -306,24 +306,72 @@ pub fn ensure_local_os_account(
     }
 }
 
+/// Creates a Windows Named Pipe server instance with a strict DACL allowing only
+/// `NT AUTHORITY\SYSTEM` (`SY`) and `BUILTIN\Administrators` (`BA`).
+///
+/// // [SECURITY-HYPOTHESIS] CWE-284 / CWE-307: Default named pipe DACL permits any local
+/// // user to connect and brute-force domain credentials via the local broker.
+/// // [SECURITY-VERIFIED] SDDL `D:(A;;GA;;;SY)(A;;GA;;;BA)` restricts pipe access strictly
+/// // to SYSTEM (LogonUI/services) and Administrators.
+#[cfg(windows)]
+fn create_restricted_pipe_server(
+    pipe_name: &str,
+    first: bool,
+) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+    use std::ffi::c_void;
+    use tokio::net::windows::named_pipe::ServerOptions;
+    use windows_sys::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+
+    let mut opts = ServerOptions::new();
+    opts.first_pipe_instance(first);
+
+    let sddl: Vec<u16> = "D:(A;;GA;;;SY)(A;;GA;;;BA)\0".encode_utf16().collect();
+    let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    // SAFETY: `sddl` is NUL-terminated UTF-16; `sd` is freed via `LocalFree` below.
+    let ok = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            SDDL_REVISION_1,
+            &mut sd,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 || sd.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut sa = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: sd,
+        bInheritHandle: 0,
+    };
+    let res = unsafe {
+        opts.create_with_security_attributes_raw(pipe_name, (&mut sa as *mut SECURITY_ATTRIBUTES).cast::<c_void>())
+    };
+    unsafe {
+        LocalFree(sd as HLOCAL);
+    }
+    res
+}
+
 /// Runs the local OS Auth Broker IPC server (`\\.\pipe\sb-node-auth` on Windows,
 /// `/run/sb-node/auth.sock` on Unix).
 pub async fn run_os_auth_broker(dc_endpoint: String, machine_id: String) {
     #[cfg(windows)]
     {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-        use tokio::net::windows::named_pipe::ServerOptions;
 
         let pipe_name = r"\\.\pipe\sb-node-auth";
         let mut first = true;
         loop {
-            let mut opts = ServerOptions::new();
-            opts.first_pipe_instance(first);
-            first = false;
-            let Ok(server) = opts.create(pipe_name) else {
+            let Ok(server) = create_restricted_pipe_server(pipe_name, first) else {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 continue;
             };
+            first = false;
             if server.connect().await.is_err() {
                 continue;
             }
@@ -371,6 +419,10 @@ pub async fn run_os_auth_broker(dc_endpoint: String, machine_id: String) {
         let Ok(listener) = UnixListener::bind(&sock_path) else {
             return;
         };
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&sock_path, fs::Permissions::from_mode(0o600));
+        }
         loop {
             let Ok((stream, _)) = listener.accept().await else {
                 continue;
