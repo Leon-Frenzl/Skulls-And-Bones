@@ -738,9 +738,8 @@ impl CrossMeshBridge {
                             let mut streams = active.write().await;
                             if let Some(stream) = streams.get(&session_id) {
                                 if !stream.fec_receiver.lock().await.is_finished() {
-                                    eprintln!(
-                                        "Cross-mesh FEC stream {session_id} closed with missing blocks"
-                                    );
+                                    let sid = session_id.to_string();
+                                    sb_core::logfmt::warn("ERR_FEC_INCOMPLETE", "mesh.bridge", "Cross-mesh FEC stream closed with missing blocks", &[("session_id", &sid)]);
                                     streams.remove(&session_id);
                                     stats.write().await.streams_closed += 1;
                                 }

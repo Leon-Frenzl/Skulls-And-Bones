@@ -410,7 +410,8 @@ pub async fn run_daemon(
                 let permit = match Arc::clone(&connection_limit).try_acquire_owned() {
                     Ok(permit) => permit,
                     Err(_) => {
-                        eprintln!("Rejected daemon connection from {remote_addr}: connection limit reached");
+                        let peer = remote_addr.to_string();
+                        sb_core::logfmt::warn("ERR_DAEMON_CONN_LIMIT", "sb.daemon", "Rejected daemon connection: limit reached", &[("peer", &peer)]);
                         continue;
                     }
                 };
@@ -426,21 +427,18 @@ pub async fn run_daemon(
                     match result {
                         Ok(Ok(())) => {}
                         Ok(Err(error)) => {
-                            eprintln!(
-                                "{} Connection error from {}: {}",
-                                "✗".red(),
-                                remote_addr,
-                                error
-                            );
+                            let peer = remote_addr.to_string();
+                            sb_core::logfmt::warn("ERR_DAEMON_CONN", "sb.daemon", "Daemon connection error", &[("peer", &peer), ("error", &error.to_string())]);
                         }
                         Err(_) => {
-                            eprintln!("{} Connection from {} timed out", "✗".red(), remote_addr);
+                            let peer = remote_addr.to_string();
+                            sb_core::logfmt::warn("ERR_DAEMON_TIMEOUT", "sb.daemon", "Daemon connection timed out", &[("peer", &peer)]);
                         }
                     }
                 });
             }
             Err(e) => {
-                eprintln!("{} Accept error: {}", "✗".red(), e);
+                sb_core::logfmt::warn("ERR_DAEMON_ACCEPT", "sb.daemon", "Daemon accept error", &[("error", &e.to_string())]);
             }
         }
     }
@@ -1525,10 +1523,8 @@ fn persist_rekeyed_vaults(
     }
 
     if let Err(error) = std::fs::remove_dir_all(&staging_root) {
-        eprintln!(
-            "Rekey abgeschlossen, aber Staging-Verzeichnis '{}' konnte nicht entfernt werden: {error}",
-            staging_root.display()
-        );
+        let p = staging_root.display().to_string();
+        sb_core::logfmt::warn("ERR_DAEMON_STAGING_CLEANUP", "sb.daemon", "Failed to remove staging directory after rekey", &[("path", &p), ("error", &error.to_string())]);
     }
     Ok(())
 }

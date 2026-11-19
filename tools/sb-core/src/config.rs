@@ -162,10 +162,12 @@ impl SuiteConfig {
         }
 
         if let Err(e) = cfg.save() {
-            eprintln!(
-                "{} Konnte Konfiguration nicht speichern: {}",
-                "Warnung:".yellow(),
-                e
+            let err_str = e.to_string();
+            crate::logfmt::warn(
+                "ERR_CONFIG_SAVE",
+                "core.config",
+                "Failed to save suite configuration",
+                &[("error", &err_str)],
             );
         } else {
             println!(

@@ -548,11 +548,7 @@ pub fn handle_service(action: Option<ServiceAction>, json: bool) {
             let acts = match install_services() {
                 Ok(a) => a,
                 Err(e) => {
-                    eprintln!(
-                        "  {} Service-Installation fehlgeschlagen: {}",
-                        "✗".bright_red().bold(),
-                        e
-                    );
+                    sb_core::logfmt::error("ERR_SVC_INSTALL", "sb.service", "Service installation failed", &[("error", &e.to_string())]);
                     std::process::exit(1);
                 }
             };
@@ -562,11 +558,7 @@ pub fn handle_service(action: Option<ServiceAction>, json: bool) {
             let acts = match start_services() {
                 Ok(a) => a,
                 Err(e) => {
-                    eprintln!(
-                        "  {} Service-Start fehlgeschlagen: {}",
-                        "✗".bright_red().bold(),
-                        e
-                    );
+                    sb_core::logfmt::error("ERR_SVC_START", "sb.service", "Service start failed", &[("error", &e.to_string())]);
                     std::process::exit(1);
                 }
             };
@@ -576,11 +568,7 @@ pub fn handle_service(action: Option<ServiceAction>, json: bool) {
             let acts = match stop_services() {
                 Ok(a) => a,
                 Err(e) => {
-                    eprintln!(
-                        "  {} Service-Stop fehlgeschlagen: {}",
-                        "✗".bright_red().bold(),
-                        e
-                    );
+                    sb_core::logfmt::error("ERR_SVC_STOP", "sb.service", "Service stop failed", &[("error", &e.to_string())]);
                     std::process::exit(1);
                 }
             };
@@ -591,11 +579,7 @@ pub fn handle_service(action: Option<ServiceAction>, json: bool) {
             match start_services() {
                 Ok(started) => acts.extend(started),
                 Err(e) => {
-                    eprintln!(
-                        "  {} Service-Restart fehlgeschlagen: {}",
-                        "✗".bright_red().bold(),
-                        e
-                    );
+                    sb_core::logfmt::error("ERR_SVC_RESTART", "sb.service", "Service restart failed", &[("error", &e.to_string())]);
                     std::process::exit(1);
                 }
             }

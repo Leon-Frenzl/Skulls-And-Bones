@@ -155,7 +155,8 @@ pub async fn run_ipc_server(
                 });
             }
             Err(e) => {
-                eprintln!("IPC Accept Fehler: {}", e);
+                let err = e.to_string();
+                sb_core::logfmt::warn("ERR_PROXY_IPC_ACCEPT", "proxy.ipc", "IPC accept failed", &[("error", &err)]);
             }
         }
     }

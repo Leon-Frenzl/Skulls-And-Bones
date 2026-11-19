@@ -369,13 +369,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Keypair::from_secret_base64(sk.trim())?
                 } else {
                     let kp = Keypair::generate();
-                    eprintln!(
-                        "  {} Kein Secret Key übergeben — verwende temporären Schlüssel (Tipp: 'sb-auth init').",
-                        "i".bright_yellow()
-                    );
-                    eprintln!(
-                        "  ► Temporärer Public Key: {}",
-                        kp.to_public_base64().green()
+                    let pub_b64 = kp.to_public_base64();
+                    sb_core::logfmt::warn(
+                        "AUTH_EPHEMERAL_KEY",
+                        "auth.serve",
+                        "Using ephemeral signing key because no key file was provided",
+                        &[("public_key", &pub_b64)],
                     );
                     kp
                 };

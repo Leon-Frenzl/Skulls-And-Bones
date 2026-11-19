@@ -71,17 +71,28 @@ impl DnsServer {
                                     Ok(response) => match limit_udp_response(response) {
                                         Ok(response) => {
                                             if let Err(error) = socket.send_to(&response, peer).await {
-                                                eprintln!("DNS UDP response to {peer} failed: {error}");
+                                                let p = peer.to_string();
+                                                let e = error.to_string();
+                                                sb_core::logfmt::warn("ERR_DNS_UDP_SEND", "dns.server", "DNS UDP response failed", &[("peer", &p), ("error", &e)]);
                                             }
                                         }
-                                        Err(error) => eprintln!("DNS UDP response for {peer} failed: {error}"),
+                                        Err(error) => {
+                                            let p = peer.to_string();
+                                            let e = error.to_string();
+                                            sb_core::logfmt::warn("ERR_DNS_UDP_ENCODE", "dns.server", "DNS UDP response encode failed", &[("peer", &p), ("error", &e)]);
+                                        }
                                     },
-                                    Err(error) => eprintln!("DNS UDP query from {peer} failed: {error}"),
+                                    Err(error) => {
+                                        let p = peer.to_string();
+                                        let e = error.to_string();
+                                        sb_core::logfmt::warn("ERR_DNS_UDP_QUERY", "dns.server", "DNS UDP query failed", &[("peer", &p), ("error", &e)]);
+                                    }
                                 }
                             });
                         }
                         Err(error) => {
-                            eprintln!("DNS UDP receive failed: {error}");
+                            let e = error.to_string();
+                            sb_core::logfmt::error("ERR_DNS_UDP_RECV", "dns.server", "DNS UDP receive failed", &[("error", &e)]);
                             tokio::time::sleep(Duration::from_millis(100)).await;
                         }
                     }
@@ -96,12 +107,15 @@ impl DnsServer {
                             tokio::spawn(async move {
                                 let _permit = permit;
                                 if let Err(error) = handle_tcp_client(stream, resolver).await {
-                                    eprintln!("DNS TCP session from {peer} failed: {error}");
+                                    let p = peer.to_string();
+                                    let e = error.to_string();
+                                    sb_core::logfmt::warn("ERR_DNS_TCP_SESSION", "dns.server", "DNS TCP session failed", &[("peer", &p), ("error", &e)]);
                                 }
                             });
                         }
                         Err(error) => {
-                            eprintln!("DNS TCP accept failed: {error}");
+                            let e = error.to_string();
+                            sb_core::logfmt::error("ERR_DNS_TCP_ACCEPT", "dns.server", "DNS TCP accept failed", &[("error", &e)]);
                             tokio::time::sleep(Duration::from_millis(100)).await;
                         }
                     }
@@ -118,14 +132,16 @@ async fn process_packet(resolver: &DnsResolver, packet: &[u8]) -> Result<Vec<u8>
                 .to_vec()
                 .map_err(|error| format!("DNS response encoding failed: {error}")),
             Ok(Err(error)) => {
-                eprintln!("DNS resolver failed: {error}");
+                let e = error.to_string();
+                sb_core::logfmt::warn("ERR_DNS_RESOLVE", "dns.server", "DNS resolver failed", &[("error", &e)]);
                 error_response(query.id, ResponseCode::ServFail)
             }
             Err(_) => error_response(query.id, ResponseCode::ServFail),
         },
         Err(error) => {
             if packet.len() >= 2 {
-                eprintln!("Malformed DNS query: {error}");
+                let e = error.to_string();
+                sb_core::logfmt::warn("ERR_DNS_MALFORMED", "dns.server", "Malformed DNS query", &[("error", &e)]);
                 error_response(
                     u16::from_be_bytes([packet[0], packet[1]]),
                     ResponseCode::FormErr,

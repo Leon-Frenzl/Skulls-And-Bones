@@ -177,19 +177,22 @@ async fn handle_request(request: Request<Incoming>, state: RequestState) -> Resp
         telemetry.record_status(status, started.elapsed().as_secs_f32() * 1000.0);
     }
 
-    eprintln!(
-        "{}",
-        serde_json::json!({
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-            "event": "http_access",
-            "client_ip": state.client_addr.ip().to_string(),
-            "method": method,
-            "host": host,
-            "path": safe_path,
-            "protocol": version,
-            "status": status,
-            "latency_ms": started.elapsed().as_millis(),
-        })
+    let client_ip = state.client_addr.ip().to_string();
+    let status_s = status.to_string();
+    let latency_s = started.elapsed().as_millis().to_string();
+    sb_core::logfmt::info(
+        "HTTP_ACCESS",
+        "proxy.http",
+        "Handled HTTP request",
+        &[
+            ("client_ip", &client_ip),
+            ("method", &method),
+            ("host", &host),
+            ("path", &safe_path),
+            ("protocol", version),
+            ("status", &status_s),
+            ("latency_ms", &latency_s),
+        ],
     );
     response
 }
@@ -814,13 +817,12 @@ fn empty_response(status: StatusCode) -> Response<HttpBody> {
 }
 
 fn log_error(event: &str, message: &str, client_addr: SocketAddr) {
-    eprintln!(
-        "{}",
-        serde_json::json!({
-            "event": event,
-            "client_ip": client_addr.ip().to_string(),
-            "error": message,
-        })
+    let client_ip = client_addr.ip().to_string();
+    sb_core::logfmt::error(
+        event,
+        "proxy.http",
+        "HTTP request error",
+        &[("client_ip", &client_ip), ("error", message)],
     );
 }
 

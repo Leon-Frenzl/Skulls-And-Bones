@@ -28,7 +28,8 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     terminal.show_cursor()?;
 
     if let Err(err) = res {
-        eprintln!("TUI-Fehler: {:?}", err);
+        let e = format!("{:?}", err);
+        sb_core::logfmt::error("ERR_PROXY_TUI", "proxy.tui", "Proxy TUI failed", &[("error", &e)]);
     }
     Ok(())
 }

@@ -100,10 +100,12 @@ fn main() {
                     );
                 }
                 Err(e) => {
-                    eprintln!(
-                        "  {} Fehler bei der Initialisierung: {}",
-                        "✗".bright_red().bold(),
-                        e
+                    let err_str = e.to_string();
+                    sb_core::logfmt::error(
+                        "ERR_KEY_INIT",
+                        "key.cli",
+                        "Failed to initialize identity",
+                        &[("error", &err_str)],
                     );
                     std::process::exit(1);
                 }
@@ -140,10 +142,12 @@ fn main() {
                     );
                 }
                 Err(e) => {
-                    eprintln!(
-                        "  {} Fehler beim Inspizieren: {}",
-                        "✗".bright_red().bold(),
-                        e
+                    let err_str = e.to_string();
+                    sb_core::logfmt::error(
+                        "ERR_KEY_INSPECT",
+                        "key.cli",
+                        "Failed to inspect identity",
+                        &[("error", &err_str)],
                     );
                     std::process::exit(1);
                 }
@@ -196,10 +200,12 @@ fn main() {
                     );
                 }
                 Err(e) => {
-                    eprintln!(
-                        "  {} Fehler beim Prägen des Lease: {}",
-                        "✗".bright_red().bold(),
-                        e
+                    let err_str = e.to_string();
+                    sb_core::logfmt::error(
+                        "ERR_KEY_LEASE",
+                        "key.cli",
+                        "Failed to mint session lease",
+                        &[("error", &err_str)],
                     );
                     std::process::exit(1);
                 }
@@ -213,10 +219,12 @@ fn main() {
         Some(Commands::Lock) => {
             print_banner();
             if let Err(e) = lock_lease() {
-                eprintln!(
-                    "  {} Fehler beim Beenden der Sitzung: {}",
-                    "✗".bright_red().bold(),
-                    e
+                let err_str = e.to_string();
+                sb_core::logfmt::error(
+                    "ERR_KEY_LOCK",
+                    "key.cli",
+                    "Failed to lock session lease",
+                    &[("error", &err_str)],
                 );
                 std::process::exit(1);
             }

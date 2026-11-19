@@ -197,7 +197,13 @@ fn resolve_public_key_arg(input: &str) -> Result<String, CaError> {
 fn main() {
     let cli = Cli::parse();
     if let Err(e) = run(cli) {
-        eprintln!("{} {}", "error:".bright_red().bold(), e);
+        let err_str = e.to_string();
+        sb_core::logfmt::error(
+            "ERR_CA_CLI",
+            "ca.cli",
+            "CA command failed",
+            &[("error", &err_str)],
+        );
         std::process::exit(1);
     }
 }

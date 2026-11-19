@@ -496,7 +496,7 @@ pub async fn run_vpc_forwarder(
             if let Err(e) =
                 tunnel_tcp_to_vpc(tcp_stream, &t_host, t_port, &gw_ep, &gw_pk, &t_mesh, false).await
             {
-                eprintln!("  {} Tunneling Fehler: {}", "✗".bright_red(), e);
+                sb_core::logfmt::error("ERR_MESH_TUNNEL", "mesh.subnet_route", "Subnet tunnel error", &[("error", &e.to_string())]);
             }
         });
     }

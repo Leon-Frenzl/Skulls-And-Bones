@@ -5516,23 +5516,22 @@ mod tests {
 
         let reg_path = temp.join("machines.json");
         let users_path = temp.join("users.json");
-        let audit_path = temp.join("audit.jsonl");
 
         let mut reg = DomainRegistry::load_from_path(&reg_path, "corp.eu").unwrap();
-        reg.machines.push(JoinedMachineRecord {
+        reg.machines.push(MachineRecord {
             machine_id: "mach_shared01".into(),
             hostname: "ws01".into(),
+            domain: "corp.eu".into(),
             fqdn: "ws01.corp.eu".into(),
-            os: "windows".into(),
-            mesh_ip: "100.64.0.10".into(),
+            os: OsKind::Windows,
             machine_public_key_b64: String::new(),
-            ssh_host_pubkey: None,
+            mesh_ip: "100.64.0.10".into(),
             joined_by: "alice.admin".into(),
             joined_at: "2026-11-20T00:00:00Z".into(),
             revoked: false,
             revoked_reason: None,
         });
-        reg.save(&reg_path).unwrap();
+        reg.save().unwrap();
 
         let mut users =
             crate::directory_users::IdentityDirectory::load_or_create(&users_path, "corp.eu")
@@ -5554,11 +5553,10 @@ mod tests {
 
         let report = offboard_user(
             "alice.admin",
-            "Left company",
+            "admin",
             false,
-            &users_path,
-            &reg_path,
-            &audit_path,
+            Some(&temp),
+            Some(&reg_path),
         )
         .unwrap();
         assert!(report.user_disabled);

@@ -113,18 +113,20 @@ pub async fn start_syncd(
             let (stream, peer) = match listener.accept().await {
                 Ok(connection) => connection,
                 Err(error) => {
-                    eprintln!("Catalog sync accept failed: {error}");
+                    sb_core::logfmt::warn("ERR_CATALOG_ACCEPT", "node.catalog_sync", "Catalog sync accept failed", &[("error", &error.to_string())]);
                     continue;
                 }
             };
             if !peer.ip().is_loopback() {
-                eprintln!("Rejected non-loopback catalog sync connection from {peer}");
+                let p = peer.to_string();
+                sb_core::logfmt::warn("ERR_CATALOG_NON_LOOPBACK", "node.catalog_sync", "Rejected non-loopback catalog sync connection", &[("peer", &p)]);
                 continue;
             }
             let permit = match service.connection_limit.clone().try_acquire_owned() {
                 Ok(permit) => permit,
                 Err(_) => {
-                    eprintln!("Rejected catalog sync connection from {peer}: limit reached");
+                    let p = peer.to_string();
+                    sb_core::logfmt::warn("ERR_CATALOG_CONN_LIMIT", "node.catalog_sync", "Rejected catalog sync connection: limit reached", &[("peer", &p)]);
                     continue;
                 }
             };
@@ -139,9 +141,13 @@ pub async fn start_syncd(
                 {
                     Ok(Ok(())) => {}
                     Ok(Err(error)) => {
-                        eprintln!("Catalog sync request from {peer} failed: {error}")
+                        let p = peer.to_string();
+                        sb_core::logfmt::warn("ERR_CATALOG_REQ", "node.catalog_sync", "Catalog sync request failed", &[("peer", &p), ("error", &error.to_string())]);
                     }
-                    Err(_) => eprintln!("Catalog sync request from {peer} timed out"),
+                    Err(_) => {
+                        let p = peer.to_string();
+                        sb_core::logfmt::warn("ERR_CATALOG_TIMEOUT", "node.catalog_sync", "Catalog sync request timed out", &[("peer", &p)]);
+                    }
                 }
             });
         }

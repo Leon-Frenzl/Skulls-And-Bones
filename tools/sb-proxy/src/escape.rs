@@ -590,7 +590,8 @@ impl SovereignTunnelClient {
                                 let gw = gateway_addr.clone();
                                 tokio::spawn(async move {
                                     if let Err(e) = Self::handle_stream(&gw, local_port, &stream_id).await {
-                                        eprintln!("Tunnel Stream Fehler (ID: {}): {}", stream_id, e);
+                                        let err = e.to_string();
+                                        sb_core::logfmt::warn("ERR_TUNNEL_STREAM", "proxy.escape", "Tunnel stream failed", &[("stream_id", &stream_id), ("error", &err)]);
                                     }
                                 });
                             } else if parts[0] == "PING" {
@@ -599,7 +600,8 @@ impl SovereignTunnelClient {
                         }
                         Ok(None) => break,
                         Err(e) => {
-                            eprintln!("Tunnel Control Error: {}", e);
+                            let err = e.to_string();
+                            sb_core::logfmt::error("ERR_TUNNEL_CONTROL", "proxy.escape", "Tunnel control connection failed", &[("error", &err)]);
                             break;
                         }
                     }

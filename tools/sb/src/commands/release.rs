@@ -2265,10 +2265,8 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         if let Err(error) = fs::remove_dir_all(&self.path) {
-            eprintln!(
-                "Hinweis: Temporärer Release-Ordner {} konnte nicht entfernt werden: {error}",
-                self.path.display()
-            );
+            let p = self.path.display().to_string();
+            sb_core::logfmt::warn("ERR_RELEASE_TMP_CLEANUP", "sb.release", "Failed to remove temporary release directory", &[("path", &p), ("error", &error.to_string())]);
         }
     }
 }

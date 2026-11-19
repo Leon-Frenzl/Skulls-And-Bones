@@ -608,9 +608,8 @@ impl MeshClient {
                                             }
                                         }
                                         Err(error) => {
-                                            eprintln!(
-                                                "Cross-mesh FEC stream {session_id} rejected a symbol: {error}"
-                                            );
+                                            let sid = session_id.to_string();
+                                            sb_core::logfmt::warn("ERR_FEC_SYMBOL", "mesh.client", "Cross-mesh FEC stream rejected symbol", &[("session_id", &sid), ("error", &error.to_string())]);
                                             active_streams_bg.write().await.remove(&session_id);
                                         }
                                     }
@@ -669,9 +668,8 @@ impl MeshClient {
                                         })
                                     }
                                     Some(Err(error)) => {
-                                        eprintln!(
-                                            "Cross-mesh FEC block {block_id} repair failed: {error}"
-                                        );
+                                        let bid = block_id.to_string();
+                                        sb_core::logfmt::warn("ERR_FEC_REPAIR", "mesh.client", "Cross-mesh FEC block repair failed", &[("block_id", &bid), ("error", &error.to_string())]);
                                         active_streams_bg.write().await.remove(&session_id);
                                         Some(CrossMeshPayload::StreamClose { session_id })
                                     }
@@ -696,9 +694,7 @@ impl MeshClient {
                                     )
                                     .await
                                     {
-                                        eprintln!(
-                                            "Cross-mesh FEC block response send failed: {error}"
-                                        );
+                                        sb_core::logfmt::warn("ERR_FEC_RESP_SEND", "mesh.client", "Cross-mesh FEC block response send failed", &[("error", &error.to_string())]);
                                     }
                                 }
                             }
@@ -741,9 +737,8 @@ impl MeshClient {
                                             &symbol_indices,
                                             repair_round,
                                         ) {
-                                            eprintln!(
-                                                "Cross-mesh FEC stream {session_id} rejected an invalid repair request"
-                                            );
+                                            let sid = session_id.to_string();
+                                            sb_core::logfmt::warn("ERR_FEC_INVALID_REPAIR", "mesh.client", "Cross-mesh FEC stream rejected invalid repair request", &[("session_id", &sid)]);
                                             continue;
                                         }
                                         let _ = stream
@@ -816,18 +811,16 @@ impl MeshClient {
                                             let mut streams = streams.write().await;
                                             if let Some(stream) = streams.get(&session_id) {
                                                 if !stream.fec_receiver.lock().await.is_finished() {
-                                                    eprintln!(
-                                                        "Cross-mesh FEC stream {session_id} closed with missing blocks"
-                                                    );
+                                                    let sid = session_id.to_string();
+                                                    sb_core::logfmt::warn("ERR_FEC_INCOMPLETE", "mesh.client", "Cross-mesh FEC stream closed with missing blocks", &[("session_id", &sid)]);
                                                     streams.remove(&session_id);
                                                 }
                                             }
                                         });
                                     }
                                     Some(Err(error)) => {
-                                        eprintln!(
-                                            "Cross-mesh FEC stream {session_id} close rejected: {error}"
-                                        );
+                                        let sid = session_id.to_string();
+                                        sb_core::logfmt::warn("ERR_FEC_CLOSE_REJECTED", "mesh.client", "Cross-mesh FEC stream close rejected", &[("session_id", &sid), ("error", &error.to_string())]);
                                         active_streams_bg.write().await.remove(&session_id);
                                     }
                                     None => {}
@@ -1114,9 +1107,8 @@ impl MeshClient {
                                     if let Err(error) =
                                         bridge_clone.process_envelope(data_env, |_| {}).await
                                     {
-                                        eprintln!(
-                                        "Direct cross-mesh FEC stream {session_id} aborted: {error}"
-                                    );
+                                        let sid = session_id.to_string();
+                                        sb_core::logfmt::warn("ERR_DIRECT_FEC_ABORT", "mesh.client", "Direct cross-mesh FEC stream aborted", &[("session_id", &sid), ("error", &error.to_string())]);
                                         stream_aborted = true;
                                         break;
                                     }
@@ -1141,9 +1133,8 @@ impl MeshClient {
                                 if let Err(error) =
                                     bridge_clone.process_envelope(block_end, |_| {}).await
                                 {
-                                    eprintln!(
-                                        "Direct cross-mesh FEC block {block_id} close failed: {error}"
-                                    );
+                                    let bid = block_id.to_string();
+                                    sb_core::logfmt::warn("ERR_DIRECT_FEC_CLOSE", "mesh.client", "Direct cross-mesh FEC block close failed", &[("block_id", &bid), ("error", &error.to_string())]);
                                     stream_aborted = true;
                                     break;
                                 }
@@ -1214,16 +1205,16 @@ impl MeshClient {
                             }
                         }
                         Err(error) => {
-                            eprintln!(
-                                "Direct cross-mesh FEC stream {session_id} read failed: {error}"
-                            );
+                            let sid = session_id.to_string();
+                            sb_core::logfmt::warn("ERR_DIRECT_FEC_READ", "mesh.client", "Direct cross-mesh FEC stream read failed", &[("session_id", &sid), ("error", &error.to_string())]);
                             stream_aborted = true;
                             break;
                         }
                     }
                 }
                 let close_payload = if stream_aborted {
-                    eprintln!("Direct cross-mesh FEC stream {session_id} closed incomplete");
+                    let sid = session_id.to_string();
+                    sb_core::logfmt::warn("ERR_DIRECT_FEC_INCOMPLETE", "mesh.client", "Direct cross-mesh FEC stream closed incomplete", &[("session_id", &sid)]);
                     CrossMeshPayload::StreamClose { session_id }
                 } else {
                     CrossMeshPayload::StreamCloseFec {
@@ -1235,7 +1226,8 @@ impl MeshClient {
                 let close_env =
                     CrossMeshEnvelope::new(&src_mesh, &src_node_id, &tgt_mesh, None, close_payload);
                 if let Err(error) = bridge_clone.process_envelope(close_env, |_| {}).await {
-                    eprintln!("Direct cross-mesh stream {session_id} close failed: {error}");
+                    let sid = session_id.to_string();
+                    sb_core::logfmt::warn("ERR_DIRECT_STREAM_CLOSE", "mesh.client", "Direct cross-mesh stream close failed", &[("session_id", &sid), ("error", &error.to_string())]);
                 }
             });
 
@@ -1366,7 +1358,8 @@ impl MeshClient {
                         }
                         Ok(count) => count,
                         Err(error) => {
-                            eprintln!("Cross-mesh FEC stream {session_id} read failed: {error}");
+                            let sid = session_id.to_string();
+                            sb_core::logfmt::warn("ERR_FEC_READ", "mesh.client", "Cross-mesh FEC stream read failed", &[("session_id", &sid), ("error", &error.to_string())]);
                             stream_aborted = true;
                             break;
                         }
@@ -1404,9 +1397,8 @@ impl MeshClient {
                             )
                             .await
                             {
-                                eprintln!(
-                                    "Cross-mesh FEC stream {session_id} symbol send failed: {error}"
-                                );
+                                let sid = session_id.to_string();
+                                sb_core::logfmt::warn("ERR_FEC_SYMBOL_SEND", "mesh.client", "Cross-mesh FEC stream symbol send failed", &[("session_id", &sid), ("error", &error.to_string())]);
                                 stream_aborted = true;
                                 break;
                             }
@@ -1432,9 +1424,8 @@ impl MeshClient {
                         )
                         .await
                         {
-                            eprintln!(
-                                "Cross-mesh FEC stream {session_id} block-end send failed: {error}"
-                            );
+                            let sid = session_id.to_string();
+                            sb_core::logfmt::warn("ERR_FEC_BLOCK_END_SEND", "mesh.client", "Cross-mesh FEC stream block-end send failed", &[("session_id", &sid), ("error", &error.to_string())]);
                             stream_aborted = true;
                             break;
                         }
@@ -1526,7 +1517,8 @@ impl MeshClient {
                 )
                 .await
                 {
-                    eprintln!("Cross-mesh stream {session_id} close send failed: {error}");
+                    let sid = session_id.to_string();
+                    sb_core::logfmt::warn("ERR_STREAM_CLOSE_SEND", "mesh.client", "Cross-mesh stream close send failed", &[("session_id", &sid), ("error", &error.to_string())]);
                 }
                 mark_active_stream_upload_finished(&active_streams, session_id).await;
             });

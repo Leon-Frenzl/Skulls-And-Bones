@@ -257,10 +257,9 @@ impl Drop for CatalogWriteLock {
     fn drop(&mut self) {
         if let Err(error) = fs::remove_file(&self.path) {
             if error.kind() != std::io::ErrorKind::NotFound {
-                eprintln!(
-                    "Failed to remove object catalog write lock {:?}: {error}",
-                    self.path
-                );
+                let p = self.path.display().to_string();
+                let e = error.to_string();
+                sb_core::logfmt::warn("ERR_CATALOG_LOCK_CLEANUP", "mesh.object_store", "Failed to remove object catalog write lock", &[("path", &p), ("error", &e)]);
             }
         }
     }

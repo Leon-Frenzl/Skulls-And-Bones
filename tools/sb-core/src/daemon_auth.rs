@@ -77,7 +77,13 @@ impl Drop for DaemonAuthToken {
     fn drop(&mut self) {
         if let Err(error) = std::fs::remove_file(&self.path) {
             if error.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("Daemon-Token konnte beim Beenden nicht entfernt werden: {error}");
+                let err_str = error.to_string();
+                crate::logfmt::warn(
+                    "ERR_DAEMON_TOKEN_CLEANUP",
+                    "core.daemon_auth",
+                    "Failed to remove daemon auth token on drop",
+                    &[("error", &err_str)],
+                );
             }
         }
     }

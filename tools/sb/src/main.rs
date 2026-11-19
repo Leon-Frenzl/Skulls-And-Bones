@@ -94,7 +94,7 @@ fn real_main() {
         }
         Some(Commands::Catalog { json }) => {
             if let Err(error) = commands::catalog::handle_catalog(json) {
-                eprintln!("Suite-Produktinventar konnte nicht geladen werden: {error}");
+                sb_core::logfmt::error("ERR_SB_CATALOG", "sb.cli", "Failed to load product inventory", &[("error", &error.to_string())]);
                 std::process::exit(1);
             }
         }
@@ -105,14 +105,11 @@ fn real_main() {
             let t = target.as_deref().unwrap_or("agent");
             if t.eq_ignore_ascii_case("agent") || t.eq_ignore_ascii_case("sb-node-agent") {
                 if let Err(e) = commands::pkg::control_agent_service(true) {
-                    eprintln!("  {} {e}", "✗".bright_red());
+                    sb_core::logfmt::error("ERR_SB_START_AGENT", "sb.cli", "Failed to start agent service", &[("error", &e.to_string())]);
                     std::process::exit(1);
                 }
             } else {
-                eprintln!(
-                    "  {} Unbekanntes Start-Target '{t}' (verwende: sb start [agent])",
-                    "✗".bright_red()
-                );
+                sb_core::logfmt::error("ERR_SB_UNKNOWN_TARGET", "sb.cli", "Unknown start target", &[("target", t)]);
                 std::process::exit(1);
             }
         }
@@ -123,7 +120,7 @@ fn real_main() {
                 || t.eq_ignore_ascii_case("sb-node-agent")
             {
                 if let Err(e) = commands::pkg::control_agent_service(false) {
-                    eprintln!("  {} {e}", "✗".bright_red());
+                    sb_core::logfmt::warn("ERR_SB_STOP_AGENT", "sb.cli", "Failed to stop agent service", &[("error", &e.to_string())]);
                 }
             }
             if !t.eq_ignore_ascii_case("agent") && !t.eq_ignore_ascii_case("sb-node-agent") {
@@ -175,7 +172,7 @@ fn real_main() {
                 from_url,
                 from_mesh,
             ) {
-                eprintln!("Installation fehlgeschlagen: {error}");
+                sb_core::logfmt::error("ERR_SB_INSTALL", "sb.pkg", "Installation failed", &[("error", &error.to_string())]);
                 std::process::exit(1);
             }
         }
@@ -214,7 +211,7 @@ fn real_main() {
                 handle_update_with_options(&tools, allow_downgrade, from_dir, from_url, from_mesh)
             };
             if let Err(error) = res {
-                eprintln!("Update fehlgeschlagen: {error}");
+                sb_core::logfmt::error("ERR_SB_UPDATE", "sb.pkg", "Update failed", &[("error", &error.to_string())]);
                 std::process::exit(1);
             }
         }
@@ -233,7 +230,7 @@ fn real_main() {
                     &output_dir,
                     &format,
                 ) {
-                    eprintln!("Release-Packaging fehlgeschlagen: {error}");
+                    sb_core::logfmt::error("ERR_RELEASE_PACK", "sb.release", "Release packaging failed", &[("error", &error.to_string())]);
                     std::process::exit(1);
                 }
             }
@@ -253,13 +250,13 @@ fn real_main() {
                     &format,
                     key_file.as_deref(),
                 ) {
-                    eprintln!("Suite-Release-Packaging fehlgeschlagen: {error}");
+                    sb_core::logfmt::error("ERR_RELEASE_PACK_ALL", "sb.release", "Suite release packaging failed", &[("error", &error.to_string())]);
                     std::process::exit(1);
                 }
             }
             ReleaseAction::Sign { manifest, key_file } => {
                 if let Err(error) = commands::release::sign_release_manifest(&manifest, &key_file) {
-                    eprintln!("Release-Signierung fehlgeschlagen: {error}");
+                    sb_core::logfmt::error("ERR_RELEASE_SIGN", "sb.release", "Release signing failed", &[("error", &error.to_string())]);
                     std::process::exit(1);
                 }
             }
@@ -268,19 +265,19 @@ fn real_main() {
                     bin_dir.as_deref(),
                     manifest.as_deref(),
                 ) {
-                    eprintln!("Release-Verifikation fehlgeschlagen: {error}");
+                    sb_core::logfmt::error("ERR_RELEASE_VERIFY", "sb.release", "Release verification failed", &[("error", &error.to_string())]);
                     std::process::exit(1);
                 }
             }
             ReleaseAction::GenKey { output } => {
                 if let Err(error) = commands::release::generate_release_keypair(&output) {
-                    eprintln!("Schlüsselerzeugung fehlgeschlagen: {error}");
+                    sb_core::logfmt::error("ERR_RELEASE_GENKEY", "sb.release", "Release key generation failed", &[("error", &error.to_string())]);
                     std::process::exit(1);
                 }
             }
             ReleaseAction::VerifyKey { key_file } => {
                 if let Err(error) = commands::release::verify_release_key(&key_file) {
-                    eprintln!("Schlüsselprüfung fehlgeschlagen: {error}");
+                    sb_core::logfmt::error("ERR_RELEASE_VERIFYKEY", "sb.release", "Release key verification failed", &[("error", &error.to_string())]);
                     std::process::exit(1);
                 }
             }
@@ -296,7 +293,7 @@ fn real_main() {
                     &mesh,
                     &namespace,
                 ) {
-                    eprintln!("Release-Veröffentlichung im Mesh fehlgeschlagen: {error}");
+                    sb_core::logfmt::error("ERR_RELEASE_PUBLISH", "sb.release", "Release mesh publish failed", &[("error", &error.to_string())]);
                     std::process::exit(1);
                 }
             }
@@ -314,7 +311,7 @@ fn real_main() {
                     &namespace,
                     &out_dir,
                 ) {
-                    eprintln!("Release-Abruf aus dem Mesh fehlgeschlagen: {error}");
+                    sb_core::logfmt::error("ERR_RELEASE_FETCH", "sb.release", "Release mesh fetch failed", &[("error", &error.to_string())]);
                     std::process::exit(1);
                 }
             }
@@ -333,14 +330,14 @@ fn real_main() {
             poll_interval,
         }) => {
             if let Err(e) = cockpit::run_cockpit(snapshot, poll_interval) {
-                eprintln!("Fehler beim Starten des Cockpits: {}", e);
+                sb_core::logfmt::error("ERR_SB_COCKPIT", "sb.cockpit", "Failed to start cockpit", &[("error", &e.to_string())]);
                 std::process::exit(1);
             }
         }
         Some(Commands::Vault { args }) => {
             if args.iter().any(|a| a == "--tui" || a == "-t") || which::which("sb-vault").is_err() {
                 if let Err(e) = cockpit::run_cockpit(false, 1000) {
-                    eprintln!("Fehler beim Starten des Cockpits: {}", e);
+                    sb_core::logfmt::error("ERR_SB_COCKPIT", "sb.cockpit", "Failed to start cockpit", &[("error", &e.to_string())]);
                     std::process::exit(1);
                 }
             } else {
@@ -350,7 +347,7 @@ fn real_main() {
         Some(Commands::Node { action }) => match action {
             Some(cli::NodeAction::Bootstrap(args)) => {
                 if let Err(e) = commands::bootstrap::handle_node_bootstrap(args) {
-                    eprintln!("Fehler beim Node-Bootstrap: {}", e);
+                    sb_core::logfmt::error("ERR_SB_NODE_BOOTSTRAP", "sb.bootstrap", "Node bootstrap failed", &[("error", &e.to_string())]);
                     std::process::exit(1);
                 }
             }
@@ -401,13 +398,7 @@ fn real_main() {
         Some(Commands::Publish { args }) => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             if cwd.join("tools").is_dir() && args.is_empty() {
-                eprintln!(
-                    "  {} {}\n  ► Das Monorepo 'Skulls-And-Bones' darf nicht als monolithischer Stream im Mesh liegen.\n  ► Veröffentliche stattdessen ein einzelnes Werkzeug:\n    • {}\n    • oder wechsle in den Ordner: {}",
-                    "✗".bright_red().bold(),
-                    "Monorepo-Schutz aktiv: Veröffentlichung blockiert.".bold(),
-                    "sb publish <tool-name> (z.B. sb publish sb-ssh)".cyan(),
-                    "cd tools/sb-ssh && sb publish".yellow()
-                );
+                sb_core::logfmt::error("ERR_MONOREPO_PUBLISH_BLOCKED", "sb.publish", "Monorepo publish blocked; specify a single tool", &[]);
                 std::process::exit(1);
             }
             let mut full_args = vec!["publish".to_string()];
@@ -421,12 +412,7 @@ fn real_main() {
                     || target_lower.contains("workspace")
                     || target_lower == "suite"
                 {
-                    eprintln!(
-                        "  {} {}\n  ► Das Monorepo liegt nicht im Mesh.\n  ► Alle Werkzeuge sind modular aufgebaut. Abonniere z.B.: {}",
-                        "✗".bright_red().bold(),
-                        "Monorepo-Schutz aktiv: Abonnieren nicht möglich.".bold(),
-                        "sb subscribe sb-ssh".cyan()
-                    );
+                    sb_core::logfmt::error("ERR_MONOREPO_SUBSCRIBE_BLOCKED", "sb.subscribe", "Cannot subscribe to monorepo; choose a single tool", &[("target", target)]);
                     std::process::exit(1);
                 }
             }
@@ -472,7 +458,7 @@ fn real_main() {
                     binaries,
                     print_script,
                 ) {
-                    eprintln!("  {} {}", "✗".bright_red().bold(), e);
+                    sb_core::logfmt::error("ERR_SB_PROVISION", "sb.server", "Server provisioning failed", &[("error", &e.to_string())]);
                     std::process::exit(1);
                 }
             }
@@ -676,7 +662,7 @@ fn real_main() {
                         println!("  Beenden mit:    {}", "sb stop daemon".bright_cyan());
                     }
                     Err(e) => {
-                        eprintln!("Fehler beim Starten des Daemons: {}", e);
+                        sb_core::logfmt::error("ERR_SB_DAEMON_START", "sb.daemon", "Failed to start daemon", &[("error", &e.to_string())]);
                         std::process::exit(1);
                     }
                 }
@@ -684,7 +670,7 @@ fn real_main() {
                 let rt =
                     tokio::runtime::Runtime::new().expect("Failed to initialize tokio runtime");
                 if let Err(e) = rt.block_on(run_daemon(port, api)) {
-                    eprintln!("Daemon error: {}", e);
+                    sb_core::logfmt::error("ERR_SB_DAEMON", "sb.daemon", "Daemon exited with error", &[("error", &e.to_string())]);
                 }
             }
         }

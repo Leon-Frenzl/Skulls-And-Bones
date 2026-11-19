@@ -468,18 +468,17 @@ impl StealthStreamClient {
                                                 let _ = tx.send(frame).await;
                                             }
                                         }
-                                        Err(e) => eprintln!(
-                                            "  ✗ [Client Stream] StreamFrame decode error: {}",
-                                            e
-                                        ),
+                                        Err(e) => sb_core::logfmt::warn("ERR_STREAM_DECODE", "mesh.stream", "StreamFrame decode error", &[("error", &e.to_string())]),
                                     },
-                                    Err(e) => eprintln!("  ✗ [Client Stream] Decrypt error: {}", e),
+                                    Err(e) => sb_core::logfmt::warn("ERR_STREAM_DECRYPT", "mesh.stream", "Stream decrypt error", &[("error", &e.to_string())]),
                                 }
                             } else {
-                                eprintln!("  ✗ [Client Stream] Tag oder Type mismatch: tag_match={} ptype={:?}", _tag == expected_tag, ptype);
+                                let tm = (_tag == expected_tag).to_string();
+                                let pt = format!("{:?}", ptype);
+                                sb_core::logfmt::warn("ERR_STREAM_MISMATCH", "mesh.stream", "Tag or packet type mismatch", &[("tag_match", &tm), ("ptype", &pt)]);
                             }
                         }
-                        Err(e) => eprintln!("  ✗ [Client Stream] unpack_header_v2 error: {}", e),
+                        Err(e) => sb_core::logfmt::warn("ERR_STREAM_HEADER", "mesh.stream", "unpack_header_v2 error", &[("error", &e.to_string())]),
                     },
                     Err(_) => {
                         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -559,7 +558,7 @@ impl StealthStreamClient {
                                         let _ = udp_send.send_to(&pkt, target_addr).await;
                                     }
                                     Err(e) => {
-                                        eprintln!("  ✗ [Client] Encrypt connect error: {}", e);
+                                        sb_core::logfmt::error("ERR_STREAM_ENCRYPT_CONNECT", "mesh.stream", "Encrypt connect error", &[("error", &e.to_string())]);
                                     }
                                 }
 
@@ -679,14 +678,17 @@ impl StealthStreamClient {
                                         };
                                     }
                                     Ok(Some(frame)) => {
+                                        let sid = stream_id.to_string();
                                         if let StreamCommand::Error(err) = frame.command {
-                                            eprintln!("✗ Stealth Stream #{} Fehler vom Server: {}", stream_id, err);
+                                            sb_core::logfmt::error("ERR_STEALTH_STREAM_SERVER", "mesh.stream", "Stealth stream server error", &[("stream_id", &sid), ("error", &err)]);
                                         } else {
-                                            eprintln!("✗ Stealth Stream #{} unerwartetes Paket: {:?}", stream_id, frame.command);
+                                            let cmd = format!("{:?}", frame.command);
+                                            sb_core::logfmt::warn("ERR_STEALTH_STREAM_PKT", "mesh.stream", "Unexpected stealth stream packet", &[("stream_id", &sid), ("command", &cmd)]);
                                         }
                                     }
                                     _ => {
-                                        eprintln!("✗ Stealth Stream #{} fehlgeschlagen: Kein ACK erhalten", stream_id);
+                                        let sid = stream_id.to_string();
+                                        sb_core::logfmt::error("ERR_STEALTH_STREAM_NO_ACK", "mesh.stream", "Stealth stream handshake failed without ACK", &[("stream_id", &sid)]);
                                     }
                                 }
 
@@ -707,7 +709,7 @@ impl StealthStreamClient {
                             });
                         }
                         Err(e) => {
-                            eprintln!("Fehler beim Annehmen der TCP-Verbindung: {}", e);
+                            sb_core::logfmt::warn("ERR_STREAM_TCP_ACCEPT", "mesh.stream", "Failed to accept TCP connection", &[("error", &e.to_string())]);
                         }
                     }
                 }

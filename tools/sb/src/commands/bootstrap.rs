@@ -1130,8 +1130,7 @@ pub fn handle_node_bootstrap(mut args: BootstrapArgs) -> Result<(), String> {
     }
 
     if !run_res.success {
-        eprintln!("  {} Remote-Fehler beim Bootstrap:", "✗".bright_red());
-        eprintln!("{}", run_res.stderr.bright_red());
+        sb_core::logfmt::error("ERR_NODE_BOOTSTRAP_REMOTE", "sb.bootstrap", "Remote bootstrap failed", &[("stderr", run_res.stderr.trim())]);
         let _ = transport.cleanup_staging_dir(&staging_dir);
         return Err(format!(
             "Bootstrap auf Zielserver mit Exit-Code {} fehlgeschlagen.",

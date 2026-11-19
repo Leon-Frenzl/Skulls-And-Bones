@@ -141,12 +141,15 @@ impl SovereignTunnelHub {
                     let hub = self.clone();
                     tokio::spawn(async move {
                         if let Err(e) = hub.handle_incoming_connection(stream, peer_addr).await {
-                            eprintln!("Tunnel Hub Verbindungsfehler von {}: {}", peer_addr, e);
+                            let peer = peer_addr.to_string();
+                            let err = e.to_string();
+                            sb_core::logfmt::warn("ERR_TUNNEL_CONN", "proxy.tunnel", "Incoming tunnel connection failed", &[("peer", &peer), ("error", &err)]);
                         }
                     });
                 }
                 Err(e) => {
-                    eprintln!("Tunnel Hub Listener Fehler: {}", e);
+                    let err = e.to_string();
+                    sb_core::logfmt::error("ERR_TUNNEL_ACCEPT", "proxy.tunnel", "Tunnel hub listener error", &[("error", &err)]);
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }

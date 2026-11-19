@@ -110,6 +110,26 @@ pub fn log_event(
     }
 }
 
+/// Logs an `INFO` event with `trace=none`.
+pub fn info(code: &str, src: &str, msg: &str, attrs: &[(&str, &str)]) {
+    log_event(LogLevel::Info, code, "none", src, msg, attrs);
+}
+
+/// Logs a `WARN` event with `trace=none`.
+pub fn warn(code: &str, src: &str, msg: &str, attrs: &[(&str, &str)]) {
+    log_event(LogLevel::Warn, code, "none", src, msg, attrs);
+}
+
+/// Logs an `ERROR` event with `trace=none`.
+pub fn error(code: &str, src: &str, msg: &str, attrs: &[(&str, &str)]) {
+    log_event(LogLevel::Error, code, "none", src, msg, attrs);
+}
+
+/// Logs a `DEBUG` event with `trace=none`.
+pub fn debug(code: &str, src: &str, msg: &str, attrs: &[(&str, &str)]) {
+    log_event(LogLevel::Debug, code, "none", src, msg, attrs);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

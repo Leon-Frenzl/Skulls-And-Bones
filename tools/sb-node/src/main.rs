@@ -2085,7 +2085,8 @@ async fn run_node_fec_sender(
                         )
                         .await
                         {
-                            eprintln!("Cross-Mesh FEC symbol send failed: {error}");
+                            let sid = session_id.to_string();
+                            sb_core::logfmt::warn("ERR_NODE_FEC_SYMBOL_SEND", "node.fec", "Cross-mesh FEC symbol send failed", &[("session_id", &sid), ("error", &error.to_string())]);
                             aborted = true;
                             break;
                         }
@@ -2118,7 +2119,8 @@ async fn run_node_fec_sender(
                     )
                     .await
                     {
-                        eprintln!("Cross-Mesh FEC block-end send failed: {error}");
+                        let sid = session_id.to_string();
+                        sb_core::logfmt::warn("ERR_NODE_FEC_BLOCK_END", "node.fec", "Cross-mesh FEC block-end send failed", &[("session_id", &sid), ("error", &error.to_string())]);
                         aborted = true;
                         break;
                     }
@@ -2224,7 +2226,8 @@ async fn run_node_fec_sender(
                 )
                 .await
                 {
-                    eprintln!("Cross-Mesh stream close send failed: {error}");
+                    let sid = session_id.to_string();
+                    sb_core::logfmt::warn("ERR_NODE_STREAM_CLOSE_SEND", "node.fec", "Cross-mesh stream close send failed", &[("session_id", &sid), ("error", &error.to_string())]);
                 }
                 break;
             }
@@ -2250,7 +2253,8 @@ async fn run_node_fec_sender(
         )
         .await
         {
-            eprintln!("Cross-Mesh FEC abort close failed: {error}");
+            let sid = session_id.to_string();
+            sb_core::logfmt::warn("ERR_NODE_FEC_ABORT_CLOSE", "node.fec", "Cross-mesh FEC abort close failed", &[("session_id", &sid), ("error", &error.to_string())]);
         }
     }
     if let Ok(mut senders) = senders.lock() {
@@ -2334,19 +2338,13 @@ async fn main() {
         }
         Some(Commands::Start { port, config }) => {
             if let Err(error) = start_managed_daemon(port, config) {
-                eprintln!(
-                    "  {} Could not start sb-node service: {error}",
-                    "✗".bright_red()
-                );
+                sb_core::logfmt::error("ERR_NODE_DAEMON_START", "node.cli", "Could not start sb-node service", &[("error", &error.to_string())]);
                 std::process::exit(1);
             }
         }
         Some(Commands::Stop) => {
             if let Err(error) = stop_managed_daemon() {
-                eprintln!(
-                    "  {} Could not stop sb-node service: {error}",
-                    "✗".bright_red()
-                );
+                sb_core::logfmt::error("ERR_NODE_DAEMON_STOP", "node.cli", "Could not stop sb-node service", &[("error", &error.to_string())]);
                 std::process::exit(1);
             }
         }
@@ -2368,52 +2366,37 @@ async fn main() {
             member_pubkey,
         }) => {
             if let Err(error) = handle_setup(&source_mesh, &member_name, &member_pubkey) {
-                eprintln!("  {} Setup failed: {error}", "✗".bright_red().bold());
+                sb_core::logfmt::error("ERR_NODE_SETUP", "node.cli", "Setup failed", &[("error", &error.to_string())]);
                 std::process::exit(1);
             }
         }
         Some(Commands::Route { sub }) => {
             if let Err(error) = handle_route_commands(sub) {
-                eprintln!(
-                    "  {} Route operation failed: {error}",
-                    "✗".bright_red().bold()
-                );
+                sb_core::logfmt::error("ERR_NODE_ROUTE", "node.cli", "Route operation failed", &[("error", &error.to_string())]);
                 std::process::exit(1);
             }
         }
         Some(Commands::Catalog { sub }) => {
             if let Err(error) = handle_catalog_commands(sub).await {
-                eprintln!(
-                    "  {} Catalog operation failed: {error}",
-                    "✗".bright_red().bold()
-                );
+                sb_core::logfmt::error("ERR_NODE_CATALOG", "node.cli", "Catalog operation failed", &[("error", &error.to_string())]);
                 std::process::exit(1);
             }
         }
         Some(Commands::Domain { sub }) => {
             if let Err(error) = handle_domain_commands(sub).await {
-                eprintln!(
-                    "  {} Domain operation failed: {error}",
-                    "✗".bright_red().bold()
-                );
+                sb_core::logfmt::error("ERR_NODE_DOMAIN", "node.cli", "Domain operation failed", &[("error", &error.to_string())]);
                 std::process::exit(1);
             }
         }
         Some(Commands::Policy { sub }) => {
             if let Err(error) = handle_policy_commands(sub).await {
-                eprintln!(
-                    "  {} Policy operation failed: {error}",
-                    "✗".bright_red().bold()
-                );
+                sb_core::logfmt::error("ERR_NODE_POLICY", "node.cli", "Policy operation failed", &[("error", &error.to_string())]);
                 std::process::exit(1);
             }
         }
         Some(Commands::User { sub }) => {
             if let Err(error) = handle_user_commands(sub) {
-                eprintln!(
-                    "  {} User operation failed: {error}",
-                    "✗".bright_red().bold()
-                );
+                sb_core::logfmt::error("ERR_NODE_USER", "node.cli", "User operation failed", &[("error", &error.to_string())]);
                 std::process::exit(1);
             }
         }
@@ -2433,10 +2416,7 @@ async fn main() {
                     console_dir,
                 };
                 if let Err(error) = dc_orchestrator::run_one_command_dc(cfg).await {
-                    eprintln!(
-                        "  {} Domain Controller failed: {error}",
-                        "✗".bright_red().bold()
-                    );
+                    sb_core::logfmt::error("ERR_NODE_DC", "node.dc", "Domain controller failed", &[("error", &error.to_string())]);
                     std::process::exit(1);
                 }
             }
@@ -2452,7 +2432,7 @@ async fn main() {
                         );
                     }
                     Err(error) => {
-                        eprintln!("  {} DC backup failed: {error}", "✗".bright_red().bold());
+                        sb_core::logfmt::error("ERR_NODE_DC_BACKUP", "node.dc", "DC backup failed", &[("error", &error.to_string())]);
                         std::process::exit(1);
                     }
                 }
@@ -2468,7 +2448,7 @@ async fn main() {
                         );
                     }
                     Err(error) => {
-                        eprintln!("  {} DC restore failed: {error}", "✗".bright_red().bold());
+                        sb_core::logfmt::error("ERR_NODE_DC_RESTORE", "node.dc", "DC restore failed", &[("error", &error.to_string())]);
                         std::process::exit(1);
                     }
                 }
@@ -2476,10 +2456,7 @@ async fn main() {
         },
         Some(Commands::Laps { sub }) => {
             if let Err(error) = handle_laps_commands(sub) {
-                eprintln!(
-                    "  {} LAPS operation failed: {error}",
-                    "✗".bright_red().bold()
-                );
+                sb_core::logfmt::error("ERR_NODE_LAPS", "node.laps", "LAPS operation failed", &[("error", &error.to_string())]);
                 std::process::exit(1);
             }
         }
@@ -2512,22 +2489,19 @@ async fn main() {
                             ))
                         })
                     {
-                        eprintln!(
-                            "  {} Windows service failed: {error}",
-                            "✗".bright_red().bold()
-                        );
+                        sb_core::logfmt::error("ERR_NODE_WIN_SERVICE", "node.service", "Windows service failed", &[("error", &error.to_string())]);
                         std::process::exit(1);
                     }
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
-                    eprintln!("--windows-service is only supported on Windows.");
+                    sb_core::logfmt::error("ERR_NODE_WIN_SERVICE_OS", "node.service", "--windows-service is only supported on Windows", &[]);
                     std::process::exit(1);
                 }
             } else if let Err(error) =
                 run_agent_loop(dc, interval_secs, laps_rotate_days, once, dry_run, None).await
             {
-                eprintln!("  {} Agent failed: {error}", "✗".bright_red().bold());
+                sb_core::logfmt::error("ERR_NODE_AGENT", "node.agent", "Agent loop failed", &[("error", &error.to_string())]);
                 std::process::exit(1);
             }
         }
@@ -2581,10 +2555,7 @@ async fn main() {
             match result {
                 Ok(msg) => println!("  {} {}", "✓".green().bold(), msg),
                 Err(error) => {
-                    eprintln!(
-                        "  {} Service command failed: {error}",
-                        "✗".bright_red().bold()
-                    );
+                    sb_core::logfmt::error("ERR_NODE_SERVICE_CMD", "node.service", "Service command failed", &[("error", &error.to_string())]);
                     std::process::exit(1);
                 }
             }
@@ -3352,10 +3323,7 @@ async fn run_daemon(
     let route_config = match load_cross_mesh_rules(&cross_mesh_rules_path()) {
         Ok(config) => config,
         Err(error) => {
-            eprintln!(
-                "  {} Cross-mesh policy rejected; daemon will not start: {error}",
-                "✗".bright_red().bold()
-            );
+            sb_core::logfmt::error("ERR_NODE_POLICY", "node.daemon", "Cross-mesh policy rejected; daemon will not start", &[("error", &error.to_string())]);
             return;
         }
     };
@@ -3383,11 +3351,7 @@ async fn run_daemon(
     let dispatcher = match SinglePortDispatcher::bind(listen_port, air_gap).await {
         Ok(d) => d,
         Err(e) => {
-            eprintln!(
-                "  {} Fehler beim Binden des Single-Port Dispatchers: {}",
-                "✗".bright_red(),
-                e
-            );
+            sb_core::logfmt::error("ERR_NODE_BIND", "node.daemon", "Failed to bind single-port dispatcher", &[("error", &e.to_string())]);
             return;
         }
     };
@@ -3399,7 +3363,7 @@ async fn run_daemon(
     );
     if let Some(state_path) = managed_state {
         if let Err(error) = write_managed_daemon_state(&state_path) {
-            eprintln!("Managed daemon state could not be written: {error}");
+            sb_core::logfmt::error("ERR_NODE_STATE_WRITE", "node.daemon", "Managed daemon state could not be written", &[("error", &error.to_string())]);
             return;
         }
     }
@@ -3539,9 +3503,7 @@ async fn run_daemon(
             .await;
     }
     if !ast_lock_meshes.is_empty() {
-        eprintln!(
-            "AST lock sync daemon is not bundled in the trimmed network core; its Mesh routes stay unavailable."
-        );
+        sb_core::logfmt::warn("NODE_AST_LOCK_UNAVAILABLE", "node.daemon", "AST lock sync daemon is not bundled in trimmed core", &[]);
         ast_lock_meshes.clear();
     }
     for mesh in &ast_lock_meshes {
@@ -3562,10 +3524,7 @@ async fn run_daemon(
             match catalog_sync::control_plane_paths(&network.name) {
                 Ok(paths) => paths,
                 Err(error) => {
-                    eprintln!(
-                        "  ✗ Catalog service skipped for '{}': {error}",
-                        network.name
-                    );
+                    sb_core::logfmt::warn("ERR_NODE_CATALOG_SKIP", "node.catalog", "Catalog service skipped", &[("mesh", &network.name), ("error", &error.to_string())]);
                     continue;
                 }
             };
@@ -3577,27 +3536,18 @@ async fn run_daemon(
         {
             Ok(membership) if membership.mesh_id.eq_ignore_ascii_case(&network.name) => membership,
             Ok(_) => {
-                eprintln!(
-                    "  ✗ Catalog service skipped for '{}': membership mesh ID mismatch",
-                    network.name
-                );
+                sb_core::logfmt::warn("ERR_NODE_CATALOG_MISMATCH", "node.catalog", "Catalog service skipped: membership mesh ID mismatch", &[("mesh", &network.name)]);
                 continue;
             }
             Err(error) => {
-                eprintln!(
-                    "  ✗ Catalog service skipped for '{}': membership unavailable: {error}",
-                    network.name
-                );
+                sb_core::logfmt::warn("ERR_NODE_CATALOG_MEMBERSHIP", "node.catalog", "Catalog service skipped: membership unavailable", &[("mesh", &network.name), ("error", &error.to_string())]);
                 continue;
             }
         };
         let catalog_path = match catalog_sync::catalog_store_path(&membership.mesh_id) {
             Ok(path) => path,
             Err(error) => {
-                eprintln!(
-                    "  ✗ Catalog service skipped for '{}': {error}",
-                    membership.mesh_id
-                );
+                sb_core::logfmt::warn("ERR_NODE_CATALOG_PATH", "node.catalog", "Catalog service skipped", &[("mesh_id", &membership.mesh_id), ("error", &error.to_string())]);
                 continue;
             }
         };
@@ -3619,10 +3569,7 @@ async fn run_daemon(
                     .await;
                 catalog_service_count += 1;
             }
-            Err(error) => eprintln!(
-                "  ✗ Catalog service unavailable for '{}': {error}",
-                membership.mesh_id
-            ),
+            Err(error) => sb_core::logfmt::warn("ERR_NODE_CATALOG_SYNCD", "node.catalog", "Catalog service unavailable", &[("mesh_id", &membership.mesh_id), ("error", &error.to_string())]),
         }
     }
     println!(
@@ -3680,7 +3627,7 @@ async fn run_daemon(
                     // Silent drop (scanner / unauthorized knock)
                 }
                 Err(e) => {
-                    eprintln!("  ✗ [Pre-Auth] Ticket-Verarbeitungsfehler: {}", e);
+                    sb_core::logfmt::warn("ERR_NODE_PREAUTH_TICKET", "node.preauth", "Ticket processing failed", &[("error", &e.to_string())]);
                 }
             }
         }
@@ -3758,10 +3705,8 @@ async fn run_daemon(
                                         if !envelope.source_mesh.eq_ignore_ascii_case(&tenant_name)
                                             || envelope.source_node_id != authenticated_node_id
                                         {
-                                            eprintln!(
-                                                "  ✗ [Cross-Mesh Bridge] Verwarf nicht gebundene Identität von {}",
-                                                pkt.sender_addr
-                                            );
+                                            let peer = pkt.sender_addr.to_string();
+                                            sb_core::logfmt::warn("ERR_CROSS_MESH_IDENTITY", "node.bridge", "Dropped unbound cross-mesh identity", &[("peer", &peer)]);
                                             continue;
                                         }
                                         let active_stream_id =
@@ -3804,10 +3749,7 @@ async fn run_daemon(
                                                 }) {
                                                     Ok(store) => store,
                                                     Err(error) => {
-                                                        eprintln!(
-                                                            "  ✗ [Cross-Mesh Bridge] RBAC konnte für '{}' nicht geladen werden: {}",
-                                                            tenant_name, error
-                                                        );
+                                                        sb_core::logfmt::warn("ERR_CROSS_MESH_RBAC", "node.bridge", "Failed to load cross-mesh RBAC store", &[("tenant", &tenant_name), ("error", &error.to_string())]);
                                                         if let Err(send_error) = send_cross_mesh_denial(
                                                             &socket_clone,
                                                             pkt.sender_addr,
@@ -3822,9 +3764,7 @@ async fn run_daemon(
                                                         )
                                                         .await
                                                         {
-                                                            eprintln!(
-                                                                "  ✗ [Cross-Mesh Bridge] Authorization error response failed: {send_error}"
-                                                            );
+                                                            sb_core::logfmt::warn("ERR_CROSS_MESH_DENIAL_SEND", "node.bridge", "Authorization error response failed", &[("error", &send_error.to_string())]);
                                                         }
                                                         if let Some(session_id) = active_stream_id {
                                                             cm_bridge
@@ -3934,13 +3874,8 @@ async fn run_daemon(
                                                     }
                                                 });
                                             if let Err(reason) = authorization {
-                                                eprintln!(
-                                                    "  ✗ [Cross-Mesh Bridge] Stream von {} zu {}:{} abgewiesen: {}",
-                                                    authenticated_node_id,
-                                                    envelope.target_mesh,
-                                                    requested_port.unwrap_or_default(),
-                                                    reason
-                                                );
+                                                let port_s = requested_port.unwrap_or_default().to_string();
+                                                sb_core::logfmt::warn("ERR_CROSS_MESH_DENIED", "node.bridge", "Cross-mesh stream denied", &[("peer", &authenticated_node_id), ("target_mesh", &envelope.target_mesh), ("port", &port_s), ("reason", &reason)]);
                                                 if let Some(session_id) = active_stream_id {
                                                     cm_bridge
                                                         .abort_stream_for_peer(
@@ -3964,9 +3899,7 @@ async fn run_daemon(
                                                 )
                                                 .await
                                                 {
-                                                    eprintln!(
-                                                        "  ✗ [Cross-Mesh Bridge] Authorization denial response failed: {error}"
-                                                    );
+                                                    sb_core::logfmt::warn("ERR_CROSS_MESH_DENIAL_SEND", "node.bridge", "Authorization denial response failed", &[("error", &error.to_string())]);
                                                 }
                                                 continue;
                                             }
@@ -4005,7 +3938,7 @@ async fn run_daemon(
                                                             let mut senders = match sender_map.lock() {
                                                                 Ok(senders) => senders,
                                                                 Err(_) => {
-                                                                    eprintln!("Cross-Mesh FEC sender map poisoned");
+                                                                    sb_core::logfmt::error("ERR_NODE_FEC_MAP_POISONED", "node.fec", "Cross-mesh FEC sender map poisoned", &[]);
                                                                     return;
                                                                 }
                                                             };
@@ -4047,7 +3980,8 @@ async fn run_daemon(
                                                             })
                                                             .is_err()
                                                         {
-                                                            eprintln!("Cross-Mesh FEC sender window is full for session {session_id}");
+                                                            let sid = session_id.to_string();
+                                                            sb_core::logfmt::warn("ERR_NODE_FEC_WINDOW_FULL", "node.fec", "Cross-mesh FEC sender window is full", &[("session_id", &sid)]);
                                                             if let Ok(mut senders) = sender_map.lock() {
                                                                 senders.remove(&session_id);
                                                             }
@@ -4073,7 +4007,7 @@ async fn run_daemon(
                                                                 )
                                                                 .await
                                                                 {
-                                                                    eprintln!("Cross-Mesh FEC sender overflow abort failed: {error}");
+                                                                    sb_core::logfmt::warn("ERR_NODE_FEC_ABORT", "node.fec", "Cross-mesh FEC sender overflow abort failed", &[("error", &error.to_string())]);
                                                                 }
                                                             });
                                                         }
@@ -4094,7 +4028,8 @@ async fn run_daemon(
                                                                     .try_send(NodeFecCommand::Control(resp_env.payload))
                                                                     .is_err()
                                                                 {
-                                                                    eprintln!("Cross-Mesh FEC control queue is full for session {session_id}");
+                                                                    let sid = session_id.to_string();
+                                                                    sb_core::logfmt::warn("ERR_NODE_FEC_CTRL_FULL", "node.fec", "Cross-mesh FEC control queue is full", &[("session_id", &sid)]);
                                                                 }
                                                             }
                                                         }
@@ -4117,7 +4052,8 @@ async fn run_daemon(
                                                             {
                                                                 return;
                                                             }
-                                                            eprintln!("Cross-Mesh FEC close queue is full for session {session_id}; aborting");
+                                                            let sid = session_id.to_string();
+                                                            sb_core::logfmt::warn("ERR_NODE_FEC_CLOSE_FULL", "node.fec", "Cross-mesh FEC close queue is full; aborting", &[("session_id", &sid)]);
                                                             if let Ok(mut senders) = sender_map.lock() {
                                                                 senders.remove(&session_id);
                                                             }
@@ -4143,7 +4079,7 @@ async fn run_daemon(
                                                                 )
                                                                 .await
                                                                 {
-                                                                    eprintln!("Cross-Mesh FEC close overflow abort failed: {error}");
+                                                                    sb_core::logfmt::warn("ERR_NODE_FEC_CLOSE_ABORT", "node.fec", "Cross-mesh FEC close overflow abort failed", &[("error", &error.to_string())]);
                                                                 }
                                                             });
                                                             return;
@@ -4170,7 +4106,7 @@ async fn run_daemon(
                                                             )
                                                             .await
                                                             {
-                                                                eprintln!("Cross-Mesh response send failed: {error}");
+                                                                sb_core::logfmt::warn("ERR_CROSS_MESH_RESP_SEND", "node.bridge", "Cross-mesh response send failed", &[("error", &error.to_string())]);
                                                             }
                                                         });
                                                     }
@@ -4197,7 +4133,7 @@ async fn run_daemon(
                                                             )
                                                             .await
                                                             {
-                                                                eprintln!("Cross-Mesh response send failed: {error}");
+                                                                sb_core::logfmt::warn("ERR_CROSS_MESH_RESP_SEND", "node.bridge", "Cross-mesh response send failed", &[("error", &error.to_string())]);
                                                             }
                                                         });
                                                     }
@@ -4212,10 +4148,7 @@ async fn run_daemon(
                                             )
                                             .await
                                         {
-                                            eprintln!(
-                                                "  ✗ [Cross-Mesh Bridge] Router error: {}",
-                                                e
-                                            );
+                                            sb_core::logfmt::warn("ERR_CROSS_MESH_ROUTER", "node.bridge", "Cross-mesh bridge router error", &[("error", &e.to_string())]);
                                         } else {
                                             replay_windows
                                                 .entry(sender_pubkey_bytes)
@@ -4267,7 +4200,8 @@ async fn run_daemon(
                                             };
 
                                             if !allowed {
-                                                eprintln!("  ✗ [Stealth Ingress] RBAC permission denied: {} lacks permission for port {} in mesh '{}' (silent drop)", sender_b64, target_port, tenant_name);
+                                                let port_s = target_port.to_string();
+                                                sb_core::logfmt::warn("ERR_STEALTH_RBAC_DENIED", "node.ingress", "RBAC permission denied on stealth ingress", &[("sender", &sender_b64), ("port", &port_s), ("mesh", &tenant_name)]);
                                                 continue;
                                             }
                                             replay_windows
@@ -4320,26 +4254,20 @@ async fn run_daemon(
                                             if let Err(e) =
                                                 bridge.process_frame(frame, reply_sink).await
                                             {
-                                                eprintln!(
-                                                    "  ✗ [Stealth Ingress] process_frame error: {}",
-                                                    e
-                                                );
+                                                sb_core::logfmt::warn("ERR_STEALTH_FRAME", "node.ingress", "Stealth ingress process_frame error", &[("error", &e.to_string())]);
                                             }
                                         }
-                                        Err(e) => eprintln!(
-                                            "  ✗ [Stealth Ingress] StreamFrame decode error: {}",
-                                            e
-                                        ),
+                                        Err(e) => sb_core::logfmt::warn("ERR_STEALTH_DECODE", "node.ingress", "Stealth ingress StreamFrame decode error", &[("error", &e.to_string())]),
                                     }
                                 }
-                                Err(e) => eprintln!(
-                                    "  ✗ [Stealth Ingress] Decrypt error from {}: {}",
-                                    pkt.sender_addr, e
-                                ),
+                                Err(e) => {
+                                    let peer = pkt.sender_addr.to_string();
+                                    sb_core::logfmt::warn("ERR_STEALTH_DECRYPT", "node.ingress", "Stealth ingress decrypt error", &[("peer", &peer), ("error", &e.to_string())]);
+                                }
                             }
                         }
                     }
-                    Err(e) => eprintln!("  ✗ [Stealth Ingress] unpack_header_v2 error: {}", e),
+                    Err(e) => sb_core::logfmt::warn("ERR_STEALTH_HEADER", "node.ingress", "Stealth ingress unpack_header_v2 error", &[("error", &e.to_string())]),
                 }
             }
         });
@@ -4439,11 +4367,7 @@ fn handle_revoke(name: &str, reason: &str) {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
-        eprintln!(
-            "  {} Sicherheits-Abbruch: Ungültiger Benutzername '{}'",
-            "✗".bright_red(),
-            name
-        );
+        sb_core::logfmt::error("ERR_NODE_INVALID_USER", "node.cli", "Invalid username", &[("user", name)]);
         return;
     }
 
@@ -5069,10 +4993,7 @@ async fn handle_policy_commands(sub: PolicyCommands) -> Result<(), String> {
                     Ok(b) => b,
                     Err(remote_err) => {
                         if cache_path.exists() {
-                            eprintln!(
-                                "  {} DC nicht erreichbar ({remote_err}) — nutze signierten Offline-Cache.",
-                                "!".yellow().bold()
-                            );
+                            sb_core::logfmt::warn("NODE_GPO_OFFLINE_CACHE", "node.policy", "DC unreachable; using signed offline policy cache", &[("error", &remote_err)]);
                             let raw = fs::read_to_string(&cache_path)
                                 .map_err(|e| format!("Offline cache read failed: {e}"))?;
                             serde_json::from_str(&raw)
@@ -5428,7 +5349,7 @@ fn handle_laps_commands(sub: LapsCommands) -> Result<(), String> {
                         )
                     });
                     if let Err(err) = dc_sync {
-                        eprintln!("  {} LAPS DC-Sync Warnung: {err}", "!".yellow());
+                        sb_core::logfmt::warn("ERR_NODE_LAPS_SYNC", "node.laps", "LAPS DC sync failed", &[("error", &err)]);
                     }
                 }
             }
@@ -5599,27 +5520,18 @@ async fn run_agent_loop(
                                     }
                                 }
                             }
-                            Err(err) => eprintln!(
-                                "  {} GPO-Apply fehlgeschlagen (ggf. Admin-Rechte nötig): {err}",
-                                "!".yellow()
-                            ),
+                            Err(err) => sb_core::logfmt::warn("ERR_NODE_GPO_APPLY", "node.agent", "GPO apply failed", &[("error", &err)]),
                         }
                     }
                 }
             }
             Err(e) => {
                 if e.contains("machine is revoked") {
-                    eprintln!(
-                        "  {} Maschine wurde vom Domain Controller widerrufen — starte vollständiges Offboarding.",
-                        "!".yellow()
-                    );
+                    sb_core::logfmt::warn("MACHINE_REVOKED", "node.agent", "Machine revoked by DC; starting full offboarding", &[("machine_id", &state.machine_id)]);
                     let _ = offboard_this_machine();
                     break;
                 }
-                eprintln!(
-                    "  {} GPO-Sync fehlgeschlagen (Offline-Modus): {e}",
-                    "!".yellow()
-                );
+                sb_core::logfmt::warn("ERR_NODE_GPO_SYNC", "node.agent", "GPO sync failed (offline mode)", &[("error", &e)]);
             }
         }
 
@@ -5633,7 +5545,7 @@ async fn run_agent_loop(
         )
         .await
         {
-            eprintln!("  {} LAPS-Timer: {err}", "!".yellow());
+            sb_core::logfmt::warn("ERR_NODE_LAPS_TIMER", "node.laps", "LAPS rotation check failed", &[("error", &err)]);
         }
 
         if once {
@@ -6633,11 +6545,7 @@ fn handle_member_commands(sub: MemberCommands) {
                         }
                     }
                 }
-                Err(e) => eprintln!(
-                    "  {} Fehler beim Laden des RBAC-Speichers: {}",
-                    "✗".bright_red(),
-                    e
-                ),
+                Err(e) => sb_core::logfmt::error("ERR_NODE_RBAC_LOAD", "node.rbac", "Failed to load RBAC store", &[("error", &e.to_string())]),
             }
             println!();
         }
@@ -6652,7 +6560,7 @@ fn handle_member_commands(sub: MemberCommands) {
             let parsed_role = match sb_mesh::rbac::MeshRole::from_str(&role) {
                 Some(r) => r,
                 None => {
-                    eprintln!("  {} Ungültige Rolle '{}'. Verfügbar: Admin, Developer, Operator, Consumer, Auditor", "✗".bright_red(), role);
+                    sb_core::logfmt::error("ERR_NODE_RBAC_ROLE", "node.rbac", "Invalid mesh role", &[("role", &role)]);
                     return;
                 }
             };
@@ -6673,7 +6581,7 @@ fn handle_member_commands(sub: MemberCommands) {
                 Ok(mut store) => {
                     store.add_or_update(member.clone());
                     if let Err(e) = store.save() {
-                        eprintln!("  {} Fehler beim Speichern: {}", "✗".bright_red(), e);
+                        sb_core::logfmt::error("ERR_NODE_RBAC_SAVE", "node.rbac", "Failed to save RBAC store", &[("error", &e.to_string())]);
                         return;
                     }
 
@@ -6691,11 +6599,7 @@ fn handle_member_commands(sub: MemberCommands) {
                         member.capabilities.join(", ").white()
                     );
                 }
-                Err(e) => eprintln!(
-                    "  {} Fehler beim Laden des RBAC-Speichers: {}",
-                    "✗".bright_red(),
-                    e
-                ),
+                Err(e) => sb_core::logfmt::error("ERR_NODE_RBAC_LOAD", "node.rbac", "Failed to load RBAC store", &[("error", &e.to_string())]),
             }
             println!();
         }
@@ -6713,15 +6617,10 @@ fn handle_member_commands(sub: MemberCommands) {
                         );
                         println!("  {:<20} {}", "Grund:", reason);
                     } else {
-                        eprintln!(
-                            "  {} Mitglied '{}' in Mesh '{}' nicht gefunden.",
-                            "✗".bright_red(),
-                            name,
-                            mesh
-                        );
+                        sb_core::logfmt::warn("ERR_NODE_RBAC_MEMBER_NOT_FOUND", "node.rbac", "Mesh member not found", &[("member", &name), ("mesh", &mesh)]);
                     }
                 }
-                Err(e) => eprintln!("  {} Fehler: {}", "✗".bright_red(), e),
+                Err(e) => sb_core::logfmt::error("ERR_NODE_RBAC_LOAD", "node.rbac", "Failed to load RBAC store", &[("error", &e.to_string())]),
             }
             println!();
         }
@@ -6738,15 +6637,10 @@ fn handle_member_commands(sub: MemberCommands) {
                             mesh
                         );
                     } else {
-                        eprintln!(
-                            "  {} Mitglied '{}' in Mesh '{}' nicht gefunden.",
-                            "✗".bright_red(),
-                            name,
-                            mesh
-                        );
+                        sb_core::logfmt::warn("ERR_NODE_RBAC_MEMBER_NOT_FOUND", "node.rbac", "Mesh member not found", &[("member", &name), ("mesh", &mesh)]);
                     }
                 }
-                Err(e) => eprintln!("  {} Fehler: {}", "✗".bright_red(), e),
+                Err(e) => sb_core::logfmt::error("ERR_NODE_RBAC_LOAD", "node.rbac", "Failed to load RBAC store", &[("error", &e.to_string())]),
             }
             println!();
         }
