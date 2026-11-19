@@ -153,7 +153,7 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
     }
 
     fn SetSelected(&self) -> windows::core::Result<BOOL> {
-        Ok(true.into())
+        Ok(false.into())
     }
 
     fn SetDeselected(&self) -> windows::core::Result<()> {
@@ -676,6 +676,46 @@ mod tests {
                 "Password.Buffer must be a relative offset inside the packed buffer, got {pass_offset}"
             );
             windows::Win32::System::Com::CoTaskMemFree(Some(raw as *const c_void));
+        }
+    }
+
+    #[test]
+    fn com_lifecycle_and_empty_input_guard() {
+        unsafe {
+            let provider: ICredentialProvider = SBCredentialProvider::new().into();
+            provider.SetUsageScenario(CPUS_LOGON, 0).unwrap();
+            assert_eq!(provider.GetFieldDescriptorCount().unwrap(), 4);
+
+            for idx in 0..4 {
+                let desc = provider.GetFieldDescriptorAt(idx).unwrap();
+                assert_eq!((*desc).dwFieldID, idx);
+                windows::Win32::System::Com::CoTaskMemFree(Some((*desc).pszLabel.0 as *const c_void));
+                windows::Win32::System::Com::CoTaskMemFree(Some(desc as *const c_void));
+            }
+
+            let mut count = 0;
+            let mut default_idx = 0;
+            let mut autologon = BOOL(1);
+            provider
+                .GetCredentialCount(&mut count, &mut default_idx, &mut autologon)
+                .unwrap();
+            assert_eq!(count, 1);
+            assert!(!autologon.as_bool());
+
+            let cred = provider.GetCredentialAt(0).unwrap();
+            let sel_autologon = cred.SetSelected().unwrap();
+            assert!(!sel_autologon.as_bool(), "SetSelected must NOT auto-logon");
+            assert_eq!(cred.GetSubmitButtonValue(3).unwrap(), 2);
+
+            let mut resp = CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE::default();
+            let mut ser = CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION::default();
+            let mut status_text = PWSTR::null();
+            let mut status_icon = CREDENTIAL_PROVIDER_STATUS_ICON::default();
+            cred.GetSerialization(&mut resp, &mut ser, &mut status_text, &mut status_icon)
+                .unwrap();
+            assert_eq!(resp, CPGSR_NO_CREDENTIAL_NOT_FINISHED);
+            assert!(!status_text.is_null());
+            windows::Win32::System::Com::CoTaskMemFree(Some(status_text.0 as *const c_void));
         }
     }
 }
