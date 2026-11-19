@@ -278,6 +278,7 @@ mod tests {
             username: username.into(),
             display_name: username.into(),
             email: format!("{username}@corp.eu"),
+            ou: "/".into(),
             groups: groups.into_iter().map(String::from).collect(),
             ssh_public_key: None,
             enabled,

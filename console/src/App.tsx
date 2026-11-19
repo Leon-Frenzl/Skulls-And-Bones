@@ -95,7 +95,25 @@ export default function App() {
   const [users, setUsers] = useState<DomainUser[]>([]);
   const [newUsername, setNewUsername] = useState<string>("");
   const [newEmail, setNewEmail] = useState<string>("");
+  const [newUserOu, setNewUserOu] = useState<string>("/");
   const [newGroups, setNewGroups] = useState<string>("engineering");
+  const [ous, setOus] = useState<Array<{ path: string; description: string }>>([]);
+  const [secGroups, setSecGroups] = useState<
+    Array<{
+      name: string;
+      description: string;
+      ou: string;
+      is_local_admin: boolean;
+      allowed_machines: string[];
+      members: string[];
+    }>
+  >([]);
+  const [newOuPath, setNewOuPath] = useState<string>("/Engineering");
+  const [newOuDesc, setNewOuDesc] = useState<string>("");
+  const [newGrpName, setNewGrpName] = useState<string>("");
+  const [newGrpOu, setNewGrpOu] = useState<string>("/");
+  const [newGrpAdmin, setNewGrpAdmin] = useState<boolean>(false);
+  const [newGrpMachines, setNewGrpMachines] = useState<string>("");
   const [policies, setPolicies] = useState<PolicyDocument[]>([]);
   const [dnsRecords, setDnsRecords] = useState<Record<string, unknown> | null>(null);
   const [caStatus, setCaStatus] = useState<Record<string, unknown> | null>(null);
@@ -407,6 +425,18 @@ export default function App() {
       if (uRes.ok) {
         const uJson = await uRes.json();
         setUsers(Array.isArray(uJson.users) ? uJson.users : []);
+      }
+      const [ouRes, grpRes] = await Promise.all([
+        fetch("/v1/ous", { headers }),
+        fetch("/v1/groups", { headers }),
+      ]);
+      if (ouRes.ok) {
+        const ouJson = await ouRes.json();
+        setOus(Array.isArray(ouJson.ous) ? ouJson.ous : []);
+      }
+      if (grpRes.ok) {
+        const grpJson = await grpRes.json();
+        setSecGroups(Array.isArray(grpJson.groups) ? grpJson.groups : []);
       }
       if (aRes.ok) {
         const aJson = await aRes.json();
@@ -1074,6 +1104,13 @@ export default function App() {
                 />
                 <input
                   className="input"
+                  placeholder="OU (z. B. /Engineering)"
+                  value={newUserOu}
+                  onChange={(e) => setNewUserOu(e.target.value)}
+                  style={{ width: 150 }}
+                />
+                <input
+                  className="input"
                   placeholder="groups (kommagetrennt)"
                   value={newGroups}
                   onChange={(e) => setNewGroups(e.target.value)}
@@ -1088,6 +1125,7 @@ export default function App() {
                         username: newUsername,
                         display_name: newUsername,
                         email: newEmail,
+                        ou: newUserOu || "/",
                         groups: newGroups.split(",").map((s) => s.trim()).filter(Boolean),
                         enabled: true,
                         created_at: "",
@@ -1105,6 +1143,132 @@ export default function App() {
                 >
                   Speichern
                 </button>
+              </div>
+            </div>
+
+            <div className="grid" style={{ marginBottom: 16 }}>
+              <div className="card">
+                <div className="card-title">Organisationseinheiten / OUs ({ous.length})</div>
+                <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                  <input
+                    className="input"
+                    placeholder="/Engineering/Backend"
+                    value={newOuPath}
+                    onChange={(e) => setNewOuPath(e.target.value)}
+                  />
+                  <input
+                    className="input"
+                    placeholder="Beschreibung"
+                    value={newOuDesc}
+                    onChange={(e) => setNewOuDesc(e.target.value)}
+                  />
+                  <button
+                    className="btn btn-primary"
+                    onClick={async () => {
+                      const r = await fetch("/v1/ous", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", ...authHeaders() },
+                        body: JSON.stringify({ path: newOuPath, description: newOuDesc }),
+                      });
+                      if (r.ok) {
+                        setNewOuDesc("");
+                        await refreshAll();
+                      } else {
+                        setStatusMsg(`OU-Fehler (${r.status})`);
+                      }
+                    }}
+                  >
+                    OU speichern
+                  </button>
+                </div>
+                <table className="table">
+                  <thead><tr><th>OU-Pfad</th><th>Beschreibung</th></tr></thead>
+                  <tbody>
+                    {ous.map((o) => (
+                      <tr key={o.path}>
+                        <td><code>{o.path}</code></td>
+                        <td>{o.description || "—"}</td>
+                      </tr>
+                    ))}
+                    {ous.length === 0 && (
+                      <tr><td colSpan={2} style={{ color: "var(--muted)" }}>Nur Root-OU <code>/</code> aktiv.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="card">
+                <div className="card-title">Sicherheitsgruppen ({secGroups.length})</div>
+                <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
+                  <input
+                    className="input"
+                    placeholder="Gruppenname"
+                    value={newGrpName}
+                    onChange={(e) => setNewGrpName(e.target.value)}
+                    style={{ width: 130 }}
+                  />
+                  <input
+                    className="input"
+                    placeholder="OU (/)"
+                    value={newGrpOu}
+                    onChange={(e) => setNewGrpOu(e.target.value)}
+                    style={{ width: 110 }}
+                  />
+                  <input
+                    className="input"
+                    placeholder="Maschinen (kommagetrennt, leer = alle)"
+                    value={newGrpMachines}
+                    onChange={(e) => setNewGrpMachines(e.target.value)}
+                  />
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.82rem" }}>
+                    <input
+                      type="checkbox"
+                      checked={newGrpAdmin}
+                      onChange={(e) => setNewGrpAdmin(e.target.checked)}
+                    />
+                    Lokaler Admin
+                  </label>
+                  <button
+                    className="btn btn-primary"
+                    onClick={async () => {
+                      const r = await fetch("/v1/groups", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", ...authHeaders() },
+                        body: JSON.stringify({
+                          name: newGrpName,
+                          description: "",
+                          ou: newGrpOu || "/",
+                          is_local_admin: newGrpAdmin,
+                          allowed_machines: newGrpMachines.split(",").map((s) => s.trim()).filter(Boolean),
+                          members: [],
+                          updated_at: "",
+                        }),
+                      });
+                      if (r.ok) {
+                        setNewGrpName("");
+                        setNewGrpMachines("");
+                        await refreshAll();
+                      } else {
+                        setStatusMsg(`Gruppen-Fehler (${r.status})`);
+                      }
+                    }}
+                  >
+                    Gruppe speichern
+                  </button>
+                </div>
+                <table className="table">
+                  <thead><tr><th>Gruppe</th><th>OU</th><th>OS-Admin</th><th>Maschinen</th></tr></thead>
+                  <tbody>
+                    {secGroups.map((g) => (
+                      <tr key={g.name}>
+                        <td><code>{g.name}</code></td>
+                        <td><code>{g.ou || "/"}</code></td>
+                        <td>{g.is_local_admin ? <span className="badge badge-ok">ADMIN</span> : "User"}</td>
+                        <td>{g.allowed_machines?.length ? g.allowed_machines.join(", ") : "Alle"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
 

@@ -90,12 +90,36 @@ pub fn validate_openssh_pubkey(pubkey: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
+fn default_ou() -> String {
+    "/".to_string()
+}
+
+/// Validates a canonical Organizational Unit path (e.g. `"/"` or `"/Engineering/Backend"`).
+pub fn validate_ou_path(ou: &str) -> Result<String, String> {
+    let trimmed = ou.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        return Ok("/".to_string());
+    }
+    if !trimmed.starts_with('/') || trimmed.contains("..") || trimmed.len() > 128 {
+        return Err("OU path must start with '/' and be <= 128 chars without '..'".into());
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'))
+    {
+        return Err("OU path contains invalid characters".into());
+    }
+    Ok(trimmed.trim_end_matches('/').to_string())
+}
+
 /// A domain user account in the sovereign directory.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DomainUser {
     pub username: String,
     pub display_name: String,
     pub email: String,
+    #[serde(default = "default_ou")]
+    pub ou: String,
     #[serde(default)]
     pub groups: Vec<String>,
     #[serde(default)]
@@ -136,6 +160,12 @@ pub struct DomainGroup {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default = "default_ou")]
+    pub ou: String,
+    #[serde(default)]
+    pub is_local_admin: bool,
+    #[serde(default)]
+    pub allowed_machines: Vec<String>,
     #[serde(default)]
     pub members: Vec<String>,
     pub updated_at: String,

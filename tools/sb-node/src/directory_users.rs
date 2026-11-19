@@ -14,12 +14,23 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Organizational Unit (OU) in the sovereign directory without LDAP.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OrganizationalUnit {
+    pub path: String,
+    #[serde(default)]
+    pub description: String,
+    pub updated_at: String,
+}
+
 /// Persistent domain user and group directory (`~/.sb/domain/users.json`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IdentityDirectory {
     pub domain: String,
     pub users: BTreeMap<String, DomainUser>,
     pub groups: BTreeMap<String, DomainGroup>,
+    #[serde(default)]
+    pub ous: BTreeMap<String, OrganizationalUnit>,
 }
 
 /// Returns the default path for the domain user/group directory.
@@ -41,6 +52,7 @@ impl IdentityDirectory {
             domain: domain.to_string(),
             users: BTreeMap::new(),
             groups: BTreeMap::new(),
+            ous: BTreeMap::new(),
         })
     }
 
@@ -81,6 +93,9 @@ impl IdentityDirectory {
                 .or_insert_with(|| DomainGroup {
                     name: group_name.clone(),
                     description: String::new(),
+                    ou: "/".to_string(),
+                    is_local_admin: group_name == "admins",
+                    allowed_machines: Vec::new(),
                     members: Vec::new(),
                     updated_at: now.clone(),
                 });
@@ -121,6 +136,7 @@ impl IdentityDirectory {
     /// Creates or updates a domain group.
     pub fn upsert_group(&mut self, mut group: DomainGroup) -> Result<DomainGroup, String> {
         group.name = validate_policy_id(&group.name)?;
+        group.ou = sb_core::identity::validate_ou_path(&group.ou)?;
         group.validate()?;
         group.updated_at = Utc::now().to_rfc3339();
         self.groups.insert(group.name.clone(), group.clone());
@@ -187,6 +203,78 @@ impl IdentityDirectory {
             expires_at,
         })
     }
+
+    /// Creates or updates an Organizational Unit (`path` e.g. `"/Engineering/Backend"`).
+    pub fn upsert_ou(&mut self, path: &str, description: &str) -> Result<OrganizationalUnit, String> {
+        let clean = sb_core::identity::validate_ou_path(path)?;
+        let ou = OrganizationalUnit {
+            path: clean.clone(),
+            description: description.trim().to_string(),
+            updated_at: Utc::now().to_rfc3339(),
+        };
+        self.ous.insert(clean, ou.clone());
+        Ok(ou)
+    }
+
+    /// Evaluates whether `username` may log into `machine_id` / `fqdn` and whether they
+    /// hold local administrator privileges on that machine.
+    ///
+    /// # Security Audit
+    /// - **Dynamic Threat Vector:** Disabled users or unauthorized cross-OU users logging into sensitive nodes.
+    /// - **CWE Mapping:** CWE-284 (Improper Access Control).
+    /// - **Likelihood & Exploitability:** High (8/10) on domain OS login endpoints.
+    /// - **Applied Mitigation:** Fails closed when user is missing/disabled; evaluates group `allowed_machines`
+    ///   and aggregates `is_local_admin` across active group memberships.
+    pub fn evaluate_machine_login(
+        &self,
+        username: &str,
+        machine_id: &str,
+        fqdn: &str,
+    ) -> Result<(DomainUser, bool), String> {
+        let clean = validate_username(username)?;
+        let user = self
+            .users
+            .get(&clean)
+            .ok_or_else(|| format!("User '{clean}' not found in directory"))?;
+        if !user.enabled {
+            return Err(format!("User '{clean}' is disabled"));
+        }
+
+        let mut is_local_admin = false;
+        let mut has_restricted_group = false;
+        let mut allowed_by_group = false;
+
+        for gname in &user.groups {
+            if gname == "admins" {
+                is_local_admin = true;
+            }
+            if let Some(grp) = self.groups.get(gname) {
+                if grp.is_local_admin {
+                    is_local_admin = true;
+                }
+                if grp.allowed_machines.is_empty() {
+                    allowed_by_group = true;
+                } else {
+                    has_restricted_group = true;
+                    if grp.allowed_machines.iter().any(|target| {
+                        target == "*"
+                            || target == machine_id
+                            || target.eq_ignore_ascii_case(fqdn)
+                    }) {
+                        allowed_by_group = true;
+                    }
+                }
+            }
+        }
+
+        if has_restricted_group && !allowed_by_group && !is_local_admin {
+            return Err(format!(
+                "User '{clean}' is not authorized to log into machine '{fqdn}'"
+            ));
+        }
+
+        Ok((user.clone(), is_local_admin))
+    }
 }
 
 #[cfg(test)]
@@ -210,6 +298,7 @@ mod tests {
                 username: "anna.admin".into(),
                 display_name: "Anna Admin".into(),
                 email: "anna@corp.eu".into(),
+                ou: "/".into(),
                 groups: vec!["engineering".into(), "admins".into()],
                 ssh_public_key: Some(
                     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKeyDataHere123456 anna@corp.eu"

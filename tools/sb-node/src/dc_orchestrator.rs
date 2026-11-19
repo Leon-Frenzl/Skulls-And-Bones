@@ -136,6 +136,7 @@ pub fn bootstrap_dc_state(
             username: clean_admin.clone(),
             display_name: format!("{clean_admin} (Domain Admin)"),
             email: format!("{clean_admin}@{clean_domain}"),
+            ou: "/".into(),
             groups: vec!["admins".into()],
             ssh_public_key: None,
             enabled: true,

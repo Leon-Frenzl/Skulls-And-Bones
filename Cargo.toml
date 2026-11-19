@@ -10,6 +10,8 @@ members = [
     "tools/sb-core",
     "tools/sb-auth",
     "tools/sb-ca",
+    "tools/sb-cred-provider",
+    "tools/sb-linux-auth",
 ]
 
 [workspace.package]

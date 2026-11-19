@@ -10,6 +10,7 @@ pub mod domain_join;
 pub mod fleet;
 pub mod laps;
 pub mod oidc;
+pub mod os_auth_broker;
 pub mod policy_engine;
 pub mod rbac;
 pub mod service_mgr;
@@ -4973,6 +4974,7 @@ fn handle_user_commands(sub: UserCommands) -> Result<(), String> {
                 username,
                 display_name: name,
                 email,
+                ou: "/".into(),
                 groups: group_list,
                 ssh_public_key: ssh_pubkey,
                 enabled: true,
@@ -5522,6 +5524,11 @@ async fn run_relay_worker(
     machine_id: String,
     stop_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) {
+    let broker_dc = dc_endpoint.clone();
+    let broker_mid = machine_id.clone();
+    tokio::spawn(async move {
+        os_auth_broker::run_os_auth_broker(broker_dc, broker_mid).await;
+    });
     let mut force_refresh = false;
     loop {
         if let Some(ref flag) = stop_flag {

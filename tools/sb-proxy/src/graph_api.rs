@@ -333,6 +333,7 @@ async fn handle_graph_request(
         || uri_path.starts_with("/v1/policies")
         || uri_path.starts_with("/v1/users")
         || uri_path.starts_with("/v1/groups")
+        || uri_path.starts_with("/v1/ous")
         || uri_path.starts_with("/v1/audit")
         || uri_path.starts_with("/v1/ssh")
         || uri_path.starts_with("/v1/tunnels")
