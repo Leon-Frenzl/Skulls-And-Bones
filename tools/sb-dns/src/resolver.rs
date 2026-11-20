@@ -180,7 +180,12 @@ impl DnsResolver {
         if let Ok(mut cache) = self.cache.lock() {
             cache.clear();
         } else {
-            sb_core::logfmt::error("ERR_DNS_CACHE_POISONED", "dns.resolver", "DNS cache lock poisoned after directory snapshot", &[]);
+            sb_core::logfmt::error(
+                "ERR_DNS_CACHE_POISONED",
+                "dns.resolver",
+                "DNS cache lock poisoned after directory snapshot",
+                &[],
+            );
         }
         Ok(())
     }
@@ -242,7 +247,12 @@ impl DnsResolver {
             Ok(cache) => cache,
             Err(error) => {
                 let e = error.to_string();
-                sb_core::logfmt::error("ERR_DNS_CACHE_POISONED", "dns.resolver", "DNS cache lock poisoned during invalidation", &[("name", name), ("error", &e)]);
+                sb_core::logfmt::error(
+                    "ERR_DNS_CACHE_POISONED",
+                    "dns.resolver",
+                    "DNS cache lock poisoned during invalidation",
+                    &[("name", name), ("error", &e)],
+                );
                 return;
             }
         };
@@ -313,7 +323,12 @@ impl DnsResolver {
 
         if let Some(error) = last_error {
             let e = error.to_string();
-            sb_core::logfmt::warn("ERR_DNS_UPSTREAM", "dns.resolver", "DNS upstream resolution failed", &[("qname", &qname), ("error", &e)]);
+            sb_core::logfmt::warn(
+                "ERR_DNS_UPSTREAM",
+                "dns.resolver",
+                "DNS upstream resolution failed",
+                &[("qname", &qname), ("error", &e)],
+            );
         }
         Ok(self.response(query, ResponseCode::ServFail, false))
     }
@@ -484,7 +499,12 @@ impl DnsResolver {
             Ok(records) => records,
             Err(error) => {
                 let e = error.to_string();
-                sb_core::logfmt::error("ERR_DNS_STATIC_POISONED", "dns.resolver", "DNS static-record lock poisoned", &[("error", &e)]);
+                sb_core::logfmt::error(
+                    "ERR_DNS_STATIC_POISONED",
+                    "dns.resolver",
+                    "DNS static-record lock poisoned",
+                    &[("error", &e)],
+                );
                 return Some(self.response(query, ResponseCode::ServFail, false));
             }
         };
@@ -570,7 +590,12 @@ impl DnsResolver {
             Ok(cache) => cache,
             Err(error) => {
                 let e = error.to_string();
-                sb_core::logfmt::error("ERR_DNS_CACHE_POISONED", "dns.resolver", "DNS cache lock poisoned during lookup", &[("error", &e)]);
+                sb_core::logfmt::error(
+                    "ERR_DNS_CACHE_POISONED",
+                    "dns.resolver",
+                    "DNS cache lock poisoned during lookup",
+                    &[("error", &e)],
+                );
                 return None;
             }
         };
@@ -615,7 +640,12 @@ impl DnsResolver {
             Ok(cache) => cache,
             Err(error) => {
                 let e = error.to_string();
-                sb_core::logfmt::error("ERR_DNS_CACHE_POISONED", "dns.resolver", "DNS cache lock poisoned while storing response", &[("error", &e)]);
+                sb_core::logfmt::error(
+                    "ERR_DNS_CACHE_POISONED",
+                    "dns.resolver",
+                    "DNS cache lock poisoned while storing response",
+                    &[("error", &e)],
+                );
                 return;
             }
         };

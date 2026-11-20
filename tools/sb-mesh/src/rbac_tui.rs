@@ -686,10 +686,10 @@ impl RbacTuiApp {
                 }
                 KeyCode::Down
                     if !self.store.audit_log.is_empty()
-                        && self.selected_audit_idx + 1 < self.store.audit_log.len()
-                    => {
-                        self.selected_audit_idx += 1;
-                    }
+                        && self.selected_audit_idx + 1 < self.store.audit_log.len() =>
+                {
+                    self.selected_audit_idx += 1;
+                }
                 _ => {}
             },
 

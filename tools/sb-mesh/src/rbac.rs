@@ -330,9 +330,9 @@ impl SovereignAcl {
                         || (required.execute && ace.permissions.execute)
                         || (required.delete && ace.permissions.delete)
                         || (required.take_ownership && ace.permissions.take_ownership))
-                    {
-                        return false; // Hard Deny!
-                    }
+                {
+                    return false; // Hard Deny!
+                }
             }
         }
 

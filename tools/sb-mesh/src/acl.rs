@@ -206,10 +206,9 @@ impl AclEngine {
     pub fn is_port_allowed(&self, subject_node_id: &str, port: u16, current_epoch: u64) -> bool {
         if let Some(token_list) = self.tokens.get(subject_node_id) {
             for token in token_list {
-                if token.verify(current_epoch).is_ok()
-                    && token.allowed_ports.contains(&port) {
-                        return true;
-                    }
+                if token.verify(current_epoch).is_ok() && token.allowed_ports.contains(&port) {
+                    return true;
+                }
             }
             false
         } else {

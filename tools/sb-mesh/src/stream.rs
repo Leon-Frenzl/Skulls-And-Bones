@@ -468,17 +468,37 @@ impl StealthStreamClient {
                                                 let _ = tx.send(frame).await;
                                             }
                                         }
-                                        Err(e) => sb_core::logfmt::warn("ERR_STREAM_DECODE", "mesh.stream", "StreamFrame decode error", &[("error", &e.to_string())]),
+                                        Err(e) => sb_core::logfmt::warn(
+                                            "ERR_STREAM_DECODE",
+                                            "mesh.stream",
+                                            "StreamFrame decode error",
+                                            &[("error", &e.to_string())],
+                                        ),
                                     },
-                                    Err(e) => sb_core::logfmt::warn("ERR_STREAM_DECRYPT", "mesh.stream", "Stream decrypt error", &[("error", &e.to_string())]),
+                                    Err(e) => sb_core::logfmt::warn(
+                                        "ERR_STREAM_DECRYPT",
+                                        "mesh.stream",
+                                        "Stream decrypt error",
+                                        &[("error", &e.to_string())],
+                                    ),
                                 }
                             } else {
                                 let tm = (_tag == expected_tag).to_string();
                                 let pt = format!("{:?}", ptype);
-                                sb_core::logfmt::warn("ERR_STREAM_MISMATCH", "mesh.stream", "Tag or packet type mismatch", &[("tag_match", &tm), ("ptype", &pt)]);
+                                sb_core::logfmt::warn(
+                                    "ERR_STREAM_MISMATCH",
+                                    "mesh.stream",
+                                    "Tag or packet type mismatch",
+                                    &[("tag_match", &tm), ("ptype", &pt)],
+                                );
                             }
                         }
-                        Err(e) => sb_core::logfmt::warn("ERR_STREAM_HEADER", "mesh.stream", "unpack_header_v2 error", &[("error", &e.to_string())]),
+                        Err(e) => sb_core::logfmt::warn(
+                            "ERR_STREAM_HEADER",
+                            "mesh.stream",
+                            "unpack_header_v2 error",
+                            &[("error", &e.to_string())],
+                        ),
                     },
                     Err(_) => {
                         tokio::time::sleep(Duration::from_millis(50)).await;

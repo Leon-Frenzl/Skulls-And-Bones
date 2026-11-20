@@ -232,9 +232,10 @@ pub async fn tunnel_tcp_to_vpc(
                             if let Ok(dec) = decrypt_payload(s_key.as_bytes(), c, payload) {
                                 if let Ok(frame) = StreamFrame::decode(&dec) {
                                     if frame.stream_id == expected_stream_id
-                                        && tx.send(frame).await.is_err() {
-                                            break;
-                                        }
+                                        && tx.send(frame).await.is_err()
+                                    {
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -496,7 +497,12 @@ pub async fn run_vpc_forwarder(
             if let Err(e) =
                 tunnel_tcp_to_vpc(tcp_stream, &t_host, t_port, &gw_ep, &gw_pk, &t_mesh, false).await
             {
-                sb_core::logfmt::error("ERR_MESH_TUNNEL", "mesh.subnet_route", "Subnet tunnel error", &[("error", &e.to_string())]);
+                sb_core::logfmt::error(
+                    "ERR_MESH_TUNNEL",
+                    "mesh.subnet_route",
+                    "Subnet tunnel error",
+                    &[("error", &e.to_string())],
+                );
             }
         });
     }

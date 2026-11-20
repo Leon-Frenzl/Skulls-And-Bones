@@ -112,13 +112,13 @@ pub fn provision_os_logon(
                 status.code()
             ));
         }
-        return Ok(OsLogonProvisionReport {
+        Ok(OsLogonProvisionReport {
             platform: "windows".into(),
             dry_run: false,
             applied: true,
             module_path: Some(dll_str.clone()),
             actions: vec![format!("Registered Windows Credential Provider: {dll_str}")],
-        });
+        })
     }
 
     #[cfg(target_os = "linux")]
@@ -195,7 +195,9 @@ pub fn rollback_os_logon(
                         dry_run,
                         applied: false,
                         module_path: None,
-                        actions: vec!["sb_cred_provider.dll not present; nothing to unregister".into()],
+                        actions: vec![
+                            "sb_cred_provider.dll not present; nothing to unregister".into()
+                        ],
                     });
                 }
             },
@@ -220,13 +222,15 @@ pub fn rollback_os_logon(
                 status.code()
             ));
         }
-        return Ok(OsLogonProvisionReport {
+        Ok(OsLogonProvisionReport {
             platform: "windows".into(),
             dry_run: false,
             applied: true,
             module_path: Some(dll_str.clone()),
-            actions: vec![format!("Unregistered Windows Credential Provider: {dll_str}")],
-        });
+            actions: vec![format!(
+                "Unregistered Windows Credential Provider: {dll_str}"
+            )],
+        })
     }
 
     #[cfg(not(target_os = "windows"))]

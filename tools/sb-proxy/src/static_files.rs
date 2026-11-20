@@ -90,12 +90,10 @@ pub(crate) enum ResolveError {
     Forbidden,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub(crate) struct StaticFileOptions {
     pub spa_fallback: bool,
 }
-
 
 pub(crate) fn resolve_file(root: &Path, request_target: &str) -> Result<PathBuf, ResolveError> {
     resolve_file_with_options(root, request_target, StaticFileOptions::default())

@@ -37,14 +37,24 @@ fn main() {
             {
                 Ok(rt) => rt,
                 Err(e) => {
-                    sb_core::logfmt::error("ERR_MESH_RUNTIME", "mesh.main", "Failed to initialize Tokio runtime", &[("error", &e.to_string())]);
+                    sb_core::logfmt::error(
+                        "ERR_MESH_RUNTIME",
+                        "mesh.main",
+                        "Failed to initialize Tokio runtime",
+                        &[("error", &e.to_string())],
+                    );
                     std::process::exit(1);
                 }
             };
 
             rt.block_on(async {
                 if let Err(e) = run().await {
-                    sb_core::logfmt::error("ERR_MESH_MAIN", "mesh.main", "Mesh command failed", &[("error", &e.to_string())]);
+                    sb_core::logfmt::error(
+                        "ERR_MESH_MAIN",
+                        "mesh.main",
+                        "Mesh command failed",
+                        &[("error", &e.to_string())],
+                    );
                     std::process::exit(1);
                 }
             });
@@ -197,7 +207,12 @@ async fn run() -> Result<(), String> {
             daemon_paths.ensure()?;
             let legacy_paths = sb_mesh::state::MeshStatePaths::legacy_paths(&data_dir, &mesh_name)?;
             if legacy_paths.iter().any(|path| path.exists()) {
-                sb_core::logfmt::warn("MESH_LEGACY_FILES", "mesh.daemon", "Legacy shared mesh files found and ignored", &[("mesh", &mesh_name)]);
+                sb_core::logfmt::warn(
+                    "MESH_LEGACY_FILES",
+                    "mesh.daemon",
+                    "Legacy shared mesh files found and ignored",
+                    &[("mesh", &mesh_name)],
+                );
             }
             let identity = Arc::new(NodeIdentity::load_registered_for_mesh(&mesh_name)?);
             let config = MeshConfig::load_or_create(&daemon_paths.config)?;
@@ -263,7 +278,12 @@ async fn run() -> Result<(), String> {
                     match result {
                         Ok(()) => last_error = None,
                         Err(error) if last_error.as_deref() != Some(error.as_str()) => {
-                            sb_core::logfmt::warn("ERR_MESH_STATUS_EXPORT", "mesh.daemon", "Mesh runtime status export failed", &[("error", &error)]);
+                            sb_core::logfmt::warn(
+                                "ERR_MESH_STATUS_EXPORT",
+                                "mesh.daemon",
+                                "Mesh runtime status export failed",
+                                &[("error", &error)],
+                            );
                             last_error = Some(error);
                         }
                         Err(_) => {}
@@ -574,7 +594,12 @@ async fn run() -> Result<(), String> {
                         removed.map(|r| r.config.callsign).unwrap_or(target)
                     );
                 } else {
-                    sb_core::logfmt::warn("ERR_MESH_PEER_NOT_FOUND", "mesh.cli", "Mesh peer not found", &[("target", &target)]);
+                    sb_core::logfmt::warn(
+                        "ERR_MESH_PEER_NOT_FOUND",
+                        "mesh.cli",
+                        "Mesh peer not found",
+                        &[("target", &target)],
+                    );
                 }
             }
         },
@@ -605,7 +630,12 @@ async fn run() -> Result<(), String> {
                             );
                             println!("{}\n", qr_str);
                         }
-                        Err(e) => sb_core::logfmt::warn("ERR_QR_RENDER", "mesh.pair", "Failed to render QR code", &[("error", &e.to_string())]),
+                        Err(e) => sb_core::logfmt::warn(
+                            "ERR_QR_RENDER",
+                            "mesh.pair",
+                            "Failed to render QR code",
+                            &[("error", &e.to_string())],
+                        ),
                     }
                 } else {
                     println!(
@@ -682,7 +712,12 @@ async fn run() -> Result<(), String> {
                     "✓".green().bold()
                 );
             } else {
-                sb_core::logfmt::warn("ERR_MESH_PEER_NOT_FOUND", "mesh.ping", "Mesh peer not found", &[("target", &target)]);
+                sb_core::logfmt::warn(
+                    "ERR_MESH_PEER_NOT_FOUND",
+                    "mesh.ping",
+                    "Mesh peer not found",
+                    &[("target", &target)],
+                );
             }
         }
 
@@ -1341,7 +1376,12 @@ async fn run() -> Result<(), String> {
                     let legacy_paths =
                         sb_mesh::state::MeshStatePaths::legacy_paths(&data_dir, &mesh_name)?;
                     if legacy_paths.iter().any(|path| path.exists()) {
-                        sb_core::logfmt::warn("MESH_LEGACY_FILES", "mesh.cli", "Legacy mesh files found and ignored", &[("mesh", &mesh_name)]);
+                        sb_core::logfmt::warn(
+                            "MESH_LEGACY_FILES",
+                            "mesh.cli",
+                            "Legacy mesh files found and ignored",
+                            &[("mesh", &mesh_name)],
+                        );
                     }
                     let mesh_identity = NodeIdentity::load_or_generate(&mesh_paths.identity)?;
                     match store.create_network(
@@ -1382,7 +1422,12 @@ async fn run() -> Result<(), String> {
                             );
                         }
                         Err(e) => {
-                            sb_core::logfmt::error("ERR_MESH_NETWORK_CREATE", "mesh.cli", "Failed to create mesh network", &[("error", &e.to_string())]);
+                            sb_core::logfmt::error(
+                                "ERR_MESH_NETWORK_CREATE",
+                                "mesh.cli",
+                                "Failed to create mesh network",
+                                &[("error", &e.to_string())],
+                            );
                             std::process::exit(1);
                         }
                     }
@@ -1496,7 +1541,12 @@ async fn run() -> Result<(), String> {
                         );
                     }
                     Err(e) => {
-                        sb_core::logfmt::error("ERR_MESH_NETWORK_SWITCH", "mesh.cli", "Failed to switch mesh network", &[("error", &e.to_string())]);
+                        sb_core::logfmt::error(
+                            "ERR_MESH_NETWORK_SWITCH",
+                            "mesh.cli",
+                            "Failed to switch mesh network",
+                            &[("error", &e.to_string())],
+                        );
                         std::process::exit(1);
                     }
                 },
@@ -1509,7 +1559,12 @@ async fn run() -> Result<(), String> {
                         );
                     }
                     Err(e) => {
-                        sb_core::logfmt::error("ERR_MESH_NETWORK_DELETE", "mesh.cli", "Failed to delete mesh network", &[("error", &e.to_string())]);
+                        sb_core::logfmt::error(
+                            "ERR_MESH_NETWORK_DELETE",
+                            "mesh.cli",
+                            "Failed to delete mesh network",
+                            &[("error", &e.to_string())],
+                        );
                         std::process::exit(1);
                     }
                 },
@@ -1654,7 +1709,12 @@ async fn run() -> Result<(), String> {
                             }
                         }
                         Err(e) => {
-                            sb_core::logfmt::error("ERR_MESH_TICKET_REQ", "mesh.ticket", "Ticket request rejected or failed", &[("error", &e.to_string())]);
+                            sb_core::logfmt::error(
+                                "ERR_MESH_TICKET_REQ",
+                                "mesh.ticket",
+                                "Ticket request rejected or failed",
+                                &[("error", &e.to_string())],
+                            );
                             std::process::exit(1);
                         }
                     }
@@ -1893,7 +1953,12 @@ async fn run() -> Result<(), String> {
                             request_id, target_mesh
                         );
                     } else {
-                        sb_core::logfmt::warn("ERR_RBAC_REQUEST_NOT_FOUND", "mesh.rbac", "Pending join request not found", &[("request_id", &request_id)]);
+                        sb_core::logfmt::warn(
+                            "ERR_RBAC_REQUEST_NOT_FOUND",
+                            "mesh.rbac",
+                            "Pending join request not found",
+                            &[("request_id", &request_id)],
+                        );
                     }
                 }
 
@@ -1913,7 +1978,12 @@ async fn run() -> Result<(), String> {
                         store.save()?;
                         println!("Beitrittsanfrage '{}' abgelehnt.", request_id);
                     } else {
-                        sb_core::logfmt::warn("ERR_RBAC_REQUEST_NOT_FOUND", "mesh.rbac", "Pending join request not found", &[("request_id", &request_id)]);
+                        sb_core::logfmt::warn(
+                            "ERR_RBAC_REQUEST_NOT_FOUND",
+                            "mesh.rbac",
+                            "Pending join request not found",
+                            &[("request_id", &request_id)],
+                        );
                     }
                 }
 
@@ -1973,7 +2043,12 @@ async fn run() -> Result<(), String> {
                         );
                         println!("  {:<20} {}", "Grund:", reason);
                     } else {
-                        sb_core::logfmt::warn("ERR_RBAC_MEMBER_NOT_FOUND", "mesh.rbac", "Mesh member not found", &[("member", &name), ("mesh", &target_mesh)]);
+                        sb_core::logfmt::warn(
+                            "ERR_RBAC_MEMBER_NOT_FOUND",
+                            "mesh.rbac",
+                            "Mesh member not found",
+                            &[("member", &name), ("mesh", &target_mesh)],
+                        );
                     }
                 }
 
@@ -1989,7 +2064,12 @@ async fn run() -> Result<(), String> {
                             target_mesh
                         );
                     } else {
-                        sb_core::logfmt::warn("ERR_RBAC_MEMBER_NOT_FOUND", "mesh.rbac", "Mesh member not found", &[("member", &name), ("mesh", &target_mesh)]);
+                        sb_core::logfmt::warn(
+                            "ERR_RBAC_MEMBER_NOT_FOUND",
+                            "mesh.rbac",
+                            "Mesh member not found",
+                            &[("member", &name), ("mesh", &target_mesh)],
+                        );
                     }
                 }
 
@@ -2506,7 +2586,12 @@ async fn run() -> Result<(), String> {
                             target_mesh
                         );
                     } else {
-                        sb_core::logfmt::warn("ERR_MESH_GROUP_NOT_FOUND", "mesh.cli", "Mesh group not found", &[("group", &name)]);
+                        sb_core::logfmt::warn(
+                            "ERR_MESH_GROUP_NOT_FOUND",
+                            "mesh.cli",
+                            "Mesh group not found",
+                            &[("group", &name)],
+                        );
                     }
                 }
             }
@@ -2598,7 +2683,12 @@ async fn run() -> Result<(), String> {
                             println!("  {} {}", "✓".bright_green().bold(), msg.bright_green());
                         }
                         Err(err) => {
-                            sb_core::logfmt::error("ERR_DNS_TEARDOWN", "mesh.dns", "Failed to uninstall split-DNS", &[("error", &err.to_string())]);
+                            sb_core::logfmt::error(
+                                "ERR_DNS_TEARDOWN",
+                                "mesh.dns",
+                                "Failed to uninstall split-DNS",
+                                &[("error", &err.to_string())],
+                            );
                         }
                     }
                     println!();

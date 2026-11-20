@@ -11,16 +11,15 @@ use crate::paths::{
 };
 use crate::x509::root::init_root_ca;
 use crate::x509::store::{DevCertIndex, DevCertMetadata, IssuedCertPair};
-use x509_parser::extensions::GeneralName;
-use x509_parser::parse_x509_certificate;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::Utc;
 use rcgen::{
-    CertificateParams, ExtendedKeyUsagePurpose, KeyPair, KeyUsagePurpose,
-    PKCS_ECDSA_P256_SHA256,
+    CertificateParams, ExtendedKeyUsagePurpose, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,
 };
 use std::fs;
 use time::{Duration, OffsetDateTime};
+use x509_parser::extensions::GeneralName;
+use x509_parser::parse_x509_certificate;
 use zeroize::Zeroize;
 
 /// Default leaf certificate TTL in days (90 days).
@@ -247,7 +246,9 @@ pub fn get_or_issue_on_demand(domain: &str) -> Result<IssuedCertPair, CaError> {
                         fs::read_to_string(&leaf_crt_path),
                         fs::read_to_string(&leaf_key_path),
                     ) {
-                        if let (Ok(cert_der), Ok(key_der)) = (pem_to_der(&cert_pem), pem_to_der(&key_pem)) {
+                        if let (Ok(cert_der), Ok(key_der)) =
+                            (pem_to_der(&cert_pem), pem_to_der(&key_pem))
+                        {
                             return Ok(IssuedCertPair {
                                 cert_pem,
                                 key_pem,

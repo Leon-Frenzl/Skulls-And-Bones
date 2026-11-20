@@ -57,11 +57,7 @@ fn query_broker(_username: &str, _password: &str) -> Result<BrokerResp, ()> {
 #[cfg(target_os = "linux")]
 #[link(name = "pam")]
 extern "C" {
-    fn pam_get_user(
-        pamh: *mut c_void,
-        user: *mut *const c_char,
-        prompt: *const c_char,
-    ) -> c_int;
+    fn pam_get_user(pamh: *mut c_void, user: *mut *const c_char, prompt: *const c_char) -> c_int;
     fn pam_get_authtok(
         pamh: *mut c_void,
         item_type: c_int,
@@ -151,12 +147,22 @@ pub unsafe extern "C" fn pam_sm_authenticate(
 
 /// Standard Linux PAM credential hook (`pam_sm_setcred`).
 #[no_mangle]
-pub extern "C" fn pam_sm_setcred(_pamh: *mut c_void, _flags: c_int, _argc: c_int, _argv: *const *const c_char) -> c_int {
+pub extern "C" fn pam_sm_setcred(
+    _pamh: *mut c_void,
+    _flags: c_int,
+    _argc: c_int,
+    _argv: *const *const c_char,
+) -> c_int {
     PAM_SUCCESS
 }
 
 /// Standard Linux PAM account check (`pam_sm_acct_mgmt`).
 #[no_mangle]
-pub extern "C" fn pam_sm_acct_mgmt(_pamh: *mut c_void, _flags: c_int, _argc: c_int, _argv: *const *const c_char) -> c_int {
+pub extern "C" fn pam_sm_acct_mgmt(
+    _pamh: *mut c_void,
+    _flags: c_int,
+    _argc: c_int,
+    _argv: *const *const c_char,
+) -> c_int {
     PAM_SUCCESS
 }

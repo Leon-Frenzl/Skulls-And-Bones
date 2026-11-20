@@ -53,7 +53,13 @@ impl SshCa {
         ttl_seconds: u64,
         serial: Option<u64>,
     ) -> Result<String, CaError> {
-        issue_user_certificate(subject_pubkey_openssh, key_id, principals, ttl_seconds, serial)
+        issue_user_certificate(
+            subject_pubkey_openssh,
+            key_id,
+            principals,
+            ttl_seconds,
+            serial,
+        )
     }
 
     /// Issues a host certificate for host identification.

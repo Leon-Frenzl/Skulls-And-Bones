@@ -1478,9 +1478,9 @@ fn toggle_selected_daemon(daemon: &DaemonHealth) -> String {
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false)
-            {
-                return format!("Daemon '{}' via systemd gestartet", bin);
-            }
+        {
+            return format!("Daemon '{}' via systemd gestartet", bin);
+        }
         let mut cmd = std::process::Command::new(bin);
         match bin {
             "sb-node" => {

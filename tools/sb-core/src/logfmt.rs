@@ -53,9 +53,14 @@ pub fn escape_logfmt_value(raw: &str) -> String {
 pub fn format_logfmt_attr(key: &str, value: &str) -> String {
     let safe_key = escape_logfmt_value(key);
     let needs_quotes = value.is_empty()
-        || value
-            .chars()
-            .any(|c| c.is_whitespace() || c == '=' || c == '"' || c == '\\' || (c as u32) < 0x20 || c as u32 == 0x7F);
+        || value.chars().any(|c| {
+            c.is_whitespace()
+                || c == '='
+                || c == '"'
+                || c == '\\'
+                || (c as u32) < 0x20
+                || c as u32 == 0x7F
+        });
     if needs_quotes {
         format!("{safe_key}=\"{}\"", escape_logfmt_value(value))
     } else {

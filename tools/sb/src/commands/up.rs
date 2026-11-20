@@ -59,10 +59,9 @@ fn ensure_secret_directories() -> Vec<String> {
     ];
 
     for dir in &dirs {
-        if !dir.exists()
-            && fs::create_dir_all(dir).is_ok() {
-                actions.push(format!("Created secret directory {}", dir.display()));
-            }
+        if !dir.exists() && fs::create_dir_all(dir).is_ok() {
+            actions.push(format!("Created secret directory {}", dir.display()));
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -125,11 +124,10 @@ pub fn handle_up(fix: bool, json: bool) {
 
     // 3. OS Trust Store (installed automatically when --fix is passed)
     let mut os_trust = sb_ca::is_root_ca_installed();
-    if !os_trust && fix && x509_ca_status.initialized
-        && sb_ca::X509Ca::install_root_ca().is_ok() {
-            os_trust = sb_ca::is_root_ca_installed();
-            actions.push("Installed X.509 Root CA into OS trust store".to_string());
-        }
+    if !os_trust && fix && x509_ca_status.initialized && sb_ca::X509Ca::install_root_ca().is_ok() {
+        os_trust = sb_ca::is_root_ca_installed();
+        actions.push("Installed X.509 Root CA into OS trust store".to_string());
+    }
 
     // 4. Ephemeral 8-Hour RAM Lease
     let mut lease_opt = sb_key::get_lease_status();

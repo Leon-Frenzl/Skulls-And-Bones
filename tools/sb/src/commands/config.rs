@@ -13,7 +13,12 @@ pub fn handle_config(action: Option<ConfigAction>) {
             if let Some(val) = cfg.get_value(&k) {
                 println!("{}", val);
             } else {
-                sb_core::logfmt::error("ERR_SB_CONFIG_KEY", "sb.config", "Unknown configuration key", &[("key", &k)]);
+                sb_core::logfmt::error(
+                    "ERR_SB_CONFIG_KEY",
+                    "sb.config",
+                    "Unknown configuration key",
+                    &[("key", &k)],
+                );
                 std::process::exit(1);
             }
         }
@@ -36,7 +41,12 @@ pub fn handle_config(action: Option<ConfigAction>) {
                     );
                 }
                 Err(err) => {
-                    sb_core::logfmt::error("ERR_SB_CONFIG_SET", "sb.config", "Failed to update configuration", &[("error", &err.to_string())]);
+                    sb_core::logfmt::error(
+                        "ERR_SB_CONFIG_SET",
+                        "sb.config",
+                        "Failed to update configuration",
+                        &[("error", &err.to_string())],
+                    );
                     std::process::exit(1);
                 }
             }

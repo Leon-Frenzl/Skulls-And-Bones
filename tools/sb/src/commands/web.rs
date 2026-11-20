@@ -335,7 +335,12 @@ pub async fn publish(
         .map_err(|error| error.to_string());
 
     if let Err(error) = web_server.kill().await {
-        sb_core::logfmt::warn("ERR_SB_WEB_KILL", "sb.web", "Failed to stop production server after tunnel exit", &[("error", &error.to_string())]);
+        sb_core::logfmt::warn(
+            "ERR_SB_WEB_KILL",
+            "sb.web",
+            "Failed to stop production server after tunnel exit",
+            &[("error", &error.to_string())],
+        );
     }
     let _ = web_server.wait().await;
     tunnel_result

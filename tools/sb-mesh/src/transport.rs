@@ -174,7 +174,12 @@ impl MeshTransport {
                                     ) {
                                         Ok(store) => store,
                                         Err(error) => {
-                                            sb_core::logfmt::warn("ERR_TICKET_AUTH_STATE", "mesh.transport", "Ticket authorization state unavailable", &[("error", &error.to_string())]);
+                                            sb_core::logfmt::warn(
+                                                "ERR_TICKET_AUTH_STATE",
+                                                "mesh.transport",
+                                                "Ticket authorization state unavailable",
+                                                &[("error", &error.to_string())],
+                                            );
                                             continue;
                                         }
                                     };
@@ -182,7 +187,12 @@ impl MeshTransport {
                                 let data_dir = match crate::identity::default_data_dir() {
                                     Ok(path) => path,
                                     Err(error) => {
-                                        sb_core::logfmt::warn("ERR_MESH_STATE_DIR", "mesh.transport", "Mesh state directory unavailable", &[("error", &error.to_string())]);
+                                        sb_core::logfmt::warn(
+                                            "ERR_MESH_STATE_DIR",
+                                            "mesh.transport",
+                                            "Mesh state directory unavailable",
+                                            &[("error", &error.to_string())],
+                                        );
                                         continue;
                                     }
                                 };
@@ -194,7 +204,12 @@ impl MeshTransport {
                                     ) {
                                         Ok(store) => store,
                                         Err(error) => {
-                                            sb_core::logfmt::warn("ERR_MESH_CATALOG", "mesh.transport", "Mesh catalog unavailable", &[("error", &error.to_string())]);
+                                            sb_core::logfmt::warn(
+                                                "ERR_MESH_CATALOG",
+                                                "mesh.transport",
+                                                "Mesh catalog unavailable",
+                                                &[("error", &error.to_string())],
+                                            );
                                             continue;
                                         }
                                     };
@@ -228,7 +243,12 @@ impl MeshTransport {
 
                                     Ok(None) => {}
                                     Err(error) => {
-                                        sb_core::logfmt::warn("ERR_TICKET_PROCESS", "mesh.transport", "Ticket request processing failed", &[("error", &error.to_string())]);
+                                        sb_core::logfmt::warn(
+                                            "ERR_TICKET_PROCESS",
+                                            "mesh.transport",
+                                            "Ticket request processing failed",
+                                            &[("error", &error.to_string())],
+                                        );
                                     }
                                 }
                                 continue;

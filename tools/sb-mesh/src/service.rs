@@ -451,7 +451,12 @@ fn start_service() -> Result<(), String> {
                 );
             }
             Ok(_) => {
-                sb_core::logfmt::warn("ERR_MESH_SYSTEMCTL", "mesh.service", "Systemctl reported an error", &[]);
+                sb_core::logfmt::warn(
+                    "ERR_MESH_SYSTEMCTL",
+                    "mesh.service",
+                    "Systemctl reported an error",
+                    &[],
+                );
             }
             Err(e) => return Err(format!("Fehler beim Ausführen von systemctl: {}", e)),
         }

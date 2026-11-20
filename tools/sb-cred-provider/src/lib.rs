@@ -10,7 +10,6 @@ use std::ffi::c_void;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::{Arc, Mutex};
-use zeroize::{Zeroize, ZeroizeOnDrop};
 use windows::core::{implement, w, Error, Interface, GUID, HRESULT, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
     BOOL, CLASS_E_CLASSNOTAVAILABLE, E_INVALIDARG, E_NOTIMPL, E_POINTER, HINSTANCE, NTSTATUS,
@@ -32,14 +31,15 @@ use windows::Win32::System::Registry::{
 use windows::Win32::UI::Shell::{
     ICredentialProvider, ICredentialProviderCredential, ICredentialProviderCredentialEvents,
     ICredentialProviderCredential_Impl, ICredentialProviderEvents, ICredentialProvider_Impl,
-    CPFIS_FOCUSED, CPFIS_NONE, CPFS_DISPLAY_IN_BOTH, CPFS_DISPLAY_IN_SELECTED_TILE,
-    CPFS_HIDDEN, CPFT_EDIT_TEXT, CPFT_LARGE_TEXT, CPFT_PASSWORD_TEXT, CPFT_SUBMIT_BUTTON,
-    CPFT_TILE_IMAGE, CPGSR_NO_CREDENTIAL_NOT_FINISHED, CPGSR_RETURN_CREDENTIAL_FINISHED,
-    CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION, CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR,
-    CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE, CREDENTIAL_PROVIDER_FIELD_STATE,
-    CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE, CREDENTIAL_PROVIDER_STATUS_ICON,
-    CREDENTIAL_PROVIDER_USAGE_SCENARIO, CPUS_CREDUI, CPUS_LOGON, CPUS_UNLOCK_WORKSTATION,
+    CPFIS_FOCUSED, CPFIS_NONE, CPFS_DISPLAY_IN_BOTH, CPFS_DISPLAY_IN_SELECTED_TILE, CPFS_HIDDEN,
+    CPFT_EDIT_TEXT, CPFT_LARGE_TEXT, CPFT_PASSWORD_TEXT, CPFT_SUBMIT_BUTTON, CPFT_TILE_IMAGE,
+    CPGSR_NO_CREDENTIAL_NOT_FINISHED, CPGSR_RETURN_CREDENTIAL_FINISHED, CPUS_CREDUI, CPUS_LOGON,
+    CPUS_UNLOCK_WORKSTATION, CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
+    CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR, CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE,
+    CREDENTIAL_PROVIDER_FIELD_STATE, CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE,
+    CREDENTIAL_PROVIDER_STATUS_ICON, CREDENTIAL_PROVIDER_USAGE_SCENARIO,
 };
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// {7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}
 pub const CLSID_SB_CRED_PROVIDER: GUID = GUID::from_u128(0x7b9a5d12_4f8e_4b1d_9a2e_8c1f4d2a6b10);
@@ -69,8 +69,8 @@ fn query_local_broker(username: &str, password: &str) -> Result<BrokerAuthResp, 
         .write(true)
         .open(r"\\.\pipe\sb-node-auth")
         .map_err(|e| format!("sb-node-agent Auth-Broker nicht erreichbar: {e}"))?;
-    let line = serde_json::to_string(&BrokerAuthReq { username, password })
-        .map_err(|e| e.to_string())?;
+    let line =
+        serde_json::to_string(&BrokerAuthReq { username, password }).map_err(|e| e.to_string())?;
     pipe.write_all(format!("{line}\n").as_bytes())
         .map_err(|e| e.to_string())?;
     pipe.flush().map_err(|e| e.to_string())?;
@@ -431,7 +431,11 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
         Err(Error::from(E_NOTIMPL))
     }
 
-    fn SetComboBoxSelectedValue(&self, _dwfieldid: u32, _dwselecteditem: u32) -> windows::core::Result<()> {
+    fn SetComboBoxSelectedValue(
+        &self,
+        _dwfieldid: u32,
+        _dwselecteditem: u32,
+    ) -> windows::core::Result<()> {
         Err(Error::from(E_NOTIMPL))
     }
 
@@ -483,8 +487,7 @@ impl ICredentialProviderCredential_Impl for SBCredential_Impl {
                         *ppszoptionalstatustext = alloc_co_task_pwstr(&e)?;
                     }
                     if !pcpsioptionalstatusicon.is_null() {
-                        *pcpsioptionalstatusicon =
-                            windows::Win32::UI::Shell::CPSI_ERROR;
+                        *pcpsioptionalstatusicon = windows::Win32::UI::Shell::CPSI_ERROR;
                     }
                 }
                 return Ok(());
@@ -663,7 +666,10 @@ impl ICredentialProvider_Impl for SBCredentialProvider_Impl {
         Ok(())
     }
 
-    fn GetCredentialAt(&self, dwindex: u32) -> windows::core::Result<ICredentialProviderCredential> {
+    fn GetCredentialAt(
+        &self,
+        dwindex: u32,
+    ) -> windows::core::Result<ICredentialProviderCredential> {
         if dwindex != 0 {
             return Err(Error::from(E_INVALIDARG));
         }
@@ -776,17 +782,19 @@ pub unsafe extern "system" fn DllRegisterServer() -> HRESULT {
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
-    let apt_w: Vec<u16> = "Apartment".encode_utf16().chain(std::iter::once(0)).collect();
+    let apt_w: Vec<u16> = "Apartment"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
 
     let clsid_key: Vec<u16> = "CLSID\\{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}"
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
-    let inproc_key: Vec<u16> =
-        "CLSID\\{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}\\InprocServer32"
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
+    let inproc_key: Vec<u16> = "CLSID\\{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}\\InprocServer32"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     let cp_key: Vec<u16> =
         "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{7B9A5D12-4F8E-4B1D-9A2E-8C1F4D2A6B10}"
             .encode_utf16()
@@ -866,7 +874,9 @@ mod tests {
             for idx in 0..5 {
                 let desc = provider.GetFieldDescriptorAt(idx).unwrap();
                 assert_eq!((*desc).dwFieldID, idx);
-                windows::Win32::System::Com::CoTaskMemFree(Some((*desc).pszLabel.0 as *const c_void));
+                windows::Win32::System::Com::CoTaskMemFree(Some(
+                    (*desc).pszLabel.0 as *const c_void,
+                ));
                 windows::Win32::System::Com::CoTaskMemFree(Some(desc as *const c_void));
             }
 

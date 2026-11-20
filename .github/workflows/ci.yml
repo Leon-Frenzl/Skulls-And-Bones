@@ -24,7 +24,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Build & test sb-node and sb-cli
-        run: cargo test -p sb-core -p sb-auth -p sb-ca -p sb-node -p sb-cli
+        run: cargo test -p sb-core -p sb-auth -p sb-ca -p sb-db -p sb-node -p sb-cli
 
   console-build:
     name: Web Console (Vite/TypeScript)
@@ -37,4 +37,5 @@ jobs:
           cache: "npm"
           cache-dependency-path: console/package-lock.json
       - run: npm --prefix console ci
+      - run: npm --prefix console test
       - run: npm --prefix console run build

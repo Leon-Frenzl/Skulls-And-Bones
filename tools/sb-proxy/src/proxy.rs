@@ -730,7 +730,12 @@ pub async fn run_dual_proxy_server_with_acme(
         if let Err(e) =
             crate::ipc::run_ipc_server("127.0.0.1:58900", tele_for_ipc, routes_for_ipc).await
         {
-            sb_core::logfmt::error("ERR_PROXY_IPC", "proxy.ipc", "IPC server failed", &[("error", &e.to_string())]);
+            sb_core::logfmt::error(
+                "ERR_PROXY_IPC",
+                "proxy.ipc",
+                "IPC server failed",
+                &[("error", &e.to_string())],
+            );
         }
     });
 
@@ -740,7 +745,12 @@ pub async fn run_dual_proxy_server_with_acme(
         // Direct WAN access to port 58910 is intentionally blocked.
         let bind_addr = "127.0.0.1:58910";
         if let Err(e) = tunnel_hub.run_server(bind_addr).await {
-            sb_core::logfmt::error("ERR_PROXY_TUNNEL", "proxy.tunnel", "Tunnel hub failed", &[("error", &e.to_string())]);
+            sb_core::logfmt::error(
+                "ERR_PROXY_TUNNEL",
+                "proxy.tunnel",
+                "Tunnel hub failed",
+                &[("error", &e.to_string())],
+            );
         }
     });
 
@@ -753,11 +763,21 @@ pub async fn run_dual_proxy_server_with_acme(
                     tokio::spawn(async move {
                         if let Err(e) = handle_http_redirect_connection(stream, addr, store).await {
                             let ip = addr.ip().to_string();
-                            sb_core::logfmt::warn("ERR_HTTP_REDIRECT", "proxy.http", "HTTP redirect failed", &[("client_ip", &ip), ("error", &e.to_string())]);
+                            sb_core::logfmt::warn(
+                                "ERR_HTTP_REDIRECT",
+                                "proxy.http",
+                                "HTTP redirect failed",
+                                &[("client_ip", &ip), ("error", &e.to_string())],
+                            );
                         }
                     });
                 }
-                Err(e) => sb_core::logfmt::error("ERR_HTTP_LISTENER", "proxy.http", "HTTP listener accept failed", &[("error", &e.to_string())]),
+                Err(e) => sb_core::logfmt::error(
+                    "ERR_HTTP_LISTENER",
+                    "proxy.http",
+                    "HTTP listener accept failed",
+                    &[("error", &e.to_string())],
+                ),
             }
         }
     });
@@ -860,24 +880,50 @@ pub async fn run_dual_proxy_server_with_acme(
                                                 .await
                                                 {
                                                     let ip = addr.ip().to_string();
-                                                    sb_core::logfmt::warn("ERR_HTTPS_CONN", "proxy.tls", "HTTPS connection failed", &[("client_ip", &ip), ("error", &error.to_string())]);
+                                                    sb_core::logfmt::warn(
+                                                        "ERR_HTTPS_CONN",
+                                                        "proxy.tls",
+                                                        "HTTPS connection failed",
+                                                        &[
+                                                            ("client_ip", &ip),
+                                                            ("error", &error.to_string()),
+                                                        ],
+                                                    );
                                                 }
                                             }
                                             Err(error) => {
                                                 let ip = addr.ip().to_string();
-                                                sb_core::logfmt::warn("ERR_TLS_HANDSHAKE", "proxy.tls", "TLS handshake failed", &[("client_ip", &ip), ("error", &error.to_string())]);
+                                                sb_core::logfmt::warn(
+                                                    "ERR_TLS_HANDSHAKE",
+                                                    "proxy.tls",
+                                                    "TLS handshake failed",
+                                                    &[
+                                                        ("client_ip", &ip),
+                                                        ("error", &error.to_string()),
+                                                    ],
+                                                );
                                             }
                                         }
                                     }
                                 }
                                 Err(error) => {
                                     let ip = addr.ip().to_string();
-                                    sb_core::logfmt::warn("ERR_TLS_ACCEPTOR", "proxy.tls", "TLS acceptor failed", &[("client_ip", &ip), ("error", &error.to_string())]);
+                                    sb_core::logfmt::warn(
+                                        "ERR_TLS_ACCEPTOR",
+                                        "proxy.tls",
+                                        "TLS acceptor failed",
+                                        &[("client_ip", &ip), ("error", &error.to_string())],
+                                    );
                                 }
                             }
                         });
                     }
-                    Err(error) => sb_core::logfmt::error("ERR_GATEWAY_LISTENER", "proxy.gateway", "Gateway listener accept failed", &[("error", &error.to_string())]),
+                    Err(error) => sb_core::logfmt::error(
+                        "ERR_GATEWAY_LISTENER",
+                        "proxy.gateway",
+                        "Gateway listener accept failed",
+                        &[("error", &error.to_string())],
+                    ),
                 }
             }
         } else if has_any_tls_config {
@@ -910,17 +956,32 @@ pub async fn run_dual_proxy_server_with_acme(
                                     .await
                                     {
                                         let ip = addr.ip().to_string();
-                                        sb_core::logfmt::warn("ERR_HTTPS_CONN", "proxy.tls", "HTTPS connection failed", &[("client_ip", &ip), ("error", &error.to_string())]);
+                                        sb_core::logfmt::warn(
+                                            "ERR_HTTPS_CONN",
+                                            "proxy.tls",
+                                            "HTTPS connection failed",
+                                            &[("client_ip", &ip), ("error", &error.to_string())],
+                                        );
                                     }
                                 }
                                 Err(error) => {
                                     let ip = addr.ip().to_string();
-                                    sb_core::logfmt::warn("ERR_TLS_HANDSHAKE", "proxy.tls", "TLS handshake failed", &[("client_ip", &ip), ("error", &error.to_string())]);
+                                    sb_core::logfmt::warn(
+                                        "ERR_TLS_HANDSHAKE",
+                                        "proxy.tls",
+                                        "TLS handshake failed",
+                                        &[("client_ip", &ip), ("error", &error.to_string())],
+                                    );
                                 }
                             }
                         });
                     }
-                    Err(error) => sb_core::logfmt::error("ERR_GATEWAY_LISTENER", "proxy.gateway", "Gateway listener accept failed", &[("error", &error.to_string())]),
+                    Err(error) => sb_core::logfmt::error(
+                        "ERR_GATEWAY_LISTENER",
+                        "proxy.gateway",
+                        "Gateway listener accept failed",
+                        &[("error", &error.to_string())],
+                    ),
                 }
             }
         } else {
@@ -939,11 +1000,21 @@ pub async fn run_dual_proxy_server_with_acme(
                             .await
                             {
                                 let ip = addr.ip().to_string();
-                                sb_core::logfmt::warn("ERR_HTTP_CONN", "proxy.http", "HTTP connection failed", &[("client_ip", &ip), ("error", &error.to_string())]);
+                                sb_core::logfmt::warn(
+                                    "ERR_HTTP_CONN",
+                                    "proxy.http",
+                                    "HTTP connection failed",
+                                    &[("client_ip", &ip), ("error", &error.to_string())],
+                                );
                             }
                         });
                     }
-                    Err(error) => sb_core::logfmt::error("ERR_GATEWAY_LISTENER", "proxy.gateway", "Gateway listener accept failed", &[("error", &error.to_string())]),
+                    Err(error) => sb_core::logfmt::error(
+                        "ERR_GATEWAY_LISTENER",
+                        "proxy.gateway",
+                        "Gateway listener accept failed",
+                        &[("error", &error.to_string())],
+                    ),
                 }
             }
         }
@@ -1057,7 +1128,13 @@ async fn handle_http_redirect_connection(
                 "HTTP_ACCESS",
                 "proxy.acme",
                 "Served ACME HTTP-01 challenge",
-                &[("client_ip", &ip), ("method", method), ("path", "/.well-known/acme-challenge"), ("status", "200"), ("latency_ms", &lat)],
+                &[
+                    ("client_ip", &ip),
+                    ("method", method),
+                    ("path", "/.well-known/acme-challenge"),
+                    ("status", "200"),
+                    ("latency_ms", &lat),
+                ],
             );
             return Ok(());
         }
@@ -1107,7 +1184,14 @@ async fn handle_http_redirect_connection(
         "HTTP_ACCESS",
         "proxy.http",
         "Redirected HTTP request to HTTPS",
-        &[("client_ip", &ip), ("method", method), ("host", &host), ("path", path), ("status", "301"), ("latency_ms", &lat)],
+        &[
+            ("client_ip", &ip),
+            ("method", method),
+            ("host", &host),
+            ("path", path),
+            ("status", "301"),
+            ("latency_ms", &lat),
+        ],
     );
     Ok(())
 }
@@ -1525,7 +1609,12 @@ fn load_auth_verifier() -> Option<Arc<sb_auth::AuthVerifier>> {
     let store = match sb_auth::FileRevocationStore::open(&revocation_path) {
         Ok(store) => Arc::new(store),
         Err(error) => {
-            sb_core::logfmt::warn("ERR_AUTH_REVOCATION_STORE", "proxy.auth", "Failed to open sb-auth RevocationStore", &[("error", &error.to_string())]);
+            sb_core::logfmt::warn(
+                "ERR_AUTH_REVOCATION_STORE",
+                "proxy.auth",
+                "Failed to open sb-auth RevocationStore",
+                &[("error", &error.to_string())],
+            );
             return None;
         }
     };
@@ -1533,7 +1622,12 @@ fn load_auth_verifier() -> Option<Arc<sb_auth::AuthVerifier>> {
     match sb_auth::AuthVerifier::from_public_base64(pub_key, store) {
         Ok(verifier) => Some(Arc::new(verifier)),
         Err(error) => {
-            sb_core::logfmt::warn("ERR_AUTH_PUBLIC_KEY", "proxy.auth", "Invalid sb-auth public key", &[("error", &error.to_string())]);
+            sb_core::logfmt::warn(
+                "ERR_AUTH_PUBLIC_KEY",
+                "proxy.auth",
+                "Invalid sb-auth public key",
+                &[("error", &error.to_string())],
+            );
             None
         }
     }

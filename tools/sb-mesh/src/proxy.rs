@@ -631,7 +631,12 @@ impl MeshPortShareServer {
                     };
                 } else {
                     let t = target.to_string();
-                    sb_core::logfmt::warn("ERR_MESH_PROXY_TARGET", "mesh.proxy", "Failed to reach local service", &[("target", &t)]);
+                    sb_core::logfmt::warn(
+                        "ERR_MESH_PROXY_TARGET",
+                        "mesh.proxy",
+                        "Failed to reach local service",
+                        &[("target", &t)],
+                    );
                 }
 
                 conns.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);

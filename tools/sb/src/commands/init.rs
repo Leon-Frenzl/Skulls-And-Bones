@@ -105,7 +105,12 @@ stages = [
         );
 
         if let Err(e) = fs::write(&forge_file, forge_content) {
-            sb_core::logfmt::error("ERR_SB_INIT_FORGE", "sb.init", "Failed to write Forge.toml", &[("error", &e.to_string())]);
+            sb_core::logfmt::error(
+                "ERR_SB_INIT_FORGE",
+                "sb.init",
+                "Failed to write Forge.toml",
+                &[("error", &e.to_string())],
+            );
         } else {
             println!(
                 "  {} Forge.toml für {} erfolgreich erstellt.",

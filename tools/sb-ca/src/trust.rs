@@ -26,9 +26,9 @@ pub fn install_root_ca() -> Result<String, CaError> {
         });
     }
 
-    let crt_str = crt_path.to_str().ok_or_else(|| {
-        CaError::TrustStore("Non-UTF-8 path for Root CA certificate".into())
-    })?;
+    let crt_str = crt_path
+        .to_str()
+        .ok_or_else(|| CaError::TrustStore("Non-UTF-8 path for Root CA certificate".into()))?;
 
     #[cfg(target_os = "windows")]
     {
@@ -74,15 +74,16 @@ pub fn install_root_ca() -> Result<String, CaError> {
             ))
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(CaError::TrustStore(format!("security add-trusted-cert failed: {}", stderr)))
+            Err(CaError::TrustStore(format!(
+                "security add-trusted-cert failed: {}",
+                stderr
+            )))
         }
     }
 
     #[cfg(target_os = "linux")]
     {
-        let output = Command::new("trust")
-            .args(["anchor", crt_str])
-            .output();
+        let output = Command::new("trust").args(["anchor", crt_str]).output();
 
         if let Ok(o) = output {
             if o.status.success() {
@@ -93,7 +94,8 @@ pub fn install_root_ca() -> Result<String, CaError> {
             }
         }
 
-        let deb_target = std::path::Path::new("/usr/local/share/ca-certificates/skulls-and-bones-root-ca.crt");
+        let deb_target =
+            std::path::Path::new("/usr/local/share/ca-certificates/skulls-and-bones-root-ca.crt");
         if let Some(parent) = deb_target.parent() {
             if parent.exists() && std::fs::copy(&crt_path, deb_target).is_ok() {
                 if let Ok(upd) = Command::new("update-ca-certificates").output() {
@@ -132,7 +134,10 @@ pub fn uninstall_root_ca() -> Result<String, CaError> {
             .output()?;
 
         if output.status.success() {
-            Ok("Successfully removed Root CA from Windows Certificate Store (CurrentUser\\Root).".into())
+            Ok(
+                "Successfully removed Root CA from Windows Certificate Store (CurrentUser\\Root)."
+                    .into(),
+            )
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -153,7 +158,10 @@ pub fn uninstall_root_ca() -> Result<String, CaError> {
             Ok("Successfully removed Root CA from macOS Keychain.".into())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(CaError::TrustStore(format!("security delete-certificate failed: {}", stderr)))
+            Err(CaError::TrustStore(format!(
+                "security delete-certificate failed: {}",
+                stderr
+            )))
         }
     }
 
@@ -165,7 +173,8 @@ pub fn uninstall_root_ca() -> Result<String, CaError> {
                 .args(["anchor", "--remove", crt_str])
                 .output();
         }
-        let deb_target = std::path::Path::new("/usr/local/share/ca-certificates/skulls-and-bones-root-ca.crt");
+        let deb_target =
+            std::path::Path::new("/usr/local/share/ca-certificates/skulls-and-bones-root-ca.crt");
         if deb_target.exists() {
             let _ = std::fs::remove_file(deb_target);
             let _ = Command::new("update-ca-certificates").output();
@@ -207,7 +216,8 @@ pub fn is_root_ca_installed() -> bool {
 
     #[cfg(target_os = "linux")]
     {
-        let deb_target = std::path::Path::new("/usr/local/share/ca-certificates/skulls-and-bones-root-ca.crt");
+        let deb_target =
+            std::path::Path::new("/usr/local/share/ca-certificates/skulls-and-bones-root-ca.crt");
         if deb_target.exists() {
             return true;
         }

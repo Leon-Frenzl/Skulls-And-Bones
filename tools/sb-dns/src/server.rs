@@ -133,7 +133,12 @@ async fn process_packet(resolver: &DnsResolver, packet: &[u8]) -> Result<Vec<u8>
                 .map_err(|error| format!("DNS response encoding failed: {error}")),
             Ok(Err(error)) => {
                 let e = error.to_string();
-                sb_core::logfmt::warn("ERR_DNS_RESOLVE", "dns.server", "DNS resolver failed", &[("error", &e)]);
+                sb_core::logfmt::warn(
+                    "ERR_DNS_RESOLVE",
+                    "dns.server",
+                    "DNS resolver failed",
+                    &[("error", &e)],
+                );
                 error_response(query.id, ResponseCode::ServFail)
             }
             Err(_) => error_response(query.id, ResponseCode::ServFail),
@@ -141,7 +146,12 @@ async fn process_packet(resolver: &DnsResolver, packet: &[u8]) -> Result<Vec<u8>
         Err(error) => {
             if packet.len() >= 2 {
                 let e = error.to_string();
-                sb_core::logfmt::warn("ERR_DNS_MALFORMED", "dns.server", "Malformed DNS query", &[("error", &e)]);
+                sb_core::logfmt::warn(
+                    "ERR_DNS_MALFORMED",
+                    "dns.server",
+                    "Malformed DNS query",
+                    &[("error", &e)],
+                );
                 error_response(
                     u16::from_be_bytes([packet[0], packet[1]]),
                     ResponseCode::FormErr,

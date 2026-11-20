@@ -149,7 +149,9 @@ impl DevCertIndex {
     pub fn upsert(&mut self, meta: DevCertMetadata) -> Result<(), CaError> {
         let _guard = INDEX_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
         let mut disk_index = Self::load_internal();
-        disk_index.certs.retain(|c| c.primary_domain != meta.primary_domain);
+        disk_index
+            .certs
+            .retain(|c| c.primary_domain != meta.primary_domain);
         disk_index.certs.push(meta);
         disk_index.save_internal()?;
         self.certs = disk_index.certs;
@@ -159,9 +161,9 @@ impl DevCertIndex {
     /// Finds metadata for a domain if previously issued and index entry exists.
     pub fn find(&self, domain: &str) -> Option<&DevCertMetadata> {
         let needle = domain.trim().to_ascii_lowercase();
-        self.certs.iter().find(|c| {
-            c.primary_domain == needle || c.alt_names.iter().any(|a| a == &needle)
-        })
+        self.certs
+            .iter()
+            .find(|c| c.primary_domain == needle || c.alt_names.iter().any(|a| a == &needle))
     }
 }
 
@@ -183,12 +185,17 @@ mod tests {
         };
 
         let debug_repr = format!("{:?}", pair);
-        assert!(!debug_repr.contains("MIGH"), "Debug output must not leak key_pem");
-        assert!(debug_repr.contains("[REDACTED"), "Debug output must mark redacted keys");
+        assert!(
+            !debug_repr.contains("MIGH"),
+            "Debug output must not leak key_pem"
+        );
+        assert!(
+            debug_repr.contains("[REDACTED"),
+            "Debug output must mark redacted keys"
+        );
 
         pair.zeroize();
         assert!(pair.key_pem.is_empty() || pair.key_pem.chars().all(|c| c == '\0'));
         assert!(pair.key_der.is_empty() || pair.key_der.iter().all(|&b| b == 0));
     }
 }
-

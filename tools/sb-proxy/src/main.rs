@@ -280,7 +280,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match cli.command {
         None | Some(Commands::Tui) => {
             if let Err(e) = run_tui() {
-                sb_core::logfmt::error("ERR_PROXY_TUI", "proxy.cli", "Proxy TUI failed", &[("error", &e.to_string())]);
+                sb_core::logfmt::error(
+                    "ERR_PROXY_TUI",
+                    "proxy.cli",
+                    "Proxy TUI failed",
+                    &[("error", &e.to_string())],
+                );
             }
         }
         Some(Commands::List) => {
@@ -417,7 +422,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         ) {
                             Ok(updated) => space = updated,
                             Err(e) => {
-                                sb_core::logfmt::error("ERR_PROXY_PROTECT", "proxy.cli", "Failed to enable auth protection", &[("error", &e.to_string())]);
+                                sb_core::logfmt::error(
+                                    "ERR_PROXY_PROTECT",
+                                    "proxy.cli",
+                                    "Failed to enable auth protection",
+                                    &[("error", &e.to_string())],
+                                );
                                 std::process::exit(1);
                             }
                         }
@@ -456,7 +466,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     println!("  Ziel:  <DEINE_SERVER_IP>\n");
                 }
                 Err(err) => {
-                    sb_core::logfmt::error("ERR_PROXY_ADD", "proxy.cli", "Failed to add escape space", &[("error", &err.to_string())]);
+                    sb_core::logfmt::error(
+                        "ERR_PROXY_ADD",
+                        "proxy.cli",
+                        "Failed to add escape space",
+                        &[("error", &err.to_string())],
+                    );
                     std::process::exit(1);
                 }
             }
@@ -485,7 +500,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
             }
             Err(e) => {
-                sb_core::logfmt::error("ERR_PROXY_PROTECT", "proxy.cli", "Failed to protect route", &[("error", &e.to_string())]);
+                sb_core::logfmt::error(
+                    "ERR_PROXY_PROTECT",
+                    "proxy.cli",
+                    "Failed to protect route",
+                    &[("error", &e.to_string())],
+                );
                 std::process::exit(1);
             }
         },
@@ -505,7 +525,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     println!("  Node: {}", space.node_callsign);
                 }
                 Err(error) => {
-                    sb_core::logfmt::error("ERR_PROXY_STATIC", "proxy.cli", "Failed to add static route", &[("error", &error.to_string())]);
+                    sb_core::logfmt::error(
+                        "ERR_PROXY_STATIC",
+                        "proxy.cli",
+                        "Failed to add static route",
+                        &[("error", &error.to_string())],
+                    );
                     std::process::exit(1);
                 }
             }
@@ -536,7 +561,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 );
             }
             Err(err) => {
-                sb_core::logfmt::error("ERR_PROXY_PREVIEW", "proxy.cli", "Failed to add preview space", &[("error", &err.to_string())]);
+                sb_core::logfmt::error(
+                    "ERR_PROXY_PREVIEW",
+                    "proxy.cli",
+                    "Failed to add preview space",
+                    &[("error", &err.to_string())],
+                );
                 std::process::exit(1);
             }
         },
@@ -567,7 +597,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     println!();
                 }
                 Err(err) => {
-                    sb_core::logfmt::error("ERR_PROXY_UNPROTECT", "proxy.cli", "Failed to remove auth protection", &[("error", &err.to_string())]);
+                    sb_core::logfmt::error(
+                        "ERR_PROXY_UNPROTECT",
+                        "proxy.cli",
+                        "Failed to remove auth protection",
+                        &[("error", &err.to_string())],
+                    );
                     std::process::exit(1);
                 }
             }
@@ -582,7 +617,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 );
             }
             Err(err) => {
-                sb_core::logfmt::error("ERR_PROXY_ALIAS", "proxy.cli", "Failed to add domain alias", &[("error", &err.to_string())]);
+                sb_core::logfmt::error(
+                    "ERR_PROXY_ALIAS",
+                    "proxy.cli",
+                    "Failed to add domain alias",
+                    &[("error", &err.to_string())],
+                );
                 std::process::exit(1);
             }
         },
@@ -595,7 +635,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 );
             }
             Err(err) => {
-                sb_core::logfmt::error("ERR_PROXY_REMOVE", "proxy.cli", "Failed to remove route", &[("error", &err.to_string())]);
+                sb_core::logfmt::error(
+                    "ERR_PROXY_REMOVE",
+                    "proxy.cli",
+                    "Failed to remove route",
+                    &[("error", &err.to_string())],
+                );
                 std::process::exit(1);
             }
         },
@@ -608,7 +653,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 );
             }
             Err(err) => {
-                sb_core::logfmt::error("ERR_PROXY_PAUSE", "proxy.cli", "Failed to pause route", &[("error", &err.to_string())]);
+                sb_core::logfmt::error(
+                    "ERR_PROXY_PAUSE",
+                    "proxy.cli",
+                    "Failed to pause route",
+                    &[("error", &err.to_string())],
+                );
                 std::process::exit(1);
             }
         },
@@ -621,7 +671,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 );
             }
             Err(err) => {
-                sb_core::logfmt::error("ERR_PROXY_RESUME", "proxy.cli", "Failed to resume route", &[("error", &err.to_string())]);
+                sb_core::logfmt::error(
+                    "ERR_PROXY_RESUME",
+                    "proxy.cli",
+                    "Failed to resume route",
+                    &[("error", &err.to_string())],
+                );
                 std::process::exit(1);
             }
         },
@@ -638,7 +693,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         );
                     }
                     Err(error) => {
-                        sb_core::logfmt::error("ERR_PROXY_TUNNEL_ROUTE", "proxy.cli", "Failed to add tunnel route", &[("error", &error.to_string())]);
+                        sb_core::logfmt::error(
+                            "ERR_PROXY_TUNNEL_ROUTE",
+                            "proxy.cli",
+                            "Failed to add tunnel route",
+                            &[("error", &error.to_string())],
+                        );
                         std::process::exit(1);
                     }
                 }
@@ -685,7 +745,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 );
             }
             Err(err) => {
-                sb_core::logfmt::error("ERR_PROXY_SWITCH", "proxy.cli", "Failed to switch port", &[("error", &err.to_string())]);
+                sb_core::logfmt::error(
+                    "ERR_PROXY_SWITCH",
+                    "proxy.cli",
+                    "Failed to switch port",
+                    &[("error", &err.to_string())],
+                );
                 std::process::exit(1);
             }
         },
@@ -773,7 +838,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         println!("  Schlüssel:  {}\n", key.cyan());
                     }
                     Err(err) => {
-                        sb_core::logfmt::error("ERR_PROXY_CERT_IMPORT", "proxy.cert", "Failed to import certificate", &[("error", &err.to_string())]);
+                        sb_core::logfmt::error(
+                            "ERR_PROXY_CERT_IMPORT",
+                            "proxy.cert",
+                            "Failed to import certificate",
+                            &[("error", &err.to_string())],
+                        );
                         std::process::exit(1);
                     }
                 }
@@ -806,7 +876,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         println!("{}", "👉 Führe nun 'sb ca install' (oder 'sb proxy ca install') aus, um das Zertifikat im OS zu aktivieren.".yellow());
                     }
                     Err(err) => {
-                        sb_core::logfmt::error("ERR_PROXY_CA_INIT", "proxy.ca", "Failed to initialize developer CA", &[("error", &err.to_string())]);
+                        sb_core::logfmt::error(
+                            "ERR_PROXY_CA_INIT",
+                            "proxy.ca",
+                            "Failed to initialize developer CA",
+                            &[("error", &err.to_string())],
+                        );
                         std::process::exit(1);
                     }
                 },
@@ -817,7 +892,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         println!("  ein vertrauenswürdiges grünes Schloss im Browser ohne Warnhinweise!\n");
                     }
                     Err(err) => {
-                        sb_core::logfmt::error("ERR_PROXY_CA_INSTALL", "proxy.ca", "Failed to install root CA", &[("error", &err.to_string())]);
+                        sb_core::logfmt::error(
+                            "ERR_PROXY_CA_INSTALL",
+                            "proxy.ca",
+                            "Failed to install root CA",
+                            &[("error", &err.to_string())],
+                        );
                         std::process::exit(1);
                     }
                 },
@@ -826,7 +906,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         println!("\n{} {}\n", "✅".green().bold(), msg.green());
                     }
                     Err(err) => {
-                        sb_core::logfmt::error("ERR_PROXY_CA_UNINSTALL", "proxy.ca", "Failed to uninstall root CA", &[("error", &err.to_string())]);
+                        sb_core::logfmt::error(
+                            "ERR_PROXY_CA_UNINSTALL",
+                            "proxy.ca",
+                            "Failed to uninstall root CA",
+                            &[("error", &err.to_string())],
+                        );
                         std::process::exit(1);
                     }
                 },
@@ -851,7 +936,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             println!("  Schlüssel:   {}\n", meta.key_path.cyan());
                         }
                         Err(err) => {
-                            sb_core::logfmt::error("ERR_PROXY_CA_ISSUE", "proxy.ca", "Failed to issue certificate", &[("error", &err.to_string())]);
+                            sb_core::logfmt::error(
+                                "ERR_PROXY_CA_ISSUE",
+                                "proxy.ca",
+                                "Failed to issue certificate",
+                                &[("error", &err.to_string())],
+                            );
                             std::process::exit(1);
                         }
                     }
@@ -959,7 +1049,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 console_dist_dir: Some(console_dir),
             };
             if let Err(err) = sb_proxy::graph_api::serve_graph_gateway(cfg, verifier).await {
-                sb_core::logfmt::error("ERR_GRAPH_GATEWAY", "proxy.graph", "Graph gateway exited with error", &[("error", &err.to_string())]);
+                sb_core::logfmt::error(
+                    "ERR_GRAPH_GATEWAY",
+                    "proxy.graph",
+                    "Graph gateway exited with error",
+                    &[("error", &err.to_string())],
+                );
                 std::process::exit(1);
             }
         }

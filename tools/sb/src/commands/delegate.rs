@@ -190,7 +190,12 @@ pub fn delegate_to(tool_id: &str, binary: &str, args: &[String]) {
                 return;
             }
             Err(e) => {
-                sb_core::logfmt::error("ERR_DELEGATE_START", "sb.delegate", "Failed to start background service", &[("tool", tool_id), ("error", &e.to_string())]);
+                sb_core::logfmt::error(
+                    "ERR_DELEGATE_START",
+                    "sb.delegate",
+                    "Failed to start background service",
+                    &[("tool", tool_id), ("error", &e.to_string())],
+                );
                 std::process::exit(1);
             }
         }
@@ -253,9 +258,19 @@ pub fn delegate_to(tool_id: &str, binary: &str, args: &[String]) {
         Some(p) => p,
         None => {
             if binary == "sb-ssh" {
-                sb_core::logfmt::error("ERR_SSH_CLIENT_MISSING", "sb.delegate", "No SSH client found in PATH", &[("binary", binary)]);
+                sb_core::logfmt::error(
+                    "ERR_SSH_CLIENT_MISSING",
+                    "sb.delegate",
+                    "No SSH client found in PATH",
+                    &[("binary", binary)],
+                );
             } else {
-                sb_core::logfmt::error("ERR_TOOL_NOT_INSTALLED", "sb.delegate", "Tool is not installed", &[("binary", binary), ("tool", tool_id)]);
+                sb_core::logfmt::error(
+                    "ERR_TOOL_NOT_INSTALLED",
+                    "sb.delegate",
+                    "Tool is not installed",
+                    &[("binary", binary), ("tool", tool_id)],
+                );
             }
             std::process::exit(1);
         }
@@ -270,7 +285,12 @@ pub fn delegate_to(tool_id: &str, binary: &str, args: &[String]) {
             std::process::exit(s.code().unwrap_or(0));
         }
         Err(e) => {
-            sb_core::logfmt::error("ERR_DELEGATE_EXEC", "sb.delegate", "Failed to execute delegated tool", &[("binary", binary), ("error", &e.to_string())]);
+            sb_core::logfmt::error(
+                "ERR_DELEGATE_EXEC",
+                "sb.delegate",
+                "Failed to execute delegated tool",
+                &[("binary", binary), ("error", &e.to_string())],
+            );
             std::process::exit(1);
         }
     }

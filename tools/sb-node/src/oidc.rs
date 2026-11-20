@@ -53,8 +53,30 @@ impl LoginCodeStore {
             .map_err(|e| format!("Failed to serialize login codes: {e}"))?;
         let tmp = path.with_extension("json.tmp");
         fs::write(&tmp, json).map_err(|e| format!("Failed to write temp login codes: {e}"))?;
+        let _ = sb_core::paths::ensure_private_permissions(&tmp);
         fs::rename(&tmp, path).map_err(|e| format!("Failed to commit login codes: {e}"))?;
         Ok(())
+    }
+
+    /// Loads pending login codes from encrypted `SovereignDb` (`namespace = "oidc"`).
+    pub fn load_from_db(
+        db: &sb_db::SovereignDb,
+        ticket: &sb_db::VerifiedDbTicket,
+    ) -> Result<Self, String> {
+        db.get_encrypted_json::<Self>(ticket, "oidc", "login_codes")
+            .map(|opt| opt.unwrap_or_default())
+            .map_err(|e| e.to_string())
+    }
+
+    /// Persists pending login codes into encrypted `SovereignDb` (`namespace = "oidc"`).
+    pub fn save_to_db(
+        &self,
+        db: &sb_db::SovereignDb,
+        ticket: &sb_db::VerifiedDbTicket,
+    ) -> Result<(), String> {
+        db.put_encrypted_json(ticket, "oidc", "login_codes", self)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 
     /// Generates a 128-bit single-use login code (`sbc_...`) valid for `ttl_seconds`.
@@ -224,13 +246,30 @@ impl CredentialStore {
             .map_err(|e| format!("Failed to serialize credentials: {e}"))?;
         let tmp = path.with_extension("json.tmp");
         fs::write(&tmp, json).map_err(|e| format!("Failed to write temp credentials: {e}"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
-        }
+        let _ = sb_core::paths::ensure_private_permissions(&tmp);
         fs::rename(&tmp, path).map_err(|e| format!("Failed to commit credentials: {e}"))?;
         Ok(())
+    }
+
+    /// Loads Argon2id credentials from encrypted `SovereignDb` (`namespace = "oidc"`).
+    pub fn load_from_db(
+        db: &sb_db::SovereignDb,
+        ticket: &sb_db::VerifiedDbTicket,
+    ) -> Result<Self, String> {
+        db.get_encrypted_json::<Self>(ticket, "oidc", "credentials")
+            .map(|opt| opt.unwrap_or_default())
+            .map_err(|e| e.to_string())
+    }
+
+    /// Persists Argon2id credentials into encrypted `SovereignDb` (`namespace = "oidc"`).
+    pub fn save_to_db(
+        &self,
+        db: &sb_db::SovereignDb,
+        ticket: &sb_db::VerifiedDbTicket,
+    ) -> Result<(), String> {
+        db.put_encrypted_json(ticket, "oidc", "credentials", self)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 
     /// Sets an Argon2id password hash for `username` (min 8 chars).
@@ -277,7 +316,10 @@ mod tests {
         let disc = discovery_document("https://dc.corp.sb/");
         assert_eq!(disc["issuer"], "https://dc.corp.sb");
         assert_eq!(disc["jwks_uri"], "https://dc.corp.sb/.well-known/jwks.json");
-        assert_eq!(disc["userinfo_endpoint"], "https://dc.corp.sb/oauth2/userinfo");
+        assert_eq!(
+            disc["userinfo_endpoint"],
+            "https://dc.corp.sb/oauth2/userinfo"
+        );
 
         let mut store = LoginCodeStore::default();
         let code = store.issue_code("anna.admin", vec!["domain:admin".into()], 300);
@@ -299,5 +341,39 @@ mod tests {
         creds.set_password("leon.admin", "StrongPass!2026").unwrap();
         assert!(creds.verify("leon.admin", "StrongPass!2026"));
         assert!(!creds.verify("leon.admin", "wrong"));
+    }
+
+    #[test]
+    fn login_code_and_credentials_persist_in_sovereign_db() {
+        let db = sb_db::SovereignDb::open_in_memory(sb_db::MasterKey::generate()).unwrap();
+        let ticket = sb_db::VerifiedDbTicket {
+            ticket_id: "tkt-oidc-1".into(),
+            subject: "dc-1".into(),
+            role: "Admin".into(),
+            capabilities: vec!["db:read".into(), "db:write".into()],
+            valid_until: (Utc::now().timestamp() + 3600) as u64,
+            single_use: false,
+        };
+
+        let mut codes = LoginCodeStore::default();
+        let code = codes.issue_code("anna.admin", vec!["domain:admin".into()], 300);
+        codes.save_to_db(&db, &ticket).unwrap();
+
+        let mut loaded_codes = LoginCodeStore::load_from_db(&db, &ticket).unwrap();
+        let (user, caps) = loaded_codes.consume_code(&code).unwrap();
+        assert_eq!(user, "anna.admin");
+        assert_eq!(caps, vec!["domain:admin"]);
+        loaded_codes.save_to_db(&db, &ticket).unwrap();
+
+        let reloaded = LoginCodeStore::load_from_db(&db, &ticket).unwrap();
+        assert!(reloaded.codes.is_empty());
+
+        let mut creds = CredentialStore::default();
+        creds.set_password("leon.admin", "StrongPass!2026").unwrap();
+        creds.save_to_db(&db, &ticket).unwrap();
+
+        let loaded_creds = CredentialStore::load_from_db(&db, &ticket).unwrap();
+        assert!(loaded_creds.verify("leon.admin", "StrongPass!2026"));
+        assert!(!loaded_creds.verify("leon.admin", "wrong"));
     }
 }

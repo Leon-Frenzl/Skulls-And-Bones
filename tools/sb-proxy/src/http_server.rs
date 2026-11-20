@@ -237,7 +237,8 @@ async fn route_request(
 
     let retry_after = state
         .rate_limiter
-        .check_and_consume(state.client_addr.ip(), space.rate_limit_rpm).err();
+        .check_and_consume(state.client_addr.ip(), space.rate_limit_rpm)
+        .err();
     if let Some(seconds) = retry_after {
         if let Ok(mut telemetry) = state.telemetry.write() {
             telemetry.increment_rate_limited();
@@ -313,13 +314,12 @@ async fn route_request(
 
     let hub = crate::tunnel::SovereignTunnelHub::global();
     let tunnel_route = space.is_tunnel || hub.is_tunnel_active(&space.domain).await;
-    if !tunnel_route
-        && validate_target_port(space.target_port).is_err() {
-            return plain_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Upstream port is not allowed.\n",
-            );
-        }
+    if !tunnel_route && validate_target_port(space.target_port).is_err() {
+        return plain_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Upstream port is not allowed.\n",
+        );
+    }
     let upstream = if tunnel_route {
         match hub
             .open_stream(&space.domain, std::time::Duration::from_secs(5))

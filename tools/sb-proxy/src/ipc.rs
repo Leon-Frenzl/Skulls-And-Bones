@@ -156,7 +156,12 @@ pub async fn run_ipc_server(
             }
             Err(e) => {
                 let err = e.to_string();
-                sb_core::logfmt::warn("ERR_PROXY_IPC_ACCEPT", "proxy.ipc", "IPC accept failed", &[("error", &err)]);
+                sb_core::logfmt::warn(
+                    "ERR_PROXY_IPC_ACCEPT",
+                    "proxy.ipc",
+                    "IPC accept failed",
+                    &[("error", &err)],
+                );
             }
         }
     }

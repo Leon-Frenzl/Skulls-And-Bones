@@ -108,7 +108,12 @@ pub fn run_bootstrap(opts: BootstrapOptions) -> Result<(), String> {
     state_paths.ensure()?;
     let legacy_paths = crate::state::MeshStatePaths::legacy_paths(&data_dir, &clean_name)?;
     if legacy_paths.iter().any(|path| path.exists()) {
-        sb_core::logfmt::warn("MESH_LEGACY_FILES", "mesh.bootstrap", "Legacy files found and ignored", &[("mesh", &clean_name)]);
+        sb_core::logfmt::warn(
+            "MESH_LEGACY_FILES",
+            "mesh.bootstrap",
+            "Legacy files found and ignored",
+            &[("mesh", &clean_name)],
+        );
     }
 
     println!(

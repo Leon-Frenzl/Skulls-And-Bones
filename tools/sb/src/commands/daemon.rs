@@ -411,7 +411,12 @@ pub async fn run_daemon(
                     Ok(permit) => permit,
                     Err(_) => {
                         let peer = remote_addr.to_string();
-                        sb_core::logfmt::warn("ERR_DAEMON_CONN_LIMIT", "sb.daemon", "Rejected daemon connection: limit reached", &[("peer", &peer)]);
+                        sb_core::logfmt::warn(
+                            "ERR_DAEMON_CONN_LIMIT",
+                            "sb.daemon",
+                            "Rejected daemon connection: limit reached",
+                            &[("peer", &peer)],
+                        );
                         continue;
                     }
                 };
@@ -428,17 +433,32 @@ pub async fn run_daemon(
                         Ok(Ok(())) => {}
                         Ok(Err(error)) => {
                             let peer = remote_addr.to_string();
-                            sb_core::logfmt::warn("ERR_DAEMON_CONN", "sb.daemon", "Daemon connection error", &[("peer", &peer), ("error", &error.to_string())]);
+                            sb_core::logfmt::warn(
+                                "ERR_DAEMON_CONN",
+                                "sb.daemon",
+                                "Daemon connection error",
+                                &[("peer", &peer), ("error", &error.to_string())],
+                            );
                         }
                         Err(_) => {
                             let peer = remote_addr.to_string();
-                            sb_core::logfmt::warn("ERR_DAEMON_TIMEOUT", "sb.daemon", "Daemon connection timed out", &[("peer", &peer)]);
+                            sb_core::logfmt::warn(
+                                "ERR_DAEMON_TIMEOUT",
+                                "sb.daemon",
+                                "Daemon connection timed out",
+                                &[("peer", &peer)],
+                            );
                         }
                     }
                 });
             }
             Err(e) => {
-                sb_core::logfmt::warn("ERR_DAEMON_ACCEPT", "sb.daemon", "Daemon accept error", &[("error", &e.to_string())]);
+                sb_core::logfmt::warn(
+                    "ERR_DAEMON_ACCEPT",
+                    "sb.daemon",
+                    "Daemon accept error",
+                    &[("error", &e.to_string())],
+                );
             }
         }
     }
@@ -1524,7 +1544,12 @@ fn persist_rekeyed_vaults(
 
     if let Err(error) = std::fs::remove_dir_all(&staging_root) {
         let p = staging_root.display().to_string();
-        sb_core::logfmt::warn("ERR_DAEMON_STAGING_CLEANUP", "sb.daemon", "Failed to remove staging directory after rekey", &[("path", &p), ("error", &error.to_string())]);
+        sb_core::logfmt::warn(
+            "ERR_DAEMON_STAGING_CLEANUP",
+            "sb.daemon",
+            "Failed to remove staging directory after rekey",
+            &[("path", &p), ("error", &error.to_string())],
+        );
     }
     Ok(())
 }

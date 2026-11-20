@@ -7,12 +7,11 @@
 
 use crate::error::CaError;
 use crate::paths::{
-    write_private_key_file, x509_certs_dir, x509_index_path, x509_root_crt_path,
-    x509_root_key_path,
+    write_private_key_file, x509_certs_dir, x509_index_path, x509_root_crt_path, x509_root_key_path,
 };
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair,
-    KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, KeyUsagePurpose,
+    PKCS_ECDSA_P256_SHA256,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;

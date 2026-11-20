@@ -42,7 +42,9 @@ pub const CLOCK_DRIFT_MARGIN_SECONDS: u64 = 60;
 fn validate_principal(principal: &str) -> Result<&str, CaError> {
     let trimmed = principal.trim();
     if trimmed.is_empty() {
-        return Err(CaError::InvalidPrincipal("Principal cannot be empty".into()));
+        return Err(CaError::InvalidPrincipal(
+            "Principal cannot be empty".into(),
+        ));
     }
     if trimmed.len() > 64 {
         return Err(CaError::InvalidPrincipal(format!(

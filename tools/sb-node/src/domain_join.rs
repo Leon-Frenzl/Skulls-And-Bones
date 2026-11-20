@@ -70,7 +70,9 @@ pub fn renew_machine_certificate(
             "Machine '{machine_id}' is revoked and cannot renew certificates"
         ));
     }
-    let days = validity_days.unwrap_or(DEFAULT_DEVICE_CERT_DAYS).clamp(1, 90);
+    let days = validity_days
+        .unwrap_or(DEFAULT_DEVICE_CERT_DAYS)
+        .clamp(1, 90);
     let leaf = X509Ca::issue_leaf_certificate(&[rec.fqdn.clone(), rec.hostname.clone()], days)
         .map_err(|e| format!("Certificate renewal failed: {e}"))?;
     Ok(RenewedCertificate {
@@ -261,8 +263,7 @@ pub fn open_domain_db(base_dir: Option<&Path>) -> Result<sb_db::SovereignDb, Str
     let dir = base_dir.map(PathBuf::from).unwrap_or_else(local_domain_dir);
     let key_path = dir.join("domain_db.key");
     let db_path = dir.join("domain.db");
-    let master_key =
-        sb_db::MasterKey::load_or_create_file(&key_path).map_err(|e| e.to_string())?;
+    let master_key = sb_db::MasterKey::load_or_create_file(&key_path).map_err(|e| e.to_string())?;
     sb_db::SovereignDb::open(&db_path, master_key).map_err(|e| e.to_string())
 }
 
@@ -351,11 +352,9 @@ pub fn process_join_request(
     };
 
     // 5. Issue X.509 device certificate + read Root CA from sb-ca
-    let leaf = X509Ca::issue_leaf_certificate(
-        &[fqdn.clone(), hostname.clone()],
-        DEFAULT_DEVICE_CERT_DAYS,
-    )
-        .map_err(|e| format!("X.509 device certificate issuance failed: {e}"))?;
+    let leaf =
+        X509Ca::issue_leaf_certificate(&[fqdn.clone(), hostname.clone()], DEFAULT_DEVICE_CERT_DAYS)
+            .map_err(|e| format!("X.509 device certificate issuance failed: {e}"))?;
     let root_ca_pem = fs::read_to_string(sb_ca::paths::x509_root_crt_path())
         .map_err(|e| format!("Failed to read X.509 Root CA certificate: {e}"))?;
 
@@ -648,7 +647,7 @@ async fn handle_join_http_connection(
             .map(PathBuf::from)
             .unwrap_or_else(local_domain_dir);
         let domain_name = query_param(query, "domain")
-            .and_then(|d| validate_domain_name(&d).ok())
+            .and_then(|d| validate_domain_name(d).ok())
             .unwrap_or_else(|| "corp.eu".to_string());
         let key_path = base_dir.join("policy_authority.key");
         let signing_key = if let Ok(raw) = fs::read_to_string(&key_path) {
@@ -711,7 +710,7 @@ async fn handle_join_http_connection(
             .await;
         }
         let domain_name = query_param(query, "domain")
-            .and_then(|d| validate_domain_name(&d).ok())
+            .and_then(|d| validate_domain_name(d).ok())
             .unwrap_or_else(|| "corp.eu".to_string());
         return match renew_machine_certificate(machine_id, &domain_name, registry_path, None) {
             Ok(renewed) => {
@@ -720,7 +719,11 @@ async fn handle_join_http_connection(
             }
             Err(e) => {
                 let status = if e.contains("revoked") { 403 } else { 404 };
-                let reason = if status == 403 { "Forbidden" } else { "Not Found" };
+                let reason = if status == 403 {
+                    "Forbidden"
+                } else {
+                    "Not Found"
+                };
                 let msg = serde_json::json!({ "error": e }).to_string();
                 write_http_json(stream, status, reason, &msg).await
             }
@@ -1409,12 +1412,10 @@ async fn handle_join_http_connection(
                     actions.push("laps_rotate".to_string());
                 }
             }
-            if let Ok(users_dir) =
-                crate::directory_users::IdentityDirectory::load_or_create(
-                    &base_dir.join("users.json"),
-                    "corp.eu",
-                )
-            {
+            if let Ok(users_dir) = crate::directory_users::IdentityDirectory::load_or_create(
+                &base_dir.join("users.json"),
+                "corp.eu",
+            ) {
                 for u in users_dir.users.values() {
                     if !crate::os_auth_broker::is_protected_system_account(&u.username)
                         && (!u.enabled
@@ -3360,9 +3361,8 @@ async fn handle_join_http_connection(
             let username = payload["username"].as_str().unwrap_or("").trim();
             let password = payload["password"].as_str().unwrap_or("");
             if let Some(retry_secs) = check_login_lockout(username).await {
-                let detail = format!(
-                    "Zu viele Fehlversuche. Bitte in {retry_secs}s erneut versuchen."
-                );
+                let detail =
+                    format!("Zu viele Fehlversuche. Bitte in {retry_secs}s erneut versuchen.");
                 return write_problem_json(
                     stream,
                     429,
@@ -3420,11 +3420,9 @@ async fn handle_join_http_connection(
                 .await;
             };
             let users_path = base_dir.join("users.json");
-            let dir = crate::directory_users::IdentityDirectory::load_or_create(
-                &users_path,
-                &reg.domain,
-            )
-            .unwrap_or_default();
+            let dir =
+                crate::directory_users::IdentityDirectory::load_or_create(&users_path, &reg.domain)
+                    .unwrap_or_default();
             return match dir.evaluate_machine_login(username, machine_id, &machine.fqdn) {
                 Ok((user, is_local_admin)) => {
                     let _ = crate::audit_log::append_audit_event(
@@ -5813,14 +5811,8 @@ mod tests {
             .unwrap();
         users.save(&users_path).unwrap();
 
-        let report = offboard_user(
-            "alice.admin",
-            "admin",
-            false,
-            Some(&temp),
-            Some(&reg_path),
-        )
-        .unwrap();
+        let report =
+            offboard_user("alice.admin", "admin", false, Some(&temp), Some(&reg_path)).unwrap();
         assert!(report.user_disabled);
         assert_eq!(report.revoked_machines.len(), 0);
 

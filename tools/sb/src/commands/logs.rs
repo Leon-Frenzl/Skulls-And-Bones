@@ -17,7 +17,12 @@ pub fn handle_logs_cmd(
         if let Err(e) =
             logs::stream_remote_logs_to_target(&target, service.as_deref(), lines, follow)
         {
-            sb_core::logfmt::warn("ERR_SB_REMOTE_LOGS", "sb.logs", "Remote logs fetch failed; falling back to local audit logs", &[("error", &e.to_string())]);
+            sb_core::logfmt::warn(
+                "ERR_SB_REMOTE_LOGS",
+                "sb.logs",
+                "Remote logs fetch failed; falling back to local audit logs",
+                &[("error", &e.to_string())],
+            );
             println!("  {} Fallback auf lokale Audit-Logs...", "ℹ".cyan());
             logs::stream_local_logs(lines);
         }

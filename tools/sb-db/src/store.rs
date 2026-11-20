@@ -1,8 +1,8 @@
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use sb_core::domain::MachineRecord;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use sb_core::domain::MachineRecord;
 use std::collections::HashSet;
 use std::fs;
 use std::net::Ipv4Addr;
@@ -12,8 +12,7 @@ use x25519_dalek::StaticSecret;
 use zeroize::Zeroizing;
 
 use crate::crypto::{
-    decrypt_at_rest, encrypt_at_rest, open_e2ee, seal_e2ee, E2eeEnvelope, EncryptedBlob,
-    MasterKey,
+    decrypt_at_rest, encrypt_at_rest, open_e2ee, seal_e2ee, E2eeEnvelope, EncryptedBlob, MasterKey,
 };
 use crate::error::{DbError, DbResult};
 use crate::ticket::{DbCapability, VerifiedDbTicket};
@@ -46,11 +45,7 @@ impl SovereignDb {
                 .map_err(|e| DbError::Storage(format!("Failed to create DB directory: {e}")))?;
         }
         let conn = Connection::open(db_path)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(db_path, fs::Permissions::from_mode(0o600));
-        }
+        let _ = sb_core::paths::ensure_private_permissions(db_path);
         Self::init_connection(conn, master_key)
     }
 
@@ -210,8 +205,9 @@ impl SovereignDb {
                     }
                 }
             }
-            record.mesh_ip = allocated
-                .ok_or_else(|| DbError::Exhausted("Domain IPv4 pool (10.42.0.0/16) exhausted".into()))?;
+            record.mesh_ip = allocated.ok_or_else(|| {
+                DbError::Exhausted("Domain IPv4 pool (10.42.0.0/16) exhausted".into())
+            })?;
         }
 
         let record_json = serde_json::to_vec(&record)
@@ -301,14 +297,12 @@ impl SovereignDb {
         let mut records = Vec::new();
         for row in rows {
             let (machine_id, blob_json) = row?;
-            let blob: EncryptedBlob = serde_json::from_str(&blob_json).map_err(|e| {
-                DbError::Serialization(format!("Corrupt EncryptedBlob JSON: {e}"))
-            })?;
+            let blob: EncryptedBlob = serde_json::from_str(&blob_json)
+                .map_err(|e| DbError::Serialization(format!("Corrupt EncryptedBlob JSON: {e}")))?;
             let aad = Self::machine_aad(domain, &machine_id);
             let pt = decrypt_at_rest(&self.master_key, &aad, &blob)?;
-            let rec: MachineRecord = serde_json::from_slice(&pt).map_err(|e| {
-                DbError::Serialization(format!("Corrupt MachineRecord JSON: {e}"))
-            })?;
+            let rec: MachineRecord = serde_json::from_slice(&pt)
+                .map_err(|e| DbError::Serialization(format!("Corrupt MachineRecord JSON: {e}")))?;
             records.push(rec);
         }
         Ok(records)
@@ -414,11 +408,13 @@ impl SovereignDb {
         let aad = Self::entry_aad(namespace, entry_id, next_version);
 
         let envelope = seal_e2ee(recipient_x25519_pub, &aad, plaintext)?;
-        let envelope_json = serde_json::to_vec(&envelope)
-            .map_err(|e| DbError::Serialization(format!("Failed to serialize E2eeEnvelope: {e}")))?;
+        let envelope_json = serde_json::to_vec(&envelope).map_err(|e| {
+            DbError::Serialization(format!("Failed to serialize E2eeEnvelope: {e}"))
+        })?;
         let at_rest = encrypt_at_rest(&self.master_key, &aad, &envelope_json)?;
-        let at_rest_json = serde_json::to_string(&at_rest)
-            .map_err(|e| DbError::Serialization(format!("Failed to serialize EncryptedBlob: {e}")))?;
+        let at_rest_json = serde_json::to_string(&at_rest).map_err(|e| {
+            DbError::Serialization(format!("Failed to serialize EncryptedBlob: {e}"))
+        })?;
 
         let now = Utc::now().to_rfc3339();
         tx.execute(
@@ -674,7 +670,10 @@ impl SovereignDb {
             .conn
             .lock()
             .map_err(|_| DbError::Storage("Database mutex poisoned".into()))?;
-        guard.execute("DELETE FROM auth_lockouts WHERE username = ?1", params![username])?;
+        guard.execute(
+            "DELETE FROM auth_lockouts WHERE username = ?1",
+            params![username],
+        )?;
         Ok(())
     }
 

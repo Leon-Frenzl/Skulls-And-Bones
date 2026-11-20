@@ -17,7 +17,11 @@ static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 fn setup_test_env(test_name: &str) -> (MutexGuard<'static, ()>, std::path::PathBuf) {
     let guard = TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
-    let tmp = std::env::temp_dir().join(format!("sb_ca_test_x509_{}_{}", test_name, std::process::id()));
+    let tmp = std::env::temp_dir().join(format!(
+        "sb_ca_test_x509_{}_{}",
+        test_name,
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&tmp);
     let _ = fs::create_dir_all(&tmp);
     std::env::set_var("SB_HOME", &tmp);
@@ -47,16 +51,25 @@ fn test_x509_root_ca_initialization() {
 
     // Conforms to RFC 5280:
     // Root CA must have BasicConstraints with ca=true
-    let bc = x509.basic_constraints().expect("bc").expect("BasicConstraints extension must exist");
+    let bc = x509
+        .basic_constraints()
+        .expect("bc")
+        .expect("BasicConstraints extension must exist");
     assert!(bc.value.ca, "Root CA must have CA=true");
 
     // Key Usage must have KeyCertSign and CrlSign
-    let ku = x509.key_usage().expect("ku").expect("KeyUsage extension must exist");
+    let ku = x509
+        .key_usage()
+        .expect("ku")
+        .expect("KeyUsage extension must exist");
     assert!(ku.value.key_cert_sign(), "Root CA must have KeyCertSign");
     assert!(ku.value.crl_sign(), "Root CA must have CrlSign");
 
     // Subject must match CA_COMMON_NAME
-    assert_eq!(x509.subject().to_string(), format!("CN={}, O={}, OU=Developer CA", CA_COMMON_NAME, CA_ORG));
+    assert_eq!(
+        x509.subject().to_string(),
+        format!("CN={}, O={}, OU=Developer CA", CA_COMMON_NAME, CA_ORG)
+    );
 }
 
 #[test]
@@ -73,8 +86,8 @@ fn test_x509_leaf_certificate_issuance_and_mtls_ekus() {
     ];
     let ttl_days = 90;
 
-    let pair = issue_leaf_certificate(&domains, ttl_days)
-        .expect("Leaf certificate issuance must succeed");
+    let pair =
+        issue_leaf_certificate(&domains, ttl_days).expect("Leaf certificate issuance must succeed");
 
     assert!(pair.cert_path.exists());
     assert!(pair.key_path.exists());
@@ -94,8 +107,8 @@ fn test_x509_leaf_certificate_issuance_and_mtls_ekus() {
     assert!(!pair.key_der.is_empty());
 
     // Parse the leaf certificate DER
-    let (_, x509) = parse_x509_certificate(&pair.cert_der)
-        .expect("Leaf certificate DER must parse validly");
+    let (_, x509) =
+        parse_x509_certificate(&pair.cert_der).expect("Leaf certificate DER must parse validly");
 
     // Conforms to RFC 5280:
     // Must NOT be a CA (basic constraints is either absent or ca=false)
@@ -104,7 +117,10 @@ fn test_x509_leaf_certificate_issuance_and_mtls_ekus() {
     }
 
     // Must have mTLS Extended Key Usages: ServerAuth AND ClientAuth (RFC 5280 §4.2.1.12)
-    let eku = x509.extended_key_usage().expect("eku").expect("ExtendedKeyUsage must exist");
+    let eku = x509
+        .extended_key_usage()
+        .expect("eku")
+        .expect("ExtendedKeyUsage must exist");
     assert!(
         eku.value.server_auth,
         "Leaf certificate must include ServerAuth EKU for TLS servers"
@@ -116,23 +132,40 @@ fn test_x509_leaf_certificate_issuance_and_mtls_ekus() {
 
     // Key Usages must contain DigitalSignature
     let ku = x509.key_usage().expect("ku").expect("KeyUsage must exist");
-    assert!(ku.value.digital_signature(), "Leaf cert must have DigitalSignature");
+    assert!(
+        ku.value.digital_signature(),
+        "Leaf cert must have DigitalSignature"
+    );
 
     // Subject Alternative Names must contain all requested domains
-    let san = x509.subject_alternative_name().expect("san").expect("SAN extension must exist");
+    let san = x509
+        .subject_alternative_name()
+        .expect("san")
+        .expect("SAN extension must exist");
 
     let has_ip_127_0_0_1 = san.value.general_names.iter().any(|n| match n {
         GeneralName::IPAddress(b) => *b == [127, 0, 0, 1],
         _ => false,
     });
-    assert!(has_ip_127_0_0_1, "SAN extension must include IPAddress 127.0.0.1");
+    assert!(
+        has_ip_127_0_0_1,
+        "SAN extension must include IPAddress 127.0.0.1"
+    );
 
-    let dns_names: Vec<&str> = san.value.general_names.iter().filter_map(|n| match n {
-        GeneralName::DNSName(s) => Some(*s),
-        _ => None,
-    }).collect();
+    let dns_names: Vec<&str> = san
+        .value
+        .general_names
+        .iter()
+        .filter_map(|n| match n {
+            GeneralName::DNSName(s) => Some(*s),
+            _ => None,
+        })
+        .collect();
 
-    assert!(dns_names.contains(&"mesh-gateway.sbm"), "Must contain mesh-gateway.sbm");
+    assert!(
+        dns_names.contains(&"mesh-gateway.sbm"),
+        "Must contain mesh-gateway.sbm"
+    );
     assert!(dns_names.contains(&"*.sbm"), "Must contain *.sbm");
     assert!(dns_names.contains(&"*.mesh"), "Must contain *.mesh");
     assert!(dns_names.contains(&"localhost"), "Must contain localhost");
@@ -166,7 +199,10 @@ fn test_x509_on_demand_issuance_and_caching() {
     assert_eq!(pair1.key_der, pair2.key_der);
 
     // Verify resolution speed
-    println!("Mint time: {:?}, Cache hit time: {:?}", mint_duration, cache_duration);
+    println!(
+        "Mint time: {:?}, Cache hit time: {:?}",
+        mint_duration, cache_duration
+    );
 }
 
 #[test]

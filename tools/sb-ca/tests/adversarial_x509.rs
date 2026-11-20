@@ -51,28 +51,49 @@ fn test_adversarial_wildcard_san_handling() {
 
     // Case 1A: Calling get_or_issue_on_demand("*.sbm") directly in a fresh environment
     let on_demand_sbm = get_or_issue_on_demand("*.sbm");
-    println!(">>> Fresh get_or_issue_on_demand('*.sbm') result: {:?}", on_demand_sbm);
+    println!(
+        ">>> Fresh get_or_issue_on_demand('*.sbm') result: {:?}",
+        on_demand_sbm
+    );
 
     // Case 1B: Calling get_or_issue_on_demand("*.mesh") directly in a fresh environment
     let on_demand_mesh = get_or_issue_on_demand("*.mesh");
-    println!(">>> Fresh get_or_issue_on_demand('*.mesh') result: {:?}", on_demand_mesh);
+    println!(
+        ">>> Fresh get_or_issue_on_demand('*.mesh') result: {:?}",
+        on_demand_mesh
+    );
 
     // Case 1C: Calling get_or_issue_on_demand("*.node1.sbm")
     let on_demand_sub = get_or_issue_on_demand("*.node1.sbm");
-    println!(">>> Fresh get_or_issue_on_demand('*.node1.sbm') result: {:?}", on_demand_sub);
+    println!(
+        ">>> Fresh get_or_issue_on_demand('*.node1.sbm') result: {:?}",
+        on_demand_sub
+    );
 
     // VERIFY REMEDIATION:
     // Wildcard on-demand requests must succeed and contain the wildcard SAN without duplicate prefixing
-    assert!(on_demand_sbm.is_ok(), "get_or_issue_on_demand('*.sbm') must succeed: {:?}", on_demand_sbm);
+    assert!(
+        on_demand_sbm.is_ok(),
+        "get_or_issue_on_demand('*.sbm') must succeed: {:?}",
+        on_demand_sbm
+    );
     let pair_sbm = on_demand_sbm.unwrap();
     assert!(pair_sbm.domains.contains(&"*.sbm".to_string()));
     assert!(!pair_sbm.domains.iter().any(|d| d.contains("*.*")));
 
-    assert!(on_demand_mesh.is_ok(), "get_or_issue_on_demand('*.mesh') must succeed: {:?}", on_demand_mesh);
+    assert!(
+        on_demand_mesh.is_ok(),
+        "get_or_issue_on_demand('*.mesh') must succeed: {:?}",
+        on_demand_mesh
+    );
     let pair_mesh = on_demand_mesh.unwrap();
     assert!(pair_mesh.domains.contains(&"*.mesh".to_string()));
 
-    assert!(on_demand_sub.is_ok(), "get_or_issue_on_demand('*.node1.sbm') must succeed: {:?}", on_demand_sub);
+    assert!(
+        on_demand_sub.is_ok(),
+        "get_or_issue_on_demand('*.node1.sbm') must succeed: {:?}",
+        on_demand_sub
+    );
     let pair_sub = on_demand_sub.unwrap();
     assert!(pair_sub.domains.contains(&"*.node1.sbm".to_string()));
 
@@ -89,7 +110,10 @@ fn test_adversarial_domain_validation_and_path_traversal() {
     let malicious_vectors = vec![
         ("../", "Direct path traversal ../"),
         ("../../etc/shadow", "Deep path traversal ../../etc/shadow"),
-        ("..\\..\\windows\\system32", "Windows path traversal with backslashes"),
+        (
+            "..\\..\\windows\\system32",
+            "Windows path traversal with backslashes",
+        ),
         ("foo/bar.sbm", "Forward slash separator in domain"),
         ("foo\\bar.sbm", "Backslash separator in domain"),
         ("node\0poison.sbm", "Null byte poison injection"),
@@ -145,12 +169,18 @@ fn test_adversarial_domain_validation_and_path_traversal() {
     // If validate_domain allows colon, let's see what get_or_issue_on_demand does:
     if colon_res.is_ok() {
         let issue_colon = get_or_issue_on_demand("node1:8080");
-        println!("get_or_issue_on_demand('node1:8080') result: {:?}", issue_colon.is_ok());
+        println!(
+            "get_or_issue_on_demand('node1:8080') result: {:?}",
+            issue_colon.is_ok()
+        );
         if let Ok(pair) = issue_colon {
             println!("pair.cert_path exists: {}", pair.cert_path.exists());
             // Check second lookup (cache hit)
             let cache_colon = get_or_issue_on_demand("node1:8080");
-            println!("Second get_or_issue_on_demand('node1:8080') result: {:?}", cache_colon.is_ok());
+            println!(
+                "Second get_or_issue_on_demand('node1:8080') result: {:?}",
+                cache_colon.is_ok()
+            );
         }
     }
 
@@ -159,11 +189,19 @@ fn test_adversarial_domain_validation_and_path_traversal() {
     println!("validate_domain('::1') result: {:?}", ipv6_res);
     assert!(ipv6_res.is_ok(), "validate_domain('::1') must succeed");
     let issue_ipv6 = get_or_issue_on_demand("::1");
-    assert!(issue_ipv6.is_ok(), "Issuance for IPv6 '::1' must succeed with colon sanitization: {:?}", issue_ipv6);
+    assert!(
+        issue_ipv6.is_ok(),
+        "Issuance for IPv6 '::1' must succeed with colon sanitization: {:?}",
+        issue_ipv6
+    );
     let pair_ipv6 = issue_ipv6.unwrap();
     assert!(pair_ipv6.cert_path.exists());
     let cache_ipv6 = get_or_issue_on_demand("::1");
-    assert!(cache_ipv6.is_ok(), "Cached retrieval for IPv6 '::1' must succeed: {:?}", cache_ipv6);
+    assert!(
+        cache_ipv6.is_ok(),
+        "Cached retrieval for IPv6 '::1' must succeed: {:?}",
+        cache_ipv6
+    );
 }
 
 /// Adversarial Test 3: mTLS Extended Key Usage OID Verification.
@@ -179,11 +217,12 @@ fn test_adversarial_mtls_extended_key_usage_oids() {
     let pair = issue_leaf_certificate(&["node-peer.sbm".into()], 30)
         .expect("Leaf certificate issuance must succeed");
 
-    let (_, x509) = parse_x509_certificate(&pair.cert_der)
-        .expect("Leaf cert DER must parse validly");
+    let (_, x509) =
+        parse_x509_certificate(&pair.cert_der).expect("Leaf cert DER must parse validly");
 
     // 1. Verify ExtendedKeyUsage extension
-    let eku_ext = x509.extended_key_usage()
+    let eku_ext = x509
+        .extended_key_usage()
         .expect("eku parsing")
         .expect("ExtendedKeyUsage extension must exist");
 
@@ -210,12 +249,21 @@ fn test_adversarial_mtls_extended_key_usage_oids() {
             );
         }
     }
-    assert!(found_eku_raw, "Extension 2.5.29.37 (ExtendedKeyUsage) must be present");
+    assert!(
+        found_eku_raw,
+        "Extension 2.5.29.37 (ExtendedKeyUsage) must be present"
+    );
 
     // 3. Verify KeyUsages
     let ku = x509.key_usage().expect("ku").expect("KeyUsage must exist");
-    assert!(ku.value.digital_signature(), "DigitalSignature must be enabled");
-    assert!(ku.value.key_encipherment(), "KeyEncipherment must be enabled");
+    assert!(
+        ku.value.digital_signature(),
+        "DigitalSignature must be enabled"
+    );
+    assert!(
+        ku.value.key_encipherment(),
+        "KeyEncipherment must be enabled"
+    );
 
     // 4. Verify Not CA
     if let Ok(Some(bc)) = x509.basic_constraints() {
@@ -249,7 +297,8 @@ fn test_adversarial_on_demand_latency_sla() {
 
     for _ in 0..iterations {
         let t0 = Instant::now();
-        let pair_cached = get_or_issue_on_demand(test_domain).expect("Cached retrieval must succeed");
+        let pair_cached =
+            get_or_issue_on_demand(test_domain).expect("Cached retrieval must succeed");
         let elapsed = t0.elapsed();
         latencies.push(elapsed);
         assert_eq!(pair_cached.cert_der, pair1.cert_der);
@@ -338,12 +387,16 @@ fn test_adversarial_concurrency_race_conditions() {
 
     // Check index file health
     let idx_path = sb_ca::paths::x509_index_path();
-    let raw_index = fs::read_to_string(&idx_path).unwrap_or_else(|e| format!("Failed to read index: {e}"));
+    let raw_index =
+        fs::read_to_string(&idx_path).unwrap_or_else(|e| format!("Failed to read index: {e}"));
     println!(">>> Index path: {}", idx_path.display());
     println!(">>> Index raw content: {}", raw_index);
 
     let index = DevCertIndex::load();
-    println!(">>> Index cert count after concurrent minting: {}", index.certs.len());
+    println!(
+        ">>> Index cert count after concurrent minting: {}",
+        index.certs.len()
+    );
 
     // Check if the primary domain is present in index
     let found = index.find(domain);
@@ -400,7 +453,10 @@ fn test_adversarial_concurrency_lost_updates_different_domains() {
         }
     }
 
-    println!(">>> Distinct mints: {} successes, {} errors", mint_successes, mint_errors);
+    println!(
+        ">>> Distinct mints: {} successes, {} errors",
+        mint_successes, mint_errors
+    );
 
     let index = DevCertIndex::load();
     println!(
@@ -412,12 +468,18 @@ fn test_adversarial_concurrency_lost_updates_different_domains() {
         let dom = format!("concurrent-peer-{}.sbm", i);
         let exists = index.find(&dom).is_some();
         if !exists {
-            println!("LOST UPDATE CONFIRMED: Domain '{}' is MISSING from index.json!", dom);
+            println!(
+                "LOST UPDATE CONFIRMED: Domain '{}' is MISSING from index.json!",
+                dom
+            );
         }
     }
 
     assert_eq!(mint_errors, 0, "No concurrent minting errors allowed");
-    assert_eq!(mint_successes, num_threads, "All concurrent threads must succeed");
+    assert_eq!(
+        mint_successes, num_threads,
+        "All concurrent threads must succeed"
+    );
     assert_eq!(
         index.certs.len(),
         num_threads,
@@ -426,7 +488,11 @@ fn test_adversarial_concurrency_lost_updates_different_domains() {
     );
     for i in 0..num_threads {
         let dom = format!("concurrent-peer-{}.sbm", i);
-        assert!(index.find(&dom).is_some(), "Domain '{}' must be present in index.json", dom);
+        assert!(
+            index.find(&dom).is_some(),
+            "Domain '{}' must be present in index.json",
+            dom
+        );
     }
 }
 
@@ -470,7 +536,10 @@ fn test_adversarial_concurrent_initialization_split_brain() {
             Ok(pair) => issued_pairs.push((i, dom, pair)),
             Err(e) => {
                 errors += 1;
-                println!("Thread {} ({}) failed during concurrent init: {}", i, dom, e);
+                println!(
+                    "Thread {} ({}) failed during concurrent init: {}",
+                    i, dom, e
+                );
             }
         }
     }
@@ -508,5 +577,8 @@ fn test_adversarial_concurrent_initialization_split_brain() {
     }
 
     assert_eq!(errors, 0, "No errors during concurrent initializations");
-    assert_eq!(split_brain_count, 0, "Zero certificates may be signed by an orphaned Root CA key");
+    assert_eq!(
+        split_brain_count, 0,
+        "Zero certificates may be signed by an orphaned Root CA key"
+    );
 }

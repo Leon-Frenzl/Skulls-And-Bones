@@ -213,3 +213,51 @@ pub fn escape_spaces_path() -> PathBuf {
 pub fn history_path() -> PathBuf {
     sb_home().join("history.txt")
 }
+
+/// Restricts file permissions to the current user (`0o600` on Unix, exclusive ACL via `icacls` on Windows).
+// [SECURITY-HYPOTHESIS] CWE-732: Default OS umask or inherited Windows ACLs can expose key/DB files to other local users.
+// [SECURITY-VERIFIED] CWE-732 Mitigiert: Setzt POSIX 0o600 unter Unix bzw. deaktiviert ACL-Vererbung mit exklusivem Benutzerzugriff unter Windows.
+pub fn ensure_private_permissions(path: &std::path::Path) -> std::io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+
+        let mut perms = std::fs::metadata(path)?.permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        let _ = std::fs::set_permissions(path, perms);
+
+        if let Ok(username) = std::env::var("USERNAME") {
+            let trimmed = username.trim();
+            if !trimmed.is_empty() {
+                let grant_arg = format!("{trimmed}:(F)");
+                let status = Command::new("icacls")
+                    .arg(path.as_os_str())
+                    .arg("/inheritance:r")
+                    .arg("/grant:r")
+                    .arg(&grant_arg)
+                    .creation_flags(0x08000000)
+                    .status()?;
+                if !status.success() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!("icacls failed with exit status: {status}"),
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}

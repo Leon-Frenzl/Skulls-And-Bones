@@ -921,9 +921,7 @@ pub fn handle_approve(request_id: &str, approver_override: Option<&str>) {
             "4-Augen-Prinzip: Pruefer hat diesen Antrag bereits genehmigt",
             &[("approver", &approver)],
         );
-        println!(
-            "    Es wird die Genehmigung eines anderen autorisierten Teammitglieds benötigt."
-        );
+        println!("    Es wird die Genehmigung eines anderen autorisierten Teammitglieds benötigt.");
         return;
     }
 

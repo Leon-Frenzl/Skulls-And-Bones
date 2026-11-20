@@ -37,8 +37,14 @@ pub fn store_laps_e2ee_in_db(
     admin_x25519_pub: &[u8; 32],
     password: &str,
 ) -> Result<sb_db::DbEntryMeta, String> {
-    db.put_e2ee_entry(ticket, "laps", machine_id, admin_x25519_pub, password.as_bytes())
-        .map_err(|e| e.to_string())
+    db.put_e2ee_entry(
+        ticket,
+        "laps",
+        machine_id,
+        admin_x25519_pub,
+        password.as_bytes(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Reveals an E2EE-sealed LAPS emergency password from `SovereignDb` using a verified ticket
@@ -178,8 +184,30 @@ impl LapsMetaStore {
             .map_err(|e| format!("Failed to serialize LAPS metadata: {e}"))?;
         let tmp = path.with_extension("json.tmp");
         fs::write(&tmp, json).map_err(|e| format!("Failed to write temp LAPS metadata: {e}"))?;
+        let _ = sb_core::paths::ensure_private_permissions(&tmp);
         fs::rename(&tmp, path).map_err(|e| format!("Failed to commit LAPS metadata: {e}"))?;
         Ok(())
+    }
+
+    /// Loads LAPS metadata from encrypted `SovereignDb` (`namespace = "laps"`).
+    pub fn load_from_db(
+        db: &sb_db::SovereignDb,
+        ticket: &sb_db::VerifiedDbTicket,
+    ) -> Result<Self, String> {
+        db.get_encrypted_json::<Self>(ticket, "laps", "metadata")
+            .map(|opt| opt.unwrap_or_default())
+            .map_err(|e| e.to_string())
+    }
+
+    /// Persists LAPS metadata into encrypted `SovereignDb` (`namespace = "laps"`).
+    pub fn save_to_db(
+        &self,
+        db: &sb_db::SovereignDb,
+        ticket: &sb_db::VerifiedDbTicket,
+    ) -> Result<(), String> {
+        db.put_encrypted_json(ticket, "laps", "metadata", self)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -602,5 +630,54 @@ mod tests {
         assert!(apply_windows_laps("sb-rescue", &pw, true).is_ok());
         assert!(apply_windows_laps("sb-rescue", "short", true).is_err());
         assert!(apply_local_laps("sb-rescue", &pw, true).is_ok());
+    }
+
+    #[test]
+    fn laps_metadata_and_e2ee_secret_persist_in_sovereign_db() {
+        let db = sb_db::SovereignDb::open_in_memory(sb_db::MasterKey::generate()).unwrap();
+        let rw_ticket = sb_db::VerifiedDbTicket {
+            ticket_id: "tkt-laps-rw".into(),
+            subject: "dc-1".into(),
+            role: "Admin".into(),
+            capabilities: vec!["db:read".into(), "db:write".into()],
+            valid_until: (Utc::now().timestamp() + 3600) as u64,
+            single_use: false,
+        };
+        let reveal_ticket = sb_db::VerifiedDbTicket {
+            ticket_id: "tkt-laps-reveal".into(),
+            subject: "admin-1".into(),
+            role: "Admin".into(),
+            capabilities: vec!["db:secret:reveal".into()],
+            valid_until: (Utc::now().timestamp() + 3600) as u64,
+            single_use: true,
+        };
+
+        let admin_secret = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let admin_pub = x25519_dalek::PublicKey::from(&admin_secret);
+        let pw = generate_laps_password();
+
+        let mut meta = LapsMetaStore::default();
+        meta.entries.insert(
+            "m-db-01".into(),
+            LapsMetadata {
+                machine_id: "m-db-01".into(),
+                local_account: "sb-rescue".into(),
+                rotated_at: Utc::now().to_rfc3339(),
+                expires_at: (Utc::now() + Duration::days(30)).to_rfc3339(),
+                rotate_pending: false,
+                rotate_requested: false,
+                version: 1,
+            },
+        );
+        meta.save_to_db(&db, &rw_ticket).unwrap();
+        store_laps_e2ee_in_db(&db, &rw_ticket, "m-db-01", admin_pub.as_bytes(), &pw).unwrap();
+
+        let loaded_meta = LapsMetaStore::load_from_db(&db, &rw_ticket).unwrap();
+        assert_eq!(loaded_meta.entries["m-db-01"].local_account, "sb-rescue");
+
+        assert!(reveal_laps_e2ee_from_db(&db, &rw_ticket, "m-db-01", &admin_secret).is_err());
+        let revealed =
+            reveal_laps_e2ee_from_db(&db, &reveal_ticket, "m-db-01", &admin_secret).unwrap();
+        assert_eq!(revealed.as_slice(), pw.as_bytes());
     }
 }

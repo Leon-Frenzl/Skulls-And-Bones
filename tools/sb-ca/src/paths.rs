@@ -58,7 +58,7 @@ pub fn x509_index_path() -> PathBuf {
 /// - CVE / CWE Mapping: CWE-276 (Incorrect Default Permissions), CWE-732 (Incorrect Permission Assignment for Critical Resource).
 /// - Likelihood & Exploitability: High (7/10).
 ///   * Threat Condition: Multi-user environments or when SB_HOME is on a non-default partition inheriting world-readable ACLs.
-/// - Applied Mitigation: 
+/// - Applied Mitigation:
 ///   * On Windows: Disables ACL inheritance (/inheritance:r) and grants exclusive Full Control to %USERNAME% via icacls.
 ///   * On Unix: Explicitly applies POSIX mode 0o600.
 /// - Standards Compliance: IEEE 1003.1 (POSIX.1-2017) File Permissions, Microsoft Windows Security Model.
@@ -98,7 +98,7 @@ pub fn ensure_private_permissions(path: &Path) -> std::io::Result<()> {
                     .status();
 
                 match status {
-                    Ok(s) if s.success() => {},
+                    Ok(s) if s.success() => {}
                     Ok(s) => {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::PermissionDenied,
@@ -146,4 +146,3 @@ pub fn write_private_key_file(path: &Path, content: &[u8]) -> std::io::Result<()
 
     Ok(())
 }
-

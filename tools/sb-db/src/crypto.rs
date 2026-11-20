@@ -81,12 +81,8 @@ impl MasterKey {
         let tmp = path.with_extension("key.tmp");
         fs::write(&tmp, encoded.as_bytes())
             .map_err(|e| DbError::Storage(format!("Failed to write temp master key: {e}")))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))
-                .map_err(|e| DbError::Storage(format!("Failed to set key permissions: {e}")))?;
-        }
+        sb_core::paths::ensure_private_permissions(&tmp)
+            .map_err(|e| DbError::Storage(format!("Failed to set key permissions: {e}")))?;
         fs::rename(&tmp, path)
             .map_err(|e| DbError::Storage(format!("Failed to persist DB master key: {e}")))?;
         Ok(key)
@@ -154,10 +150,7 @@ pub fn decrypt_at_rest(
     let cipher = Aes256Gcm::new_from_slice(&key.bytes)
         .map_err(|e| DbError::Crypto(format!("AES-256-GCM init failed: {e}")))?;
     let pt = cipher
-        .decrypt(
-            Nonce::from_slice(&nonce_bytes),
-            Payload { msg: &ct, aad },
-        )
+        .decrypt(Nonce::from_slice(&nonce_bytes), Payload { msg: &ct, aad })
         .map_err(|_| DbError::Crypto("AES-256-GCM authentication failed".into()))?;
     Ok(Zeroizing::new(pt))
 }
@@ -208,7 +201,11 @@ pub fn seal_e2ee(
     let eph_secret = EphemeralSecret::random_from_rng(OsRng);
     let eph_pub = PublicKey::from(&eph_secret);
     let shared = eph_secret.diffie_hellman(&recipient_pub);
-    let key = derive_e2ee_key(shared.as_bytes(), eph_pub.as_bytes(), recipient_pub.as_bytes())?;
+    let key = derive_e2ee_key(
+        shared.as_bytes(),
+        eph_pub.as_bytes(),
+        recipient_pub.as_bytes(),
+    )?;
 
     let cipher = Aes256Gcm::new_from_slice(key.as_ref())
         .map_err(|e| DbError::Crypto(format!("AES-256-GCM init failed: {e}")))?;

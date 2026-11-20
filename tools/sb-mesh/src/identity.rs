@@ -643,7 +643,8 @@ mod tests {
         let loaded = NodeIdentity::load_registered_for_mesh_at("default", &base).unwrap();
         assert_eq!(loaded.wireguard_pubkey, real_identity.wireguard_pubkey);
 
-        let store = crate::network::NetworkStore::load_existing(&base.join("networks.json")).unwrap();
+        let store =
+            crate::network::NetworkStore::load_existing(&base.join("networks.json")).unwrap();
         assert_eq!(
             store.networks.get("default").unwrap().wireguard_pubkey,
             real_identity.wireguard_pubkey

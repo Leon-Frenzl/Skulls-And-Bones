@@ -7,8 +7,7 @@ pub mod store;
 pub mod ticket;
 
 pub use crypto::{
-    decrypt_at_rest, encrypt_at_rest, open_e2ee, seal_e2ee, E2eeEnvelope, EncryptedBlob,
-    MasterKey,
+    decrypt_at_rest, encrypt_at_rest, open_e2ee, seal_e2ee, E2eeEnvelope, EncryptedBlob, MasterKey,
 };
 pub use error::{DbError, DbResult};
 pub use store::{DbEntryMeta, SovereignDb};
@@ -123,6 +122,18 @@ mod tests {
             Err(DbError::Unauthorized(_))
         ));
 
+        // Broad wildcards must NOT implicitly grant SecretReveal
+        for wildcard in ["*", "db:*", "admin", "db:admin"] {
+            let wildcard_tkt = test_ticket(vec![wildcard], false);
+            assert!(
+                matches!(
+                    db.get_e2ee_entry(&wildcard_tkt, "laps", "srv-01", &recipient_secret),
+                    Err(DbError::Unauthorized(_))
+                ),
+                "wildcard '{wildcard}' must not grant SecretReveal"
+            );
+        }
+
         // Single-use SecretReveal succeeds once and fails on replay
         let reveal_once = test_ticket(vec!["db:secret:reveal"], true);
         let pt = db
@@ -223,7 +234,9 @@ mod tests {
         let primary = SovereignDb::open(&db_path, MasterKey::generate()).ok();
         let _ = primary;
         let snap = db2.export_encrypted_snapshot(&admin_tkt).unwrap();
-        let (m_cnt, kv_cnt) = standby.import_encrypted_snapshot(&admin_tkt, &snap).unwrap();
+        let (m_cnt, kv_cnt) = standby
+            .import_encrypted_snapshot(&admin_tkt, &snap)
+            .unwrap();
         assert_eq!(m_cnt, 0);
         assert_eq!(kv_cnt, 1);
         let replicated: serde_json::Value = standby

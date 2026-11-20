@@ -156,7 +156,12 @@ async fn main() {
                 Ok(config) => config,
                 Err(error) => {
                     let e = error.to_string();
-                    sb_core::logfmt::error("ERR_DNS_CONFIG", "dns.serve", "DNS configuration error", &[("error", &e)]);
+                    sb_core::logfmt::error(
+                        "ERR_DNS_CONFIG",
+                        "dns.serve",
+                        "DNS configuration error",
+                        &[("error", &e)],
+                    );
                     std::process::exit(1);
                 }
             };
@@ -164,7 +169,12 @@ async fn main() {
                 Ok(authorities) => authorities,
                 Err(error) => {
                     let e = error.to_string();
-                    sb_core::logfmt::error("ERR_DNS_AUTHORITY", "dns.serve", "DNS authority trust error", &[("error", &e)]);
+                    sb_core::logfmt::error(
+                        "ERR_DNS_AUTHORITY",
+                        "dns.serve",
+                        "DNS authority trust error",
+                        &[("error", &e)],
+                    );
                     std::process::exit(1);
                 }
             };
@@ -178,7 +188,12 @@ async fn main() {
                 Ok(snapshots) => snapshots,
                 Err(error) => {
                     let e = error.to_string();
-                    sb_core::logfmt::error("ERR_DNS_SNAPSHOT", "dns.serve", "DNS directory snapshot error", &[("error", &e)]);
+                    sb_core::logfmt::error(
+                        "ERR_DNS_SNAPSHOT",
+                        "dns.serve",
+                        "DNS directory snapshot error",
+                        &[("error", &e)],
+                    );
                     std::process::exit(1);
                 }
             };
@@ -186,7 +201,12 @@ async fn main() {
             for snapshot in snapshots {
                 let mesh_id = snapshot.mesh_id.clone();
                 if !loaded_meshes.insert(mesh_id.clone()) {
-                    sb_core::logfmt::error("ERR_DNS_DUPLICATE_SNAPSHOT", "dns.serve", "Duplicate DNS directory snapshot", &[("mesh_id", &mesh_id)]);
+                    sb_core::logfmt::error(
+                        "ERR_DNS_DUPLICATE_SNAPSHOT",
+                        "dns.serve",
+                        "Duplicate DNS directory snapshot",
+                        &[("mesh_id", &mesh_id)],
+                    );
                     std::process::exit(1);
                 }
                 if let Err(error) = resolver
@@ -194,27 +214,57 @@ async fn main() {
                     .await
                 {
                     let e = error.to_string();
-                    sb_core::logfmt::error("ERR_DNS_SNAPSHOT_REJECTED", "dns.serve", "DNS directory snapshot rejected", &[("mesh_id", &mesh_id), ("error", &e)]);
+                    sb_core::logfmt::error(
+                        "ERR_DNS_SNAPSHOT_REJECTED",
+                        "dns.serve",
+                        "DNS directory snapshot rejected",
+                        &[("mesh_id", &mesh_id), ("error", &e)],
+                    );
                     std::process::exit(1);
                 }
             }
             if authority_count == 0 {
-                sb_core::logfmt::warn("DNS_NO_AUTHORITY_KEYS", "dns.serve", "No mesh authority keys pinned", &[]);
+                sb_core::logfmt::warn(
+                    "DNS_NO_AUTHORITY_KEYS",
+                    "dns.serve",
+                    "No mesh authority keys pinned",
+                    &[],
+                );
             } else {
                 let cnt = authority_count.to_string();
-                sb_core::logfmt::info("DNS_AUTHORITIES_LOADED", "dns.serve", "Loaded pinned authority keys", &[("count", &cnt)]);
+                sb_core::logfmt::info(
+                    "DNS_AUTHORITIES_LOADED",
+                    "dns.serve",
+                    "Loaded pinned authority keys",
+                    &[("count", &cnt)],
+                );
             }
             if loaded_meshes.is_empty() {
-                sb_core::logfmt::warn("DNS_NO_SNAPSHOTS", "dns.serve", "No signed directory snapshots installed", &[]);
+                sb_core::logfmt::warn(
+                    "DNS_NO_SNAPSHOTS",
+                    "dns.serve",
+                    "No signed directory snapshots installed",
+                    &[],
+                );
             } else {
                 let cnt = loaded_meshes.len().to_string();
-                sb_core::logfmt::info("DNS_SNAPSHOTS_LOADED", "dns.serve", "Loaded verified directory snapshots", &[("count", &cnt)]);
+                sb_core::logfmt::info(
+                    "DNS_SNAPSHOTS_LOADED",
+                    "dns.serve",
+                    "Loaded verified directory snapshots",
+                    &[("count", &cnt)],
+                );
             }
             let server = DnsServer::new(resolver);
 
             if let Err(e) = server.run(bind).await {
                 let err = e.to_string();
-                sb_core::logfmt::error("ERR_DNS_SERVER", "dns.serve", "DNS server exited with error", &[("error", &err)]);
+                sb_core::logfmt::error(
+                    "ERR_DNS_SERVER",
+                    "dns.serve",
+                    "DNS server exited with error",
+                    &[("error", &err)],
+                );
                 std::process::exit(1);
             }
         }
@@ -231,7 +281,12 @@ async fn main() {
                 "CNAME" => RecordType::CNAME,
                 "PTR" => RecordType::PTR,
                 other => {
-                    sb_core::logfmt::error("ERR_DNS_RECORD_TYPE", "dns.cli", "Unsupported DNS record type", &[("rtype", other)]);
+                    sb_core::logfmt::error(
+                        "ERR_DNS_RECORD_TYPE",
+                        "dns.cli",
+                        "Unsupported DNS record type",
+                        &[("rtype", other)],
+                    );
                     std::process::exit(2);
                 }
             };
@@ -239,7 +294,12 @@ async fn main() {
                 Ok(name) => name,
                 Err(error) => {
                     let e = error.to_string();
-                    sb_core::logfmt::error("ERR_DNS_INVALID_NAME", "dns.cli", "Invalid DNS name", &[("domain", &domain), ("error", &e)]);
+                    sb_core::logfmt::error(
+                        "ERR_DNS_INVALID_NAME",
+                        "dns.cli",
+                        "Invalid DNS name",
+                        &[("domain", &domain), ("error", &e)],
+                    );
                     std::process::exit(2);
                 }
             };
@@ -291,7 +351,12 @@ async fn main() {
                 }
                 Err(error) => {
                     let e = error.to_string();
-                    sb_core::logfmt::error("ERR_DNS_QUERY", "dns.cli", "DNS query failed", &[("error", &e)]);
+                    sb_core::logfmt::error(
+                        "ERR_DNS_QUERY",
+                        "dns.cli",
+                        "DNS query failed",
+                        &[("error", &e)],
+                    );
                 }
             }
         }
@@ -300,7 +365,12 @@ async fn main() {
             Ok(_) => println!("\x1b[1;32m[+] Record added: {} -> {}\x1b[0m", domain, ip),
             Err(e) => {
                 let err = e.to_string();
-                sb_core::logfmt::error("ERR_DNS_SAVE", "dns.cli", "Error saving A record", &[("error", &err)]);
+                sb_core::logfmt::error(
+                    "ERR_DNS_SAVE",
+                    "dns.cli",
+                    "Error saving A record",
+                    &[("error", &err)],
+                );
             }
         },
 
@@ -317,7 +387,12 @@ async fn main() {
             ),
             Err(e) => {
                 let err = e.to_string();
-                sb_core::logfmt::error("ERR_DNS_SAVE_SRV", "dns.cli", "Error saving SRV record", &[("error", &err)]);
+                sb_core::logfmt::error(
+                    "ERR_DNS_SAVE_SRV",
+                    "dns.cli",
+                    "Error saving SRV record",
+                    &[("error", &err)],
+                );
             }
         },
 
@@ -326,7 +401,12 @@ async fn main() {
                 Ok(_) => println!("\x1b[1;32m[+] CNAME added: {} -> {}\x1b[0m", domain, target),
                 Err(e) => {
                     let err = e.to_string();
-                    sb_core::logfmt::error("ERR_DNS_SAVE_CNAME", "dns.cli", "Error saving CNAME record", &[("error", &err)]);
+                    sb_core::logfmt::error(
+                        "ERR_DNS_SAVE_CNAME",
+                        "dns.cli",
+                        "Error saving CNAME record",
+                        &[("error", &err)],
+                    );
                 }
             }
         }
@@ -335,7 +415,12 @@ async fn main() {
             Ok(_) => println!("\x1b[1;32m[+] TXT added: {} -> \"{}\"\x1b[0m", domain, text),
             Err(e) => {
                 let err = e.to_string();
-                sb_core::logfmt::error("ERR_DNS_SAVE_TXT", "dns.cli", "Error saving TXT record", &[("error", &err)]);
+                sb_core::logfmt::error(
+                    "ERR_DNS_SAVE_TXT",
+                    "dns.cli",
+                    "Error saving TXT record",
+                    &[("error", &err)],
+                );
             }
         },
 
@@ -344,7 +429,12 @@ async fn main() {
             Ok(false) => println!("\x1b[1;33m[-] Record not found: {}\x1b[0m", domain),
             Err(e) => {
                 let err = e.to_string();
-                sb_core::logfmt::error("ERR_DNS_REMOVE", "dns.cli", "Error removing DNS record", &[("error", &err)]);
+                sb_core::logfmt::error(
+                    "ERR_DNS_REMOVE",
+                    "dns.cli",
+                    "Error removing DNS record",
+                    &[("error", &err)],
+                );
             }
         },
 
@@ -384,7 +474,12 @@ async fn main() {
                 Ok(s) => s,
                 Err(e) => {
                     let err = e.to_string();
-                    sb_core::logfmt::error("ERR_DNS_IPAM", "dns.ipam", "IPAM store error", &[("error", &err)]);
+                    sb_core::logfmt::error(
+                        "ERR_DNS_IPAM",
+                        "dns.ipam",
+                        "IPAM store error",
+                        &[("error", &err)],
+                    );
                     return;
                 }
             };
@@ -417,7 +512,12 @@ async fn main() {
                             "\x1b[1;32m[+] Subnet '{}' ({}) saved: {}..={}\x1b[0m",
                             s.id, s.cidr, s.pool_start, s.pool_end
                         ),
-                        Err(e) => sb_core::logfmt::error("ERR_DNS_IPAM_SUBNET", "dns.ipam", "Failed to save subnet", &[("error", &e.to_string())]),
+                        Err(e) => sb_core::logfmt::error(
+                            "ERR_DNS_IPAM_SUBNET",
+                            "dns.ipam",
+                            "Failed to save subnet",
+                            &[("error", &e.to_string())],
+                        ),
                     }
                 }
                 IpamCommands::Lease {
@@ -437,7 +537,12 @@ async fn main() {
                             "\x1b[1;32m[+] Lease {}: {} ({}) -> {} [DDNS synced]\x1b[0m",
                             l.lease_id, l.fqdn, l.mac_address, l.ip_address
                         ),
-                        Err(e) => sb_core::logfmt::error("ERR_DNS_IPAM_LEASE", "dns.ipam", "Failed to allocate lease", &[("error", &e.to_string())]),
+                        Err(e) => sb_core::logfmt::error(
+                            "ERR_DNS_IPAM_LEASE",
+                            "dns.ipam",
+                            "Failed to allocate lease",
+                            &[("error", &e.to_string())],
+                        ),
                     }
                 }
                 IpamCommands::Release { mac_or_ip } => {
@@ -449,7 +554,12 @@ async fn main() {
                             "\x1b[1;32m[+] Released {} ({}) -> {} [DDNS removed]\x1b[0m",
                             l.fqdn, l.mac_address, l.ip_address
                         ),
-                        Err(e) => sb_core::logfmt::error("ERR_DNS_IPAM_RELEASE", "dns.ipam", "Failed to release lease", &[("error", &e.to_string())]),
+                        Err(e) => sb_core::logfmt::error(
+                            "ERR_DNS_IPAM_RELEASE",
+                            "dns.ipam",
+                            "Failed to release lease",
+                            &[("error", &e.to_string())],
+                        ),
                     }
                 }
                 IpamCommands::List => {
@@ -481,7 +591,12 @@ async fn main() {
             println!("\x1b[1;36m[*] Configuring OS Split-DNS for .sbm namespace...\x1b[0m");
             match OsIntegration::install_split_dns(&ip) {
                 Ok(msg) => println!("\x1b[1;32m[âœ“] {}\x1b[0m", msg),
-                Err(e) => sb_core::logfmt::error("ERR_DNS_SETUP", "dns.setup", "Failed to install split-DNS", &[("error", &e.to_string())]),
+                Err(e) => sb_core::logfmt::error(
+                    "ERR_DNS_SETUP",
+                    "dns.setup",
+                    "Failed to install split-DNS",
+                    &[("error", &e.to_string())],
+                ),
             }
         }
 
@@ -489,7 +604,12 @@ async fn main() {
             println!("\x1b[1;36m[*] Removing OS Split-DNS configuration...\x1b[0m");
             match OsIntegration::uninstall_split_dns() {
                 Ok(msg) => println!("\x1b[1;32m[âœ“] {}\x1b[0m", msg),
-                Err(e) => sb_core::logfmt::error("ERR_DNS_TEARDOWN", "dns.teardown", "Failed to uninstall split-DNS", &[("error", &e.to_string())]),
+                Err(e) => sb_core::logfmt::error(
+                    "ERR_DNS_TEARDOWN",
+                    "dns.teardown",
+                    "Failed to uninstall split-DNS",
+                    &[("error", &e.to_string())],
+                ),
             }
         }
 
@@ -497,12 +617,22 @@ async fn main() {
             let cfg = match ConfigManager::load_config_checked() {
                 Ok(config) => config,
                 Err(error) => {
-                    sb_core::logfmt::error("ERR_DNS_CONFIG", "dns.status", "DNS configuration error", &[("error", &error.to_string())]);
+                    sb_core::logfmt::error(
+                        "ERR_DNS_CONFIG",
+                        "dns.status",
+                        "DNS configuration error",
+                        &[("error", &error.to_string())],
+                    );
                     std::process::exit(1);
                 }
             };
             if let Err(error) = load_authorities(cfg.authority_trust.clone()) {
-                sb_core::logfmt::error("ERR_DNS_AUTHORITY", "dns.status", "DNS authority trust error", &[("error", &error.to_string())]);
+                sb_core::logfmt::error(
+                    "ERR_DNS_AUTHORITY",
+                    "dns.status",
+                    "DNS authority trust error",
+                    &[("error", &error.to_string())],
+                );
                 std::process::exit(1);
             }
             let records = ConfigManager::load_records();
@@ -510,7 +640,12 @@ async fn main() {
             let snapshot_count = match ConfigManager::load_directory_snapshots_checked() {
                 Ok(snapshots) => snapshots.len(),
                 Err(error) => {
-                    sb_core::logfmt::error("ERR_DNS_SNAPSHOT", "dns.status", "DNS directory snapshot error", &[("error", &error.to_string())]);
+                    sb_core::logfmt::error(
+                        "ERR_DNS_SNAPSHOT",
+                        "dns.status",
+                        "DNS directory snapshot error",
+                        &[("error", &error.to_string())],
+                    );
                     std::process::exit(1);
                 }
             };

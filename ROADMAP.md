@@ -1,7 +1,7 @@
 ---
 title: "Skulls & Bones — Roadmap"
 status: target-plan
-updated: 2026-10-03
+updated: 2026-11-20
 ---
 
 # Skulls & Bones — Roadmap
@@ -16,14 +16,11 @@ Die Marke steht für Betreiberkontrolle, modulare Tools und verständliche, übe
 
 ## Produktmodell
 
-Das autoritative Produktmodell umfasst exakt **14 konsolidierte Kern-Tools** in einem einzigen Cargo-Workspace:
-- **Suite Launcher & Management**: `sb` (CLI)
-- **Gemeinsame Verträge & Protokolle (Libraries)**: `sb-core` (Domain-Typen, Verträge, IPC), `sb-app-contract` (SB-MAP Manifest & Grants), `sb-app-protocol` (SB-MAP Framing & Transfer)
-- **Identität & Sicherheit**: `sb-auth` (Sovereign Auth, Ed25519-Tokens, Argon2id), `sb-key` (Root-Identität & Ephemeral Leases)
-- **Daten, Storage & DNS**: `sb-db` (Embedded Document-KV Store), `sb-drive` (Peer-Filesystem), `sb-dns` (Sovereign Resolver & Mesh Router)
-- **Netzwerk & Edge**: `sb-mesh` (P2P-Overlay & Routing), `sb-proxy` (Reverse Proxy, Auto-TLS, Edge Gateway)
-- **Fleet, DevOps & Code**: `sb-node` (Headless Mesh-Anchor), `sb-forge` (CI/CD Pipeline-Runner, Secrets), `sb-code` (Code Engine, AST-Scopes)
-- **Separate Präsenzfläche**: `website/` (Vite SPA, unabhängig von Core-Runtimes)
+Das aktuelle Workspace-Modell umfasst **12 Rust-Crates** sowie die Web-Konsole (`console/`):
+- **CLI & Kern:** `sb` (CLI), `sb-core` (Domain-Typen, Verträge, IPC, Dateiberechtigungen)
+- **Identität, CA & Authentifizierung:** `sb-auth` (Ed25519-Tokens, Argon2id), `sb-ca` (X.509/SSH CA), `sb-key` (Key-Management), `sb-cred-provider` (Windows COM), `sb-linux-auth` (Linux PAM/NSS)
+- **Daten, DNS & Mesh:** `sb-db` (SQLite WAL, AES-256-GCM, X25519 E2EE, Ticket-RBAC), `sb-dns` (Name Resolution), `sb-mesh` (Mesh Network Layer), `sb-proxy` (Reverse Proxy), `sb-node` (Node/DC-Agent mit OIDC, LAPS und OS-Logon-Provisionierung)
+- **Web-Konsole:** `console/` (React + Vite SPA)
 
 *Hinweis zu ausgegliederten Komponenten:* Frühere Desktop-Apps (`sb-desktop`, `sb-studio`, `sb-workbench`, `netgrid`), Web-UI-Pakete (`skel`, `sb-ui`) sowie separate Shell-/Terminal-Projekte (`sb-shell`, `skully`) wurden aus der Core-Suite ausgegliedert. Historische Namen wie `sb-ssh` und `sb-vault` sind keine Suite-Produkte.
 

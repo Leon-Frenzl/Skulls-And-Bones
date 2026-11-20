@@ -110,9 +110,7 @@ fn cache_file_path() -> PathBuf {
 }
 
 fn derive_cache_key() -> Option<[u8; 32]> {
-    let key_path = sb_core::paths::sb_home()
-        .join("domain")
-        .join("machine.key");
+    let key_path = sb_core::paths::sb_home().join("domain").join("machine.key");
     let raw = fs::read_to_string(key_path).ok()?;
     let mut hasher = Sha256::new();
     hasher.update(raw.trim().as_bytes());
@@ -377,7 +375,9 @@ pub fn ensure_local_os_account(
                 .output();
         }
         if is_local_admin {
-            let _ = Command::new("usermod").args(["-aG", "sudo", &clean]).output();
+            let _ = Command::new("usermod")
+                .args(["-aG", "sudo", &clean])
+                .output();
         }
         let _ = password;
         Ok(())
@@ -598,7 +598,10 @@ fn create_restricted_pipe_server(
         bInheritHandle: 0,
     };
     let res = unsafe {
-        opts.create_with_security_attributes_raw(pipe_name, (&mut sa as *mut SECURITY_ATTRIBUTES).cast::<c_void>())
+        opts.create_with_security_attributes_raw(
+            pipe_name,
+            (&mut sa as *mut SECURITY_ATTRIBUTES).cast::<c_void>(),
+        )
     };
     unsafe {
         LocalFree(sd as HLOCAL);

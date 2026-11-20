@@ -139,10 +139,9 @@ pub fn ensure_service_prerequisites() -> Result<Vec<String>, String> {
     let mut actions = Vec::new();
 
     // 1. Ensure Unified Dual-CA (OpenSSH + X.509) is initialized so sb-proxy & sb-node have CA keys
-    if !sb_ca::SshCa::status().initialized
-        && sb_ca::init_all(false).is_ok() {
-            actions.push("Initialized Unified Dual-CA (OpenSSH + X.509)".to_string());
-        }
+    if !sb_ca::SshCa::status().initialized && sb_ca::init_all(false).is_ok() {
+        actions.push("Initialized Unified Dual-CA (OpenSSH + X.509)".to_string());
+    }
 
     // 2. Ensure ~/.sb-mesh/instances/default/identity.json and ~/.sb-mesh/networks.json exist and match
     let mesh_dir = sb_mesh::identity::default_data_dir()?;
@@ -548,7 +547,12 @@ pub fn handle_service(action: Option<ServiceAction>, json: bool) {
             let acts = match install_services() {
                 Ok(a) => a,
                 Err(e) => {
-                    sb_core::logfmt::error("ERR_SVC_INSTALL", "sb.service", "Service installation failed", &[("error", &e.to_string())]);
+                    sb_core::logfmt::error(
+                        "ERR_SVC_INSTALL",
+                        "sb.service",
+                        "Service installation failed",
+                        &[("error", &e.to_string())],
+                    );
                     std::process::exit(1);
                 }
             };
@@ -558,7 +562,12 @@ pub fn handle_service(action: Option<ServiceAction>, json: bool) {
             let acts = match start_services() {
                 Ok(a) => a,
                 Err(e) => {
-                    sb_core::logfmt::error("ERR_SVC_START", "sb.service", "Service start failed", &[("error", &e.to_string())]);
+                    sb_core::logfmt::error(
+                        "ERR_SVC_START",
+                        "sb.service",
+                        "Service start failed",
+                        &[("error", &e.to_string())],
+                    );
                     std::process::exit(1);
                 }
             };
@@ -568,7 +577,12 @@ pub fn handle_service(action: Option<ServiceAction>, json: bool) {
             let acts = match stop_services() {
                 Ok(a) => a,
                 Err(e) => {
-                    sb_core::logfmt::error("ERR_SVC_STOP", "sb.service", "Service stop failed", &[("error", &e.to_string())]);
+                    sb_core::logfmt::error(
+                        "ERR_SVC_STOP",
+                        "sb.service",
+                        "Service stop failed",
+                        &[("error", &e.to_string())],
+                    );
                     std::process::exit(1);
                 }
             };
@@ -579,7 +593,12 @@ pub fn handle_service(action: Option<ServiceAction>, json: bool) {
             match start_services() {
                 Ok(started) => acts.extend(started),
                 Err(e) => {
-                    sb_core::logfmt::error("ERR_SVC_RESTART", "sb.service", "Service restart failed", &[("error", &e.to_string())]);
+                    sb_core::logfmt::error(
+                        "ERR_SVC_RESTART",
+                        "sb.service",
+                        "Service restart failed",
+                        &[("error", &e.to_string())],
+                    );
                     std::process::exit(1);
                 }
             }

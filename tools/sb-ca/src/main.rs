@@ -215,7 +215,10 @@ fn run(cli: Cli) -> Result<(), CaError> {
             ssh_only,
             x509_only,
         } => {
-            println!("{}", "► Initializing Skulls & Bones Sovereign PKI...".bold());
+            println!(
+                "{}",
+                "► Initializing Skulls & Bones Sovereign PKI...".bold()
+            );
             if !x509_only {
                 let ssh_status = SshCa::init_ca(force)?;
                 println!(
@@ -238,7 +241,10 @@ fn run(cli: Cli) -> Result<(), CaError> {
                     x509_status.key_path.cyan()
                 );
             }
-            println!("{} All CA engines initialized successfully.", "✓".bright_green().bold());
+            println!(
+                "{} All CA engines initialized successfully.",
+                "✓".bright_green().bold()
+            );
         }
 
         Commands::Status { json } => {
@@ -247,11 +253,24 @@ fn run(cli: Cli) -> Result<(), CaError> {
                 let s = serde_json::to_string_pretty(&status)?;
                 println!("{}", s);
             } else {
-                println!("{}", "════════════════════════════════════════════════════════".bright_cyan());
+                println!(
+                    "{}",
+                    "════════════════════════════════════════════════════════".bright_cyan()
+                );
                 println!("{}", "  SKULLS & BONES SOVEREIGN PKI STATUS".bold());
-                println!("{}", "════════════════════════════════════════════════════════".bright_cyan());
+                println!(
+                    "{}",
+                    "════════════════════════════════════════════════════════".bright_cyan()
+                );
                 println!("  [OpenSSH CA Engine]");
-                println!("    Initialized: {}", if status.ssh.initialized { "Yes".bright_green() } else { "No".bright_red() });
+                println!(
+                    "    Initialized: {}",
+                    if status.ssh.initialized {
+                        "Yes".bright_green()
+                    } else {
+                        "No".bright_red()
+                    }
+                );
                 println!("    Private Key: {}", status.ssh.ca_key_path);
                 println!("    Public Key:  {}", status.ssh.ca_pub_path);
                 if let Some(ref pk) = status.ssh.public_key {
@@ -259,27 +278,58 @@ fn run(cli: Cli) -> Result<(), CaError> {
                 }
 
                 println!("\n  [X.509 CA Engine]");
-                println!("    Initialized: {}", if status.x509.initialized { "Yes".bright_green() } else { "No".bright_red() });
+                println!(
+                    "    Initialized: {}",
+                    if status.x509.initialized {
+                        "Yes".bright_green()
+                    } else {
+                        "No".bright_red()
+                    }
+                );
                 println!("    Common Name: {}", status.x509.common_name);
                 println!("    Certificate: {}", status.x509.crt_path);
                 println!("    Private Key: {}", status.x509.key_path);
-                println!("    OS Trusted:  {}", if status.x509.is_installed_in_os { "Yes".bright_green() } else { "No (Run 'sb-ca install-root')".bright_yellow() });
+                println!(
+                    "    OS Trusted:  {}",
+                    if status.x509.is_installed_in_os {
+                        "Yes".bright_green()
+                    } else {
+                        "No (Run 'sb-ca install-root')".bright_yellow()
+                    }
+                );
                 println!("    Issued Certs:{}", status.x509.issued_certs_count);
-                if !status.ssh.initialized || !status.x509.initialized || !status.x509.is_installed_in_os {
-                    println!("\n  ► Fix with: {}", "sb up --fix (or 'sb-ca init && sb-ca install-root')".bright_cyan().bold());
+                if !status.ssh.initialized
+                    || !status.x509.initialized
+                    || !status.x509.is_installed_in_os
+                {
+                    println!(
+                        "\n  ► Fix with: {}",
+                        "sb up --fix (or 'sb-ca init && sb-ca install-root')"
+                            .bright_cyan()
+                            .bold()
+                    );
                 }
-                println!("{}", "════════════════════════════════════════════════════════".bright_cyan());
+                println!(
+                    "{}",
+                    "════════════════════════════════════════════════════════".bright_cyan()
+                );
             }
         }
 
         Commands::InstallRoot => {
-            println!("{}", "► Installing X.509 Root CA into local OS trust store...".bold());
+            println!(
+                "{}",
+                "► Installing X.509 Root CA into local OS trust store...".bold()
+            );
             let msg = X509Ca::install_root_ca()?;
             println!("  {} {}", "✓".bright_green(), msg);
         }
 
         Commands::UninstallRoot => {
-            println!("{}", "► Removing X.509 Root CA from local OS trust store...".bold());
+            println!(
+                "{}",
+                "► Removing X.509 Root CA from local OS trust store...".bold()
+            );
             let msg = X509Ca::uninstall_root_ca()?;
             println!("  {} {}", "✓".bright_green(), msg);
         }
@@ -349,8 +399,14 @@ fn run(cli: Cli) -> Result<(), CaError> {
                     "✓".bright_green(),
                     pair.domains
                 );
-                println!("  Certificate: {}", pair.cert_path.display().to_string().cyan());
-                println!("  Private Key: {}", pair.key_path.display().to_string().cyan());
+                println!(
+                    "  Certificate: {}",
+                    pair.cert_path.display().to_string().cyan()
+                );
+                println!(
+                    "  Private Key: {}",
+                    pair.key_path.display().to_string().cyan()
+                );
                 println!("  Expires At:  {}", pair.expires_at.bright_black());
             }
 

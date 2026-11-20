@@ -205,7 +205,11 @@ impl IdentityDirectory {
     }
 
     /// Creates or updates an Organizational Unit (`path` e.g. `"/Engineering/Backend"`).
-    pub fn upsert_ou(&mut self, path: &str, description: &str) -> Result<OrganizationalUnit, String> {
+    pub fn upsert_ou(
+        &mut self,
+        path: &str,
+        description: &str,
+    ) -> Result<OrganizationalUnit, String> {
         let clean = sb_core::identity::validate_ou_path(path)?;
         let ou = OrganizationalUnit {
             path: clean.clone(),
@@ -257,9 +261,7 @@ impl IdentityDirectory {
                 } else {
                     has_restricted_group = true;
                     if grp.allowed_machines.iter().any(|target| {
-                        target == "*"
-                            || target == machine_id
-                            || target.eq_ignore_ascii_case(fqdn)
+                        target == "*" || target == machine_id || target.eq_ignore_ascii_case(fqdn)
                     }) {
                         allowed_by_group = true;
                     }

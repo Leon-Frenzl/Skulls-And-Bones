@@ -52,7 +52,11 @@ fn test_wire_format_strict_rfc4251_and_decoding() {
 
     // 1.1 Line structure check: <type> <wire-base64> <comment>
     let parts: Vec<&str> = ca_pub.split_whitespace().collect();
-    assert_eq!(parts.len(), 3, "Wire format line must contain exactly 3 whitespace-separated tokens");
+    assert_eq!(
+        parts.len(),
+        3,
+        "Wire format line must contain exactly 3 whitespace-separated tokens"
+    );
     assert_eq!(parts[0], "ssh-ed25519");
     assert_eq!(parts[2], SSH_CA_COMMENT);
 
@@ -72,8 +76,14 @@ fn test_wire_format_strict_rfc4251_and_decoding() {
     );
 
     // 1.4 Binary decoding & internal wire inspection
-    let wire_bytes = BASE64.decode(b64_wire).expect("Base64 decoding must succeed");
-    assert_eq!(wire_bytes.len(), 51, "Raw wire payload must be exactly 51 bytes");
+    let wire_bytes = BASE64
+        .decode(b64_wire)
+        .expect("Base64 decoding must succeed");
+    assert_eq!(
+        wire_bytes.len(),
+        51,
+        "Raw wire payload must be exactly 51 bytes"
+    );
 
     let algo_len = u32::from_be_bytes(wire_bytes[0..4].try_into().unwrap()) as usize;
     assert_eq!(algo_len, 11, "Algorithm string length must be 11");
@@ -84,22 +94,41 @@ fn test_wire_format_strict_rfc4251_and_decoding() {
     assert_eq!(wire_bytes[19..51].len(), 32);
 
     // 1.5 Adversarial input decoding via parse_public_key
-    assert!(parse_public_key("").is_err(), "Empty string must be rejected");
-    assert!(parse_public_key("   \t\n  ").is_err(), "Whitespace string must be rejected");
-    assert!(parse_public_key("ssh-ed25519").is_err(), "Missing key body must be rejected");
-    assert!(parse_public_key("ssh-ed25519 AAAAC3").is_err(), "Truncated base64 must be rejected");
+    assert!(
+        parse_public_key("").is_err(),
+        "Empty string must be rejected"
+    );
+    assert!(
+        parse_public_key("   \t\n  ").is_err(),
+        "Whitespace string must be rejected"
+    );
+    assert!(
+        parse_public_key("ssh-ed25519").is_err(),
+        "Missing key body must be rejected"
+    );
+    assert!(
+        parse_public_key("ssh-ed25519 AAAAC3").is_err(),
+        "Truncated base64 must be rejected"
+    );
     assert!(
         parse_public_key("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI!!!!").is_err(),
         "Invalid base64 chars must be rejected"
     );
     assert!(
-        parse_public_key(&format!("ssh-ed25519 {} extra_comment extra_token", b64_wire)).is_ok(),
+        parse_public_key(&format!(
+            "ssh-ed25519 {} extra_comment extra_token",
+            b64_wire
+        ))
+        .is_ok(),
         "OpenSSH parser allows standard comments and extra trailing annotations"
     );
 
     // Oversized public key input (1MB buffer) — must not panic or hang
     let huge_input = "ssh-ed25519 ".to_string() + &"A".repeat(1_000_000);
-    assert!(parse_public_key(&huge_input).is_err(), "1MB malformed key must be cleanly rejected");
+    assert!(
+        parse_public_key(&huge_input).is_err(),
+        "1MB malformed key must be cleanly rejected"
+    );
 
     // File paths must NOT be probed or read by the library parser (security hardening)
     let temp_key_file = _tmp.join("test_key.pub");
@@ -111,7 +140,8 @@ fn test_wire_format_strict_rfc4251_and_decoding() {
 
     // Reading from disk is caller/CLI responsibility
     let key_content = fs::read_to_string(&temp_key_file).unwrap();
-    let parsed_from_file = parse_public_key(&key_content).expect("Parsing raw string from file content must succeed");
+    let parsed_from_file =
+        parse_public_key(&key_content).expect("Parsing raw string from file content must succeed");
     assert_eq!(parsed_from_file.to_openssh().unwrap(), ca_pub);
 
     // Non-existent file path falls through to parse_openssh and fails cleanly
@@ -159,14 +189,23 @@ fn test_user_cert_extreme_principals() {
 
     // 2.1 Empty principal list
     let res_empty_list = issue_user_certificate(&pub_line, "id1", &[], 3600, None);
-    assert!(matches!(res_empty_list, Err(CaError::InvalidPrincipal(_))), "Empty principal list must be rejected");
+    assert!(
+        matches!(res_empty_list, Err(CaError::InvalidPrincipal(_))),
+        "Empty principal list must be rejected"
+    );
 
     // 2.2 Principals with empty or whitespace-only elements
     let res_empty_str = issue_user_certificate(&pub_line, "id1", &["".into()], 3600, None);
-    assert!(matches!(res_empty_str, Err(CaError::InvalidPrincipal(_))), "Empty principal string must be rejected");
+    assert!(
+        matches!(res_empty_str, Err(CaError::InvalidPrincipal(_))),
+        "Empty principal string must be rejected"
+    );
 
     let res_ws = issue_user_certificate(&pub_line, "id1", &["   ".into()], 3600, None);
-    assert!(matches!(res_ws, Err(CaError::InvalidPrincipal(_))), "Whitespace-only principal must be rejected");
+    assert!(
+        matches!(res_ws, Err(CaError::InvalidPrincipal(_))),
+        "Whitespace-only principal must be rejected"
+    );
 
     // 2.3 Length boundary checks: 64 characters (max allowed) vs 65 characters
     let p64 = "a".repeat(64);
@@ -175,11 +214,17 @@ fn test_user_cert_extreme_principals() {
 
     let p65 = "a".repeat(65);
     let res_p65 = issue_user_certificate(&pub_line, "id1", &[p65], 3600, None);
-    assert!(matches!(res_p65, Err(CaError::InvalidPrincipal(_))), "65-character principal must be rejected");
+    assert!(
+        matches!(res_p65, Err(CaError::InvalidPrincipal(_))),
+        "65-character principal must be rejected"
+    );
 
     let p_massive = "a".repeat(10_000);
     let res_massive = issue_user_certificate(&pub_line, "id1", &[p_massive], 3600, None);
-    assert!(matches!(res_massive, Err(CaError::InvalidPrincipal(_))), "Massive principal must be rejected");
+    assert!(
+        matches!(res_massive, Err(CaError::InvalidPrincipal(_))),
+        "Massive principal must be rejected"
+    );
 
     // 2.4 Injection attacks & forbidden characters
     let dangerous_principals = vec![
@@ -212,7 +257,10 @@ fn test_user_cert_extreme_principals() {
 
     // 2.5 Whitespace padding and newline leakage remediation verification
     let res_padded = issue_user_certificate(&pub_line, "id1", &["  alice  ".into()], 3600, None);
-    assert!(res_padded.is_ok(), "Padded principal must be accepted and sanitized");
+    assert!(
+        res_padded.is_ok(),
+        "Padded principal must be accepted and sanitized"
+    );
     let cert = Certificate::from_str(&res_padded.unwrap()).unwrap();
     assert_eq!(
         cert.valid_principals(),
@@ -222,7 +270,10 @@ fn test_user_cert_extreme_principals() {
 
     // Probe trailing newline: "alice\n"
     let res_newline = issue_user_certificate(&pub_line, "id1", &["alice\n".into()], 3600, None);
-    assert!(res_newline.is_ok(), "Trailing newline must be trimmed and sanitized");
+    assert!(
+        res_newline.is_ok(),
+        "Trailing newline must be trimmed and sanitized"
+    );
     let cert_nl = Certificate::from_str(&res_newline.unwrap()).unwrap();
     assert_eq!(
         cert_nl.valid_principals(),
@@ -238,7 +289,10 @@ fn test_user_cert_extreme_principals() {
         "NODE-99.SUB-DOMAIN_01".to_string(),
     ];
     let res_valid = issue_user_certificate(&pub_line, "id1", &valid_principals, 3600, None);
-    assert!(res_valid.is_ok(), "Valid principals with '.', '-', '_' must be accepted");
+    assert!(
+        res_valid.is_ok(),
+        "Valid principals with '.', '-', '_' must be accepted"
+    );
 
     // 2.7 Mixed batch: 1 invalid among 10 valid must fail the entire operation
     let mut mixed = valid_principals.clone();
@@ -272,13 +326,15 @@ fn test_validity_boundaries_and_clock_drift() {
         .as_secs();
 
     // 3.1 Zero TTL -> Should fallback to DEFAULT_USER_CERT_TTL_SECONDS (3600s)
-    let cert_str_default = issue_user_certificate(&pub_line, "id_default", &["alice".into()], 0, None)
-        .expect("Zero TTL must succeed with default lifetime");
+    let cert_str_default =
+        issue_user_certificate(&pub_line, "id_default", &["alice".into()], 0, None)
+            .expect("Zero TTL must succeed with default lifetime");
     let cert_default = Certificate::from_str(&cert_str_default).unwrap();
     let expected_before_min = now_before + DEFAULT_USER_CERT_TTL_SECONDS - 5;
     let expected_before_max = now_before + DEFAULT_USER_CERT_TTL_SECONDS + 5;
     assert!(
-        cert_default.valid_before() >= expected_before_min && cert_default.valid_before() <= expected_before_max,
+        cert_default.valid_before() >= expected_before_min
+            && cert_default.valid_before() <= expected_before_max,
         "Zero TTL must default to 3600 seconds"
     );
 
@@ -324,7 +380,8 @@ fn test_validity_boundaries_and_clock_drift() {
     );
 
     // 3.6 Far-future user cert: u64::MAX
-    let res_u64_max = issue_user_certificate(&pub_line, "id_inf", &["alice".into()], u64::MAX, None);
+    let res_u64_max =
+        issue_user_certificate(&pub_line, "id_inf", &["alice".into()], u64::MAX, None);
     assert!(
         matches!(res_u64_max, Err(CaError::TtlExceeded { .. })),
         "u64::MAX TTL must be rejected by user cert cap"
@@ -354,10 +411,16 @@ fn test_serial_number_behavior_and_monotonicity() {
     // 4.1 Explicit serial numbers: 0, 1, 0x7FFFFFFFFFFFFFFF, u64::MAX
     let test_serials = vec![0u64, 1u64, 42u64, i64::MAX as u64, u64::MAX];
     for s in test_serials {
-        let cert_str = issue_user_certificate(&pub_line, "id_serial", &["alice".into()], 3600, Some(s))
-            .expect(&format!("Explicit serial {} must succeed", s));
+        let cert_str =
+            issue_user_certificate(&pub_line, "id_serial", &["alice".into()], 3600, Some(s))
+                .expect(&format!("Explicit serial {} must succeed", s));
         let cert = Certificate::from_str(&cert_str).unwrap();
-        assert_eq!(cert.serial(), s, "Certificate must embed exact explicit serial {}", s);
+        assert_eq!(
+            cert.serial(),
+            s,
+            "Certificate must embed exact explicit serial {}",
+            s
+        );
     }
 
     // 4.2 Auto-generated serials (`serial: None`): Test Uniqueness and Monotonicity
@@ -366,8 +429,14 @@ fn test_serial_number_behavior_and_monotonicity() {
     let mut set = HashSet::with_capacity(sample_count);
 
     for i in 0..sample_count {
-        let cert_str = issue_user_certificate(&pub_line, &format!("id_{}", i), &["alice".into()], 3600, None)
-            .expect("Auto-generated serial issuance must succeed");
+        let cert_str = issue_user_certificate(
+            &pub_line,
+            &format!("id_{}", i),
+            &["alice".into()],
+            3600,
+            None,
+        )
+        .expect("Auto-generated serial issuance must succeed");
         let cert = Certificate::from_str(&cert_str).unwrap();
         let s = cert.serial();
         serials.push(s);
@@ -392,7 +461,10 @@ fn test_serial_number_behavior_and_monotonicity() {
         }
     }
 
-    eprintln!("[OBSERVATION] Auto-generated serial sequence: strictly_increasing = {}", strictly_increasing);
+    eprintln!(
+        "[OBSERVATION] Auto-generated serial sequence: strictly_increasing = {}",
+        strictly_increasing
+    );
     eprintln!("[OBSERVATION] First 5 auto serials: {:?}", &serials[0..5]);
 }
 
@@ -436,7 +508,8 @@ fn test_concurrent_issuance_stress() {
     }
 
     for h in handles {
-        h.join().expect("All worker threads must complete without panic");
+        h.join()
+            .expect("All worker threads must complete without panic");
     }
 
     let all_certs = issued_certs.lock().unwrap();

@@ -24,8 +24,13 @@ impl DbCapability {
         }
     }
 
+    // [SECURITY-HYPOTHESIS] CWE-269: Wildcards like "*" or "admin" could implicitly grant SecretReveal.
+    // [SECURITY-VERIFIED] CWE-269 Mitigiert: SecretReveal erfordert explizites "db:secret:reveal" ohne Wildcard-Eskalation.
     fn matches(&self, granted: &str) -> bool {
         let g = granted.trim();
+        if *self == Self::SecretReveal {
+            return g == Self::SecretReveal.as_str();
+        }
         g == "*"
             || g == "db:*"
             || g == "admin"
@@ -144,7 +149,11 @@ pub fn verify_auth_token(
     Ok(VerifiedDbTicket {
         ticket_id: claims.token_id,
         subject: claims.subject,
-        role: claims.roles.first().cloned().unwrap_or_else(|| "User".into()),
+        role: claims
+            .roles
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "User".into()),
         capabilities: claims.capabilities,
         valid_until: claims.expires_at.max(0) as u64,
         single_use,

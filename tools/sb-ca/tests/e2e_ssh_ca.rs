@@ -20,7 +20,11 @@ static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 fn setup_test_env(test_name: &str) -> (MutexGuard<'static, ()>, std::path::PathBuf) {
     let guard = TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
-    let tmp = std::env::temp_dir().join(format!("sb_ca_test_ssh_{}_{}", test_name, std::process::id()));
+    let tmp = std::env::temp_dir().join(format!(
+        "sb_ca_test_ssh_{}_{}",
+        test_name,
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&tmp);
     let _ = fs::create_dir_all(&tmp);
     std::env::set_var("SB_HOME", &tmp);
@@ -36,7 +40,11 @@ fn test_openssh_ca_init_and_rfc4251_wire_format() {
     // Conforms to RFC 4251: OpenSSH public key line structure:
     // <key-type> <base64-wire> <comment>
     let parts: Vec<&str> = ca_pub_line.split_whitespace().collect();
-    assert_eq!(parts.len(), 3, "CA public key must have 3 whitespace-separated parts");
+    assert_eq!(
+        parts.len(),
+        3,
+        "CA public key must have 3 whitespace-separated parts"
+    );
     assert_eq!(parts[0], "ssh-ed25519");
     assert_eq!(parts[2], "sovereign-swarm-ca@local");
 
@@ -46,7 +54,11 @@ fn test_openssh_ca_init_and_rfc4251_wire_format() {
         "OpenSSH wire format must start with standard Ed25519 wire prefix"
     );
     // 51 wire bytes -> exactly 68 Base64 characters without padding
-    assert_eq!(parts[1].len(), 68, "Wire format base64 string must be exactly 68 characters");
+    assert_eq!(
+        parts[1].len(),
+        68,
+        "Wire format base64 string must be exactly 68 characters"
+    );
 
     // ca_public_key_openssh() must return identical wire string
     let retrieved_pub = ca_public_key_openssh().expect("Retrieval must succeed");
@@ -64,18 +76,17 @@ fn test_openssh_user_certificate_issuance_and_verification() {
     let subject_pub_line = subject_priv.public_key().to_openssh().unwrap();
 
     let key_id = "operator-alice-test";
-    let principals = vec!["alice".to_string(), "sbadmin".to_string(), "deploy".to_string()];
+    let principals = vec![
+        "alice".to_string(),
+        "sbadmin".to_string(),
+        "deploy".to_string(),
+    ];
     let ttl = 3600;
     let serial = 10042u64;
 
-    let cert_str = issue_user_certificate(
-        &subject_pub_line,
-        key_id,
-        &principals,
-        ttl,
-        Some(serial),
-    )
-    .expect("User certificate issuance must succeed");
+    let cert_str =
+        issue_user_certificate(&subject_pub_line, key_id, &principals, ttl, Some(serial))
+            .expect("User certificate issuance must succeed");
 
     // Must start with OpenSSH certificate identifier
     assert!(
@@ -195,9 +206,13 @@ fn test_openssh_certificate_security_enforcement() {
         &["  alice  ".into(), "deploy\n".into()],
         3600,
         None,
-    ).expect("Padded principals must be sanitized");
+    )
+    .expect("Padded principals must be sanitized");
     let cert_trimmed = Certificate::from_str(&cert_trimmed_str).unwrap();
-    assert_eq!(cert_trimmed.valid_principals(), &["alice".to_string(), "deploy".to_string()]);
+    assert_eq!(
+        cert_trimmed.valid_principals(),
+        &["alice".to_string(), "deploy".to_string()]
+    );
 
     // 7. Verify library parse_public_key rejects file paths
     let temp_key = _tmp.join("dummy.pub");

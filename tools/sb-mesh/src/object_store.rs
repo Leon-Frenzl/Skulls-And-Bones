@@ -259,7 +259,12 @@ impl Drop for CatalogWriteLock {
             if error.kind() != std::io::ErrorKind::NotFound {
                 let p = self.path.display().to_string();
                 let e = error.to_string();
-                sb_core::logfmt::warn("ERR_CATALOG_LOCK_CLEANUP", "mesh.object_store", "Failed to remove object catalog write lock", &[("path", &p), ("error", &e)]);
+                sb_core::logfmt::warn(
+                    "ERR_CATALOG_LOCK_CLEANUP",
+                    "mesh.object_store",
+                    "Failed to remove object catalog write lock",
+                    &[("path", &p), ("error", &e)],
+                );
             }
         }
     }
