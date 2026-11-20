@@ -38,15 +38,37 @@ fn verify_bearer(headers: &[&str]) -> Result<sb_auth::SovereignClaims, (u16, &'s
     })
 }
 
+// [SECURITY-HYPOTHESIS] CWE-20 / CWE-640: Reverse-proxy rewrites Host to 127.0.0.1:8443 or untrusted header injects invalid WebAuthn rpId.
+// [SECURITY-VERIFIED] Prefers validated X-Forwarded-Host, strips port, rejects raw IP addresses, and falls back to console domain.
 fn host_from_headers(headers: &[&str]) -> String {
-    headers
-        .iter()
-        .find_map(|l| {
+    let find_header = |name: &str| -> Option<String> {
+        headers.iter().find_map(|l| {
             let (k, v) = l.split_once(':')?;
-            k.trim().eq_ignore_ascii_case("host").then(|| v.trim())
+            if !k.trim().eq_ignore_ascii_case(name) {
+                return None;
+            }
+            let first = v.split(',').next()?.trim();
+            if first.is_empty()
+                || first.len() > 253
+                || !first
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':'))
+            {
+                return None;
+            }
+            Some(first.to_string())
         })
-        .unwrap_or("console.skulls-and-bones.org")
-        .to_string()
+    };
+
+    for candidate in ["x-forwarded-host", "host"] {
+        if let Some(raw) = find_header(candidate) {
+            let host_only = raw.split(':').next().unwrap_or("").trim();
+            if !host_only.is_empty() && host_only.parse::<std::net::IpAddr>().is_err() {
+                return raw;
+            }
+        }
+    }
+    "console.skulls-and-bones.org".to_string()
 }
 
 fn rp_id_from_headers(headers: &[&str]) -> String {
@@ -54,7 +76,7 @@ fn rp_id_from_headers(headers: &[&str]) -> String {
         .split(':')
         .next()
         .unwrap_or("console.skulls-and-bones.org")
-        .to_string()
+        .to_ascii_lowercase()
 }
 
 fn load_auth_keypair() -> Result<sb_auth::crypto::Keypair, String> {

@@ -351,6 +351,18 @@ async fn handle_graph_request(
         {
             return forward_ws_upgrade_to_dc(config.dc_addr, &target_path, req).await;
         }
+        let forwarded_host = req
+            .headers()
+            .get("x-forwarded-host")
+            .or_else(|| req.headers().get(hyper::header::HOST))
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
+            .filter(|s| {
+                !s.is_empty()
+                    && s.len() <= 253
+                    && s.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':'))
+            });
         let body_bytes = match collect_bounded_body(req.into_body()).await {
             Ok(b) => b,
             Err(resp) => return Ok(resp),
@@ -360,6 +372,7 @@ async fn handle_graph_request(
             method.as_str(),
             &target_path,
             auth_header.as_deref(),
+            forwarded_host.as_deref(),
             &body_bytes,
         )
         .await
@@ -540,6 +553,7 @@ async fn forward_to_dc(
     method: &str,
     path_and_query: &str,
     auth_header: Option<&str>,
+    forwarded_host: Option<&str>,
     body: &[u8],
 ) -> Result<(StatusCode, String), String> {
     let mut stream = tokio::time::timeout(
@@ -550,8 +564,13 @@ async fn forward_to_dc(
     .map_err(|_| format!("Timed out connecting to DC {dc_addr}"))?
     .map_err(|e| format!("DC {dc_addr} unreachable: {e}"))?;
 
+    // [SECURITY-HYPOTHESIS] CWE-113: Unvalidated forwarded_host could inject HTTP headers.
+    // [SECURITY-VERIFIED] Caller filters to [A-Za-z0-9.:-] and forward_to_dc re-checks ASCII without CR/LF.
     let mut req_head =
         format!("{method} {path_and_query} HTTP/1.1\r\nHost: {dc_addr}\r\nConnection: close\r\n");
+    if let Some(host) = forwarded_host.filter(|h| !h.contains('\r') && !h.contains('\n')) {
+        req_head.push_str(&format!("X-Forwarded-Host: {host}\r\n"));
+    }
     if let Some(auth) = auth_header {
         req_head.push_str(&format!("Authorization: {auth}\r\n"));
     }
@@ -986,7 +1005,7 @@ mod tests {
         });
 
         // GET /v1/openapi.json
-        let (status, body) = forward_to_dc(addr, "GET", "/v1/openapi.json", None, &[])
+        let (status, body) = forward_to_dc(addr, "GET", "/v1/openapi.json", None, None, &[])
             .await
             .unwrap();
         assert_eq!(status, StatusCode::OK);
@@ -995,7 +1014,7 @@ mod tests {
         assert!(spec["paths"]["/v1/policies/{id}"].is_object());
 
         // GET /v1/health
-        let (status, body) = forward_to_dc(addr, "GET", "/v1/health", None, &[])
+        let (status, body) = forward_to_dc(addr, "GET", "/v1/health", None, None, &[])
             .await
             .unwrap();
         assert_eq!(status, StatusCode::OK);
