@@ -7,7 +7,8 @@ use std::path::PathBuf;
     author = "Skulls & Bones Lab <dev@skulls-and-bones.org>",
     version,
     about = "S&B Suite Master CLI — Unified Command Center for Sovereign Developer Tools",
-    long_about = "S&B Master CLI (sb) steuert das modulare Skulls & Bones-Ökosystem: Produktinventar, signierte Suite-Installationen, zentrale Updates und Delegation an eigenständige Tools. NetGate/SSH bleibt eine Prototypfunktion und historische Produktnamen sind keine installierbaren Release-Binaries."
+    long_about = "S&B Master CLI (sb) steuert das modulare Skulls & Bones-Ökosystem: Produktinventar, signierte Suite-Installationen, zentrale Updates und Delegation an eigenständige Tools. NetGate/SSH bleibt eine Prototypfunktion und historische Produktnamen sind keine installierbaren Release-Binaries.",
+    after_help = "ERST-EINRICHTUNG (SCHNELLSTART):\n  1. Workstation vorbereiten:      sb up\n  2. Domain Controller aufsetzen:    sb server dc-init --target root@<VPS-IP> --domain <domain>\n  3. Einer Domäne beitreten:         sb join <domain> --dc https://console.<domain>\n  4. Systemstatus & Diagnose:        sb status  |  sb doctor --fix"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -1019,6 +1020,46 @@ pub enum ServerAction {
         /// Nur das Provisioning-Skript ausgeben, nichts ausführen
         #[arg(long)]
         print_script: bool,
+    },
+
+    /// Richtet einen Sovereign Domain Controller auf einem VPS ein (ersetzt install-dc.sh)
+    #[command(alias = "dc")]
+    DcInit {
+        /// Optionaler Zielserver via SSH (z. B. 'root@145.223.83.235' oder Alias aus servers.toml; ohne Angabe lokal auf dem VPS)
+        #[arg(long)]
+        target: Option<String>,
+
+        /// Domänenname (z. B. skulls-and-bones.sb)
+        #[arg(long, default_value = "skulls-and-bones.sb")]
+        domain: String,
+
+        /// Öffentlicher Hostname der Web-Konsole (Standard: console.<domain>)
+        #[arg(long)]
+        console_host: Option<String>,
+
+        /// Öffentlicher Hostname für Enrollment (Standard: enroll.<domain>)
+        #[arg(long)]
+        enroll_host: Option<String>,
+
+        /// Initialer Admin-Benutzername (Standard: sb.admin)
+        #[arg(long, default_value = "sb.admin")]
+        admin: String,
+
+        /// Initiales Admin-Passwort (ohne Angabe wird ein sicheres Zufallspasswort generiert)
+        #[arg(long)]
+        password: Option<String>,
+
+        /// TLS Reverse-Proxy Engine ('caddy' oder 'sb-proxy')
+        #[arg(long, default_value = "caddy")]
+        proxy: String,
+
+        /// Optionale URL zu einem Linux Release-Tarball (.tar.gz)
+        #[arg(long)]
+        tarball_url: Option<String>,
+
+        /// Trockenlauf: Gibt das Setup-Skript aus, ohne Änderungen vorzunehmen
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 

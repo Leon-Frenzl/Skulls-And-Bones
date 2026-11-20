@@ -1959,4 +1959,387 @@ mod tests {
         assert!(resolve_dc_url("corp.eu", Some("ftp://bad")).is_err());
         assert!(login_for_join_token("http://remote.example.com", "admin", "pw").is_err());
     }
+
+    #[test]
+    fn test_build_dc_init_script_validates_inputs_and_renders_caddy_or_sb_proxy() {
+        let caddy_script = build_dc_init_script(
+            "corp.eu",
+            Some("console.corp.eu"),
+            Some("enroll.corp.eu"),
+            "leon.admin",
+            None,
+            "caddy",
+            None,
+        )
+        .expect("valid caddy script");
+        assert!(caddy_script.contains("sb-dc.service"));
+        assert!(caddy_script.contains("console.corp.eu"));
+        assert!(caddy_script.contains("enroll.corp.eu"));
+        assert!(caddy_script.contains("Caddyfile"));
+
+        let proxy_script = build_dc_init_script(
+            "corp.eu",
+            None,
+            None,
+            "sb.admin",
+            None,
+            "sb-proxy",
+            Some("https://example.org/sb.tar.gz"),
+        )
+        .expect("valid sb-proxy script");
+        assert!(proxy_script.contains("sb-proxy.service"));
+        assert!(proxy_script.contains("https://example.org/sb.tar.gz"));
+
+        assert!(build_dc_init_script("bad;rm -rf /", None, None, "sb.admin", None, "caddy", None).is_err());
+        assert!(build_dc_init_script("corp.eu", None, None, "bad;user", None, "caddy", None).is_err());
+        assert!(build_dc_init_script("corp.eu", None, None, "sb.admin", None, "nginx", None).is_err());
+    }
+}
+
+/// Builds a hardened Ubuntu/Debian setup script for `sb server dc-init` (replacing `scripts/install-dc.sh`).
+// [SECURITY-HYPOTHESIS] CWE-78: Unvalidated domain, host, username, or URL interpolated into bash setup script.
+// [SECURITY-VERIFIED] All hostnames, usernames, proxy engine, and tarball URL are strictly validated before formatting.
+pub fn build_dc_init_script(
+    domain: &str,
+    console_host: Option<&str>,
+    enroll_host: Option<&str>,
+    admin: &str,
+    password: Option<&str>,
+    proxy: &str,
+    tarball_url: Option<&str>,
+) -> Result<String, String> {
+    if !is_valid_host(domain) {
+        return Err(format!("Ungültiger Domain-Name: '{domain}'"));
+    }
+    let console = console_host
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| format!("console.{domain}"));
+    let enroll = enroll_host
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| format!("enroll.{domain}"));
+
+    if !is_valid_host(&console) {
+        return Err(format!("Ungültiger Console-Host: '{console}'"));
+    }
+    if !is_valid_host(&enroll) {
+        return Err(format!("Ungültiger Enroll-Host: '{enroll}'"));
+    }
+    if admin.is_empty()
+        || admin.len() > 64
+        || !admin
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        || !admin
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err(format!("Ungültiger Admin-Benutzername: '{admin}'"));
+    }
+    if !matches!(proxy, "caddy" | "sb-proxy") {
+        return Err(format!(
+            "Ungültige Proxy-Engine '{proxy}' (erlaubt: 'caddy' oder 'sb-proxy')"
+        ));
+    }
+    if let Some(url) = tarball_url {
+        if !url.starts_with("https://")
+            || url.contains('\'')
+            || url.contains('\n')
+            || url.contains('\r')
+            || url.chars().any(char::is_whitespace)
+        {
+            return Err("Ungültige --tarball-url (muss mit https:// beginnen und darf keine Sonderzeichen enthalten)".into());
+        }
+    }
+    if let Some(pw) = password {
+        if pw.is_empty() || pw.contains('\'') || pw.contains('\n') || pw.contains('\r') {
+            return Err("Ungültiges Passwort (darf nicht leer sein und keine Zeilenumbrüche oder Hochkommas enthalten)".into());
+        }
+    }
+
+    let binary_step = if let Some(url) = tarball_url {
+        format!(
+            "TMP_TAR='/tmp/sb-release.tar.gz'\ncurl -fsSL '{url}' -o \"$TMP_TAR\"\ntar -xzf \"$TMP_TAR\" -C /usr/local/bin\nrm -f \"$TMP_TAR\"\nchmod 0755 /usr/local/bin/sb /usr/local/bin/sb-node || true\n"
+        )
+    } else {
+        "if ! command -v sb-node >/dev/null 2>&1; then\n  if command -v sb >/dev/null 2>&1; then\n    sb install node proxy || true\n  fi\nfi\n".to_string()
+    };
+
+    let proxy_step = if proxy == "sb-proxy" {
+        format!(
+            r#"systemctl disable --now caddy >/dev/null 2>&1 || true
+/usr/local/bin/sb-proxy add '{console}' 8090 || true
+/usr/local/bin/sb-proxy add '{enroll}' 8090 || true
+cat >/etc/systemd/system/sb-proxy.service <<'EOF'
+[Unit]
+Description=Skulls & Bones Reverse Proxy ({domain})
+After=network-online.target sb-dc.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sb-proxy start --http-bind 0.0.0.0:80 --bind 0.0.0.0:443
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now sb-proxy
+"#
+        )
+    } else {
+        format!(
+            r#"cat >/etc/caddy/Caddyfile <<'EOF'
+{console} {{
+    reverse_proxy 127.0.0.1:8090
+    header {{
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+    }}
+}}
+
+{enroll} {{
+    handle /enroll* {{
+        reverse_proxy 127.0.0.1:8090
+    }}
+    handle /v1/enrollments* {{
+        reverse_proxy 127.0.0.1:8090
+    }}
+    handle /v1/health {{
+        reverse_proxy 127.0.0.1:8090
+    }}
+    handle {{
+        respond "403 Forbidden" 403
+    }}
+}}
+EOF
+systemctl enable --now caddy
+systemctl reload caddy
+"#
+        )
+    };
+
+    let pw_step = if let Some(pw) = password {
+        format!("ADMIN_PASSWORD='{pw}'\nGENERATED_PW=0\n")
+    } else {
+        "ADMIN_PASSWORD=\"$(tr -dc 'A-Za-z0-9!@#%^&*' </dev/urandom | head -c 20)\"\nGENERATED_PW=1\n".to_string()
+    };
+
+    Ok(format!(
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ $EUID -ne 0 ]]; then
+  echo "Fehler: Bitte als root oder via sudo ausführen." >&2
+  exit 1
+fi
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq curl ca-certificates ufw fail2ban caddy tar gzip
+ufw allow 22/tcp >/dev/null
+ufw allow 80/tcp >/dev/null
+ufw allow 443/tcp >/dev/null
+ufw --force enable >/dev/null
+systemctl enable --now fail2ban >/dev/null
+{binary_step}{proxy_step}
+CONSOLE_DIST_ARG=""
+if [[ -d /opt/skulls-and-bones/console/dist ]]; then
+  CONSOLE_DIST_ARG="--console-dir /opt/skulls-and-bones/console/dist"
+fi
+cat >/etc/systemd/system/sb-dc.service <<EOF
+[Unit]
+Description=Skulls & Bones Sovereign Domain Controller ({domain})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sb-node dc up --domain {domain} --admin {admin} --dc-bind 127.0.0.1:8443 --graph-bind 127.0.0.1:8090 $CONSOLE_DIST_ARG
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now sb-dc.service
+sleep 2
+{pw_step}
+/usr/local/bin/sb-node user set-password '{admin}' --password "$ADMIN_PASSWORD"
+/usr/local/bin/sb-node policy init '{domain}' >/dev/null 2>&1 || true
+/usr/local/bin/sb-node policy put --id baseline-all --domain '{domain}' --title "Baseline Security Policy" --description "Firewall & Screenlock" --scope all --firewall on --screenlock-mins 5 >/dev/null 2>&1 || true
+echo "DC_READY=https://{console}"
+if [[ "$GENERATED_PW" -eq 1 ]]; then
+  echo "ADMIN_USER={admin}"
+  echo "ADMIN_PASSWORD=$ADMIN_PASSWORD"
+fi
+"#
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn handle_server_dc_init(
+    target: Option<&str>,
+    domain: &str,
+    console_host: Option<&str>,
+    enroll_host: Option<&str>,
+    admin: &str,
+    password: Option<&str>,
+    proxy: &str,
+    tarball_url: Option<&str>,
+    dry_run: bool,
+) {
+    use std::io::Write;
+    print_banner();
+    println!(
+        "  {} {}\n",
+        "► SOVEREIGN DOMAIN CONTROLLER SETUP".bold(),
+        "[SB SERVER DC-INIT]".bright_green()
+    );
+
+    let script = match build_dc_init_script(
+        domain,
+        console_host,
+        enroll_host,
+        admin,
+        password,
+        proxy,
+        tarball_url,
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            sb_core::logfmt::error(
+                "FLEET_DC_INIT_VALIDATION",
+                "sb::fleet",
+                "Ungueltige DC-Setup-Parameter",
+                &[("err", &e)],
+            );
+            std::process::exit(1);
+        }
+    };
+
+    if dry_run {
+        println!("{script}");
+        return;
+    }
+
+    if let Some(remote) = target {
+        let _ = crate::commands::ssh::ensure_ephemeral_ssh_user_cert();
+        let _ = sb_core::ssh_transport::ensure_sovereign_ssh_config();
+        let (ssh_bin, ssh_args) =
+            match sb_core::ssh_transport::build_ssh_exec_args(remote, "bash -s") {
+                Ok(v) => v,
+                Err(e) => {
+                    sb_core::logfmt::error(
+                        "FLEET_DC_INIT_SSH_ARGS",
+                        "sb::fleet",
+                        "SSH-Verbindung konnte nicht vorbereitet werden",
+                        &[("target", remote), ("err", &e)],
+                    );
+                    std::process::exit(1);
+                }
+            };
+        let mut child = match Command::new(&ssh_bin)
+            .args(&ssh_args)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                sb_core::logfmt::error(
+                    "FLEET_DC_INIT_SSH_SPAWN",
+                    "sb::fleet",
+                    "SSH konnte nicht gestartet werden",
+                    &[("target", remote), ("err", &e.to_string())],
+                );
+                std::process::exit(1);
+            }
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(script.as_bytes());
+        }
+        match child.wait() {
+            Ok(s) if s.success() => {
+                println!(
+                    "\n  {} Domain Controller auf '{}' erfolgreich eingerichtet.",
+                    "✓".bright_green().bold(),
+                    remote
+                );
+            }
+            Ok(s) => {
+                sb_core::logfmt::error(
+                    "FLEET_DC_INIT_REMOTE_FAILED",
+                    "sb::fleet",
+                    "Remote DC-Setup fehlgeschlagen",
+                    &[("target", remote), ("status", &s.to_string())],
+                );
+                std::process::exit(1);
+            }
+            Err(e) => {
+                sb_core::logfmt::error(
+                    "FLEET_DC_INIT_REMOTE_WAIT",
+                    "sb::fleet",
+                    "Fehler beim Warten auf SSH-Prozess",
+                    &[("err", &e.to_string())],
+                );
+                std::process::exit(1);
+            }
+        }
+    } else {
+        #[cfg(unix)]
+        {
+            let mut child = match Command::new("bash")
+                .arg("-s")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    sb_core::logfmt::error(
+                        "FLEET_DC_INIT_LOCAL_SPAWN",
+                        "sb::fleet",
+                        "bash konnte nicht gestartet werden",
+                        &[("err", &e.to_string())],
+                    );
+                    std::process::exit(1);
+                }
+            };
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(script.as_bytes());
+            }
+            match child.wait() {
+                Ok(s) if s.success() => {
+                    println!(
+                        "\n  {} Domain Controller lokal erfolgreich eingerichtet.",
+                        "✓".bright_green().bold()
+                    );
+                }
+                _ => {
+                    sb_core::logfmt::error(
+                        "FLEET_DC_INIT_LOCAL_FAILED",
+                        "sb::fleet",
+                        "Lokales DC-Setup fehlgeschlagen",
+                        &[],
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            sb_core::logfmt::error(
+                "FLEET_DC_INIT_TARGET_REQUIRED",
+                "sb::fleet",
+                "Auf Windows/macOS muss --target <user@host> fuer das VPS-Setup angegeben werden",
+                &[],
+            );
+            std::process::exit(1);
+        }
+    }
 }

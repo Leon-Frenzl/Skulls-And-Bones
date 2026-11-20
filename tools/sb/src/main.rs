@@ -569,6 +569,29 @@ fn real_main() {
                     std::process::exit(1);
                 }
             }
+            ServerAction::DcInit {
+                target,
+                domain,
+                console_host,
+                enroll_host,
+                admin,
+                password,
+                proxy,
+                tarball_url,
+                dry_run,
+            } => {
+                commands::fleet::handle_server_dc_init(
+                    target.as_deref(),
+                    &domain,
+                    console_host.as_deref(),
+                    enroll_host.as_deref(),
+                    &admin,
+                    password.as_deref(),
+                    &proxy,
+                    tarball_url.as_deref(),
+                    dry_run,
+                );
+            }
         },
         Some(Commands::Invite { action }) => match action {
             InviteAction::Client { name, role, ttl } => {
