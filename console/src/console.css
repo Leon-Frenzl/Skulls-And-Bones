@@ -462,3 +462,254 @@ body {
   font-size: 0.75rem;
   color: #8b949e;
 }
+
+.visually-hidden:where(:not(:focus-within, :active)) {
+  position: absolute !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap !important;
+}
+
+.ca-proxy-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.section-heading {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.card-header-row .card-title {
+  margin-bottom: 0;
+}
+
+.ca-meta-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.ca-key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ca-mono-pill {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: rgba(8, 13, 14, 0.75);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.ca-badge-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ca-muted {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.ca-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.ca-filter-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.ca-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ca-field-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.ca-input,
+.ca-select {
+  min-block-size: 32px;
+  background: #080d0e;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.btn-compact {
+  min-block-size: 32px;
+  min-inline-size: 32px;
+  padding: 5px 12px;
+}
+
+:where(button, input, select, .table-wrapper):focus-visible {
+  outline: 2px solid var(--accent, #52c7bd);
+  outline-offset: 2px;
+}
+
+.table-wrapper {
+  overflow: auto;
+  max-inline-size: 100%;
+  max-block-size: min(560px, 72vh);
+  container-type: inline-size;
+}
+
+.responsive-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.responsive-table thead {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  background: var(--surface);
+}
+
+.responsive-table tbody th {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+  background: var(--surface);
+  font-weight: 600;
+  vertical-align: top;
+}
+
+.ca-route-domain {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ca-route-id,
+.ca-route-aliases {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.ca-empty-cell {
+  text-align: center;
+  color: var(--muted);
+  padding: 24px 12px;
+}
+
+@container (width < 600px) {
+  .ca-routes-table,
+  .ca-routes-table thead,
+  .ca-routes-table tbody,
+  .ca-routes-table tr,
+  .ca-routes-table th,
+  .ca-routes-table td {
+    display: block;
+  }
+
+  .ca-routes-table thead {
+    display: none;
+  }
+
+  .ca-routes-table tr {
+    margin-block-end: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .ca-routes-table tbody th {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 2;
+    background: rgba(8, 13, 14, 0.92);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .ca-routes-table {
+    --label-2: "Ziel & Node";
+    --label-3: "Sicherheit";
+    --label-4: "Limits";
+    --label-5: "Status";
+  }
+
+  .ca-routes-table td:nth-child(2)::before {
+    content: var(--label-2) ": ";
+    font-weight: 600;
+    color: var(--muted);
+  }
+
+  .ca-routes-table td:nth-child(3)::before {
+    content: var(--label-3) ": ";
+    font-weight: 600;
+    color: var(--muted);
+  }
+
+  .ca-routes-table td:nth-child(4)::before {
+    content: var(--label-4) ": ";
+    font-weight: 600;
+    color: var(--muted);
+  }
+
+  .ca-routes-table td:nth-child(5)::before {
+    content: var(--label-5) ": ";
+    font-weight: 600;
+    color: var(--muted);
+  }
+}

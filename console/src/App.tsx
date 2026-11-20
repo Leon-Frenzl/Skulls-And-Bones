@@ -5,6 +5,7 @@ import { DEFAULT_WORKBENCH_THEMES, ThemeProvider } from "./ui";
 import { buildNotice, ConsoleNotice, formatHttpError, formatNetworkError } from "./ui/errors";
 import { LoginView } from "./views/LoginView";
 import { PasskeyPanel } from "./components/PasskeyPanel";
+import { CaProxyPanel, CaStatusData, ProxyRouteItem } from "./components/CaProxyPanel";
 const FilesWindow = lazy(() => import("./FilesWindow").then((m) => ({ default: m.FilesWindow })));
 const XtermTerminal = lazy(() => import("./XtermTerminal").then((m) => ({ default: m.XtermTerminal })));
 import {
@@ -1729,16 +1730,10 @@ export default function App() {
         )}
 
         {tab === "ca" && (
-          <div className="grid">
-            <div className="card">
-              <div className="card-title">CA Status</div>
-              <pre className="code-block">{JSON.stringify(caStatus, null, 2)}</pre>
-            </div>
-            <div className="card">
-              <div className="card-title">Reverse-Proxy Routen</div>
-              <pre className="code-block">{JSON.stringify(routes, null, 2)}</pre>
-            </div>
-          </div>
+          <CaProxyPanel
+            caStatus={caStatus as CaStatusData | null}
+            routes={routes as ProxyRouteItem[]}
+          />
         )}
 
         {tab === "audit" && (
