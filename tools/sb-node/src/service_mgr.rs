@@ -434,9 +434,9 @@ fn run_windows_sc(args: &[&str]) -> Result<(), String> {
     let stderr = String::from_utf8_lossy(&out.stderr);
     let combined = format!("{stdout} {stderr}").trim().to_string();
     if combined.contains("FAILED 5") || combined.to_ascii_lowercase().contains("access is denied") {
+        let sub = args.join(" ");
         return Err(format!(
-            "Zugriff verweigert für 'sc.exe {}': Starte das Terminal als Administrator und führe den Befehl erneut aus.",
-            args.join(" ")
+            "Zugriff verweigert für 'sc.exe {sub}': Starte das Terminal als Administrator und führe den Befehl erneut aus (oder via PowerShell: Start-Process sc.exe -Verb RunAs -ArgumentList '{sub}')."
         ));
     }
     Err(format!(

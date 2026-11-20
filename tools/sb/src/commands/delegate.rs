@@ -271,17 +271,32 @@ pub fn delegate_to(tool_id: &str, binary: &str, args: &[String]) {
                     "Tool is not installed",
                     &[("binary", binary), ("tool", tool_id)],
                 );
+                eprintln!(
+                    "  {} Nächster Schritt: Führe {} oder {} aus, um '{}' zu installieren.",
+                    "►".bright_cyan(),
+                    "sb update".bright_yellow(),
+                    "sb update --from-workspace".bright_yellow(),
+                    binary
+                );
             }
             std::process::exit(1);
         }
     };
 
-    let mut cmd = Command::new(binary_to_run);
+    let mut cmd = Command::new(&binary_to_run);
     cmd.args(&final_args);
     let status = cmd.status();
 
     match status {
         Ok(s) => {
+            if !s.success()
+                && !matches!(
+                    final_args.first().map(String::as_str),
+                    Some("--version" | "-V")
+                )
+            {
+                warn_if_binary_stale(&binary_to_run, binary);
+            }
             std::process::exit(s.code().unwrap_or(0));
         }
         Err(e) => {
@@ -292,6 +307,40 @@ pub fn delegate_to(tool_id: &str, binary: &str, args: &[String]) {
                 &[("binary", binary), ("error", &e.to_string())],
             );
             std::process::exit(1);
+        }
+    }
+}
+
+fn warn_if_binary_stale(binary_path: &std::path::Path, binary_name: &str) {
+    let Ok(sb_exe) = std::env::current_exe() else {
+        return;
+    };
+    let (Ok(sb_meta), Ok(bin_meta)) = (std::fs::metadata(&sb_exe), std::fs::metadata(binary_path))
+    else {
+        return;
+    };
+    let (Ok(sb_mtime), Ok(bin_mtime)) = (sb_meta.modified(), bin_meta.modified()) else {
+        return;
+    };
+    if let Ok(age_diff) = sb_mtime.duration_since(bin_mtime) {
+        if age_diff.as_secs() > 60 {
+            sb_core::logfmt::warn(
+                "WARN_TOOL_VERSION_DRIFT",
+                "sb.delegate",
+                "Delegated binary is older than sb CLI",
+                &[
+                    ("binary", binary_name),
+                    ("path", &binary_path.display().to_string()),
+                ],
+            );
+            eprintln!(
+                "  {} '{}' ({}) ist älter als die aktive sb-CLI. Synchronisiere alle Werkzeuge mit {} oder {}.",
+                "!".bright_yellow().bold(),
+                binary_name,
+                binary_path.display(),
+                "sb update".bright_cyan(),
+                "sb update --from-workspace".bright_cyan()
+            );
         }
     }
 }
