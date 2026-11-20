@@ -10,6 +10,7 @@ members = [
     "tools/sb-core",
     "tools/sb-auth",
     "tools/sb-ca",
+    "tools/sb-db",
     "tools/sb-cred-provider",
     "tools/sb-linux-auth",
 ]

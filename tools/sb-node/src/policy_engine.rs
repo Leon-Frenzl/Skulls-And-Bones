@@ -27,6 +27,28 @@ pub struct PolicyStore {
 }
 
 /// Persisted machine-side anti-rollback state (`~/.sb/domain/applied_policy_state.json`).
+impl PolicyStore {
+    /// Persists the `PolicyStore` encrypted at-rest in `SovereignDb` (`namespace = "policies"`).
+    pub fn save_to_db(
+        &self,
+        db: &sb_db::SovereignDb,
+        ticket: &sb_db::VerifiedDbTicket,
+    ) -> Result<u32, String> {
+        db.put_encrypted_json(ticket, "policies", &self.domain, self)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Loads the `PolicyStore` for `domain` from `SovereignDb`.
+    pub fn load_from_db(
+        db: &sb_db::SovereignDb,
+        ticket: &sb_db::VerifiedDbTicket,
+        domain: &str,
+    ) -> Result<Option<Self>, String> {
+        db.get_encrypted_json(ticket, "policies", domain)
+            .map_err(|e| e.to_string())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppliedPolicyState {
     pub domain: String,

@@ -2,7 +2,7 @@
 
 ## Projekt Overview
 
-**Skulls & Bones** ist ein Rust-Workspace (v0.2.0) mit 13 Crates + Website.
+**Skulls & Bones** ist ein Rust-Workspace (v0.2.0) mit 12 Crates + Web-Konsole (`console/`).
 - **Edition:** Rust 2021
 - **Lizenz:** MIT
 
@@ -12,20 +12,17 @@
 |---|---|
 | `sb` | Main CLI / Entry Point |
 | `sb-core` | Kern-Logik, Shared Utilities |
-| `sb-code` | Code-Analyse, Transformation |
-| `sb-forge` | Code-Generierung, Templates |
 | `sb-key` | Key-Management, Cryptography |
 | `sb-mesh` | Mesh Network Layer |
 | `sb-node` | Node/Peer Management |
 | `sb-proxy` | Reverse Proxy / Routing |
 | `sb-db` | Persistenz / Data Layer |
 | `sb-dns` | DNS-Resolution, Name Resolution |
-| `sb-app-contract` | Application Contract Definitions |
-| `sb-app-protocol` | Application Protocol / Messages |
-| `sb-drive` | Data Drive / Storage |
 | `sb-auth` | Authentication / Authorization |
 | `sb-ca` | Certificate Authority |
-| **Website** | npm/Node.js Frontend |
+| `sb-cred-provider` | Windows Credential Provider COM DLL |
+| `sb-linux-auth` | Linux PAM / NSS Modul |
+| **console/** | React + Vite Web-Konsole |
 
 ## Team-Rollen
 

@@ -16,6 +16,7 @@ ADMIN_PASSWORD=""
 RELEASE_TARBALL_URL=""
 SRC_DIR="/opt/skulls-and-bones"
 BIN_DIR="/usr/local/bin"
+PROXY_ENGINE="caddy"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -26,6 +27,7 @@ while [[ $# -gt 0 ]]; do
     --password) ADMIN_PASSWORD="$2"; shift 2 ;;
     --tarball-url) RELEASE_TARBALL_URL="$2"; shift 2 ;;
     --src-dir) SRC_DIR="$2"; shift 2 ;;
+    --proxy) PROXY_ENGINE="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,10p' "$0"
       exit 0
@@ -80,7 +82,34 @@ else
   exit 1
 fi
 
-echo "==> [3/6] Caddy TLS Reverse Proxy konfigurieren ($CONSOLE_HOST, $ENROLL_HOST)..."
+if [[ "$PROXY_ENGINE" == "sb-proxy" ]]; then
+  echo "==> [3/6] sb-proxy TLS Reverse Proxy konfigurieren ($CONSOLE_HOST, $ENROLL_HOST)..."
+  systemctl disable --now caddy >/dev/null 2>&1 || true
+  if [[ -f "$SRC_DIR/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then
+    (cd "$SRC_DIR" && cargo build --release -p sb-proxy)
+    install -m 0755 "$SRC_DIR/target/release/sb-proxy" "$BIN_DIR/sb-proxy"
+  fi
+  "$BIN_DIR/sb-proxy" add "$CONSOLE_HOST" 8090 || true
+  "$BIN_DIR/sb-proxy" add "$ENROLL_HOST" 8090 || true
+  cat >/etc/systemd/system/sb-proxy.service <<EOF
+[Unit]
+Description=Skulls & Bones Reverse Proxy ($DOMAIN)
+After=network-online.target sb-dc.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${BIN_DIR}/sb-proxy start --http-bind 0.0.0.0:80 --bind 0.0.0.0:443
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now sb-proxy
+else
+  echo "==> [3/6] Caddy TLS Reverse Proxy konfigurieren ($CONSOLE_HOST, $ENROLL_HOST)..."
 cat >/etc/caddy/Caddyfile <<EOF
 ${CONSOLE_HOST} {
     reverse_proxy 127.0.0.1:8090
@@ -108,6 +137,7 @@ ${ENROLL_HOST} {
 EOF
 systemctl enable --now caddy
 systemctl reload caddy
+fi
 
 echo "==> [4/6] systemd Service sb-dc.service installieren..."
 CONSOLE_DIST_ARG=""

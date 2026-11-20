@@ -177,6 +177,23 @@ pub fn exchange_login_code_for_session(
         .map_err(|e| format!("Failed to issue session tokens: {e}"))
 }
 
+/// Builds a standard OpenID Connect Discovery document (`/.well-known/openid-configuration`).
+pub fn discovery_document(issuer: &str) -> serde_json::Value {
+    let base = issuer.trim_end_matches('/');
+    serde_json::json!({
+        "issuer": base,
+        "authorization_endpoint": format!("{base}/oauth2/authorize"),
+        "token_endpoint": format!("{base}/oauth2/token"),
+        "userinfo_endpoint": format!("{base}/oauth2/userinfo"),
+        "jwks_uri": format!("{base}/.well-known/jwks.json"),
+        "response_types_supported": ["code"],
+        "subject_types_supported": ["public"],
+        "id_token_signing_alg_values_supported": ["EdDSA"],
+        "scopes_supported": ["openid", "profile", "email", "groups"],
+        "token_endpoint_auth_methods_supported": ["client_secret_post", "none"],
+    })
+}
+
 /// Persistent Argon2id password credential store (`~/.sb/domain/credentials.json`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CredentialStore {
@@ -256,6 +273,11 @@ mod tests {
         let jwks = jwks_document(&engine.public_key_base64()).unwrap();
         assert_eq!(jwks["keys"][0]["kty"], "OKP");
         assert_eq!(jwks["keys"][0]["crv"], "Ed25519");
+
+        let disc = discovery_document("https://dc.corp.sb/");
+        assert_eq!(disc["issuer"], "https://dc.corp.sb");
+        assert_eq!(disc["jwks_uri"], "https://dc.corp.sb/.well-known/jwks.json");
+        assert_eq!(disc["userinfo_endpoint"], "https://dc.corp.sb/oauth2/userinfo");
 
         let mut store = LoginCodeStore::default();
         let code = store.issue_code("anna.admin", vec!["domain:admin".into()], 300);

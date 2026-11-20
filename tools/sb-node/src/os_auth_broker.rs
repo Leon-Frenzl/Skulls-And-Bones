@@ -35,6 +35,11 @@ fn offline_failures() -> &'static Mutex<HashMap<String, (u32, Instant)>> {
 }
 
 fn check_offline_lockout(username: &str) -> Option<u64> {
+    if let Ok(db) = crate::domain_join::open_domain_db(None) {
+        if let Ok(Some(rem)) = db.check_auth_lockout(username) {
+            return Some(rem);
+        }
+    }
     let mut map = offline_failures().lock().ok()?;
     let (count, last) = map.get(username)?;
     if *count >= OFFLINE_MAX_FAILURES {
@@ -49,6 +54,9 @@ fn check_offline_lockout(username: &str) -> Option<u64> {
 }
 
 fn record_offline_failure(username: &str) {
+    if let Ok(db) = crate::domain_join::open_domain_db(None) {
+        let _ = db.record_auth_failure(username, OFFLINE_MAX_FAILURES, OFFLINE_LOCKOUT_SECS);
+    }
     if let Ok(mut map) = offline_failures().lock() {
         let entry = map
             .entry(username.to_string())
@@ -59,6 +67,9 @@ fn record_offline_failure(username: &str) {
 }
 
 fn clear_offline_failure(username: &str) {
+    if let Ok(db) = crate::domain_join::open_domain_db(None) {
+        let _ = db.clear_auth_lockout(username);
+    }
     if let Ok(mut map) = offline_failures().lock() {
         map.remove(username);
     }

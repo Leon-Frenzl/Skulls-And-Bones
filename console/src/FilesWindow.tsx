@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowUp, Download, File, Folder, RefreshCw, Upload } from "lucide-react";
+import { NoticeBanner } from "./ui/NoticeBanner";
+import type { ConsoleNotice } from "./ui/errors";
 
 interface FileEntry {
   name: string;
@@ -41,7 +43,21 @@ export function FilesWindow({ machineId, fqdn, authHeaders, onStatus }: FilesWin
   const [pathInput, setPathInput] = useState<string>("");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [busy, setBusy] = useState<boolean>(false);
-  const [err, setErr] = useState<string>("");
+  const [notice, setNotice] = useState<ConsoleNotice | null>(null);
+  const setErr = (msg: string) => {
+    if (!msg) {
+      setNotice(null);
+      return;
+    }
+    setNotice({
+      id: `files-${Date.now()}`,
+      scope: "files",
+      severity: "error",
+      title: "Dateivorgang fehlgeschlagen",
+      detail: msg,
+      nextStep: "Prüfen Sie den Pfad, die Berechtigung und ob der Ziel-Agent online ist.",
+    });
+  };
 
   const loadDir = async (targetPath: string) => {
     setBusy(true);
@@ -182,10 +198,8 @@ export function FilesWindow({ machineId, fqdn, authHeaders, onStatus }: FilesWin
         </label>
       </form>
 
-      {err && (
-        <div className="card" style={{ borderColor: "#ef5350", padding: "8px 12px" }}>
-          {err}
-        </div>
+      {notice && (
+        <NoticeBanner notice={notice} compact onDismiss={() => setNotice(null)} />
       )}
 
       <div style={{ flex: 1, overflow: "auto" }}>

@@ -43,6 +43,7 @@ sb-mesh = { version = "0.3.0", path = "../sb-mesh" }
 sb-auth = { version = "0.2.0", path = "../sb-auth" }
 sb-ca = { version = "0.1.0", path = "../sb-ca" }
 sb-dns = { version = "0.2.0", path = "../sb-dns" }
+sb-db = { version = "0.2.0", path = "../sb-db" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

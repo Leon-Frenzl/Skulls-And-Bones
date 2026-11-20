@@ -11,6 +11,7 @@ pub mod fleet;
 pub mod laps;
 pub mod oidc;
 pub mod os_auth_broker;
+pub mod os_logon_provision;
 pub mod policy_engine;
 pub mod rbac;
 pub mod service_mgr;

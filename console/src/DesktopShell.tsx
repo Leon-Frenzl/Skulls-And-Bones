@@ -1,4 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from "react";
+import type { ConsoleNotice } from "./ui/errors";
+import { NoticeBanner } from "./ui/NoticeBanner";
 import {
   Activity,
   AppWindow,
@@ -408,7 +410,7 @@ interface DesktopShellProps {
   focusedId: string | null;
   domainName: string;
   username: string;
-  statusMsg: string;
+  statusMsg?: string;
   onOpenShortcut: (shortcut: DesktopShortcut) => void;
   onFocusWindow: (id: string) => void;
   onCloseWindow: (id: string) => void;
@@ -417,6 +419,8 @@ interface DesktopShellProps {
   onMoveWindow: (id: string, x: number, y: number) => void;
   onResizeWindow: (id: string, w: number, h: number) => void;
   onLogout: () => void;
+  globalNotice?: ConsoleNotice | null;
+  onDismissGlobalNotice?: () => void;
 }
 
 export function DesktopShell({
@@ -433,11 +437,14 @@ export function DesktopShell({
   onMoveWindow,
   onResizeWindow,
   onLogout,
+  globalNotice,
+  onDismissGlobalNotice,
 }: DesktopShellProps) {
   const startTriggerId = useId();
   const startMenuId = useId();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuPopoverRef = useRef<HTMLDivElement | null>(null);
+  const toastPopoverRef = useRef<HTMLDivElement | null>(null);
   const focusgroupRef = useRef<HTMLDivElement | null>(null);
   const [startOpen, setStartOpen] = useState(false);
   const [liveMsg, setLiveMsg] = useState("");
@@ -459,6 +466,22 @@ export function DesktopShell({
     }, 15000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const el = toastPopoverRef.current as
+      | (HTMLDivElement & { showPopover?: () => void; hidePopover?: () => void })
+      | null;
+    if (!el || typeof el.showPopover !== "function" || typeof el.hidePopover !== "function") return;
+    try {
+      if (globalNotice || statusMsg) {
+        if (!el.matches(":popover-open")) el.showPopover();
+      } else if (el.matches(":popover-open")) {
+        el.hidePopover();
+      }
+    } catch {
+      // Fallback uses fixed positioning when popover API is unavailable
+    }
+  }, [globalNotice, statusMsg]);
 
   // Progressive enhancement: feature-detect popover, invoker commands, and focusgroup.
   useEffect(() => {
@@ -610,28 +633,34 @@ export function DesktopShell({
         ))}
       </nav>
 
-      {/* Status Toast Banner */}
-      {statusMsg && (
-        <div
-          role="status"
-          style={{
-            position: "fixed",
-            top: 14,
-            right: 18,
-            zIndex: 9999,
-            maxWidth: 520,
-            padding: "8px 14px",
-            borderRadius: 8,
-            background: "rgba(17, 25, 37, 0.96)",
-            border: "1px solid rgba(88, 166, 255, 0.45)",
-            color: "#e6edf3",
-            fontSize: "0.82rem",
-            boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-          }}
-        >
-          {statusMsg}
-        </div>
-      )}
+      {/* Global Top-Layer Toast Banner */}
+      <div
+        ref={toastPopoverRef}
+        {...({ popover: "manual" } as Record<string, string>)}
+        style={{
+          position: "fixed",
+          top: 14,
+          right: 18,
+          left: "auto",
+          bottom: "auto",
+          margin: 0,
+          padding: 0,
+          border: "none",
+          background: "transparent",
+          zIndex: 9999,
+          maxWidth: 460,
+          width: "min(460px, calc(100vw - 36px))",
+          display: globalNotice ? "block" : "none",
+        }}
+      >
+        {globalNotice && (
+          <NoticeBanner
+            notice={globalNotice}
+            compact
+            onDismiss={() => onDismissGlobalNotice?.()}
+          />
+        )}
+      </div>
 
       {/* Open Windows */}
       {windows.map((win) => (

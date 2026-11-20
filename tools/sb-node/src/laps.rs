@@ -28,6 +28,31 @@ pub struct LapsMetadata {
 }
 
 /// Persistent LAPS metadata index (`~/.sb/domain/laps_meta.json`).
+/// Seals a rotated LAPS emergency password end-to-end for an admin X25519 public key
+/// and stores it transactionally in `SovereignDb` (`namespace = "laps"`).
+pub fn store_laps_e2ee_in_db(
+    db: &sb_db::SovereignDb,
+    ticket: &sb_db::VerifiedDbTicket,
+    machine_id: &str,
+    admin_x25519_pub: &[u8; 32],
+    password: &str,
+) -> Result<sb_db::DbEntryMeta, String> {
+    db.put_e2ee_entry(ticket, "laps", machine_id, admin_x25519_pub, password.as_bytes())
+        .map_err(|e| e.to_string())
+}
+
+/// Reveals an E2EE-sealed LAPS emergency password from `SovereignDb` using a verified ticket
+/// (`db:secret:reveal`) and the admin's X25519 static secret key.
+pub fn reveal_laps_e2ee_from_db(
+    db: &sb_db::SovereignDb,
+    ticket: &sb_db::VerifiedDbTicket,
+    machine_id: &str,
+    admin_x25519_secret: &x25519_dalek::StaticSecret,
+) -> Result<zeroize::Zeroizing<Vec<u8>>, String> {
+    db.get_e2ee_entry(ticket, "laps", machine_id, admin_x25519_secret)
+        .map_err(|e| e.to_string())
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LapsMetaStore {
     pub entries: BTreeMap<String, LapsMetadata>,

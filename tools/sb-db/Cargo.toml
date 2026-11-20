@@ -1,0 +1,35 @@
+[package]
+name = "sb-db"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+description = "S&B DB — Transactional SQLite WAL Persistence, Encryption-at-Rest, E2EE Envelope Crypto & Ticket-Guarded Access"
+
+[lib]
+name = "sb_db"
+path = "src/lib.rs"
+
+[dependencies]
+aes-gcm = "0.10"
+argon2 = "0.5"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+ed25519-dalek = "2.1"
+hex = "0.4"
+hkdf = "0.12"
+rand = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+thiserror = "2.0"
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+zeroize = { version = "1.8", features = ["derive", "zeroize_derive"] }
+sb-core = { version = "0.2.0", path = "../sb-core" }
+sb-auth = { version = "0.2.0", path = "../sb-auth" }
+sb-mesh = { version = "0.3.0", path = "../sb-mesh" }
+
+[dev-dependencies]
+tempfile = "3.17"

@@ -15,6 +15,7 @@
     "noFallthroughCasesInSwitch": true,
     "preserveSymlinks": true
   },
-  "include": ["src", "../product-inventory.json"]
+  "include": ["src", "../product-inventory.json"],
+  "exclude": ["src/**/*.test.ts"]
 }
 

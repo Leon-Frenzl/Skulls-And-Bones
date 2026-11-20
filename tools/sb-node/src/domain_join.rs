@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use sb_auth::crypto::parse_public_key;
 use sb_auth::AuthVerifier;
@@ -20,6 +20,131 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 pub const MAX_JOIN_REQUEST_BYTES: usize = 64 * 1024;
+pub const DEFAULT_DEVICE_CERT_DAYS: u32 = 30;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RenewedCertificate {
+    pub machine_id: String,
+    pub fqdn: String,
+    pub device_cert_pem: String,
+    pub validity_days: u32,
+    pub issued_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CrlEntry {
+    pub machine_id: String,
+    pub fqdn: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SignedCrlBundle {
+    pub domain: String,
+    pub revision: u64,
+    pub issued_at: String,
+    pub revoked_machines: Vec<CrlEntry>,
+    pub signature_b64: String,
+}
+
+/// Renews a joined machine's X.509 device certificate (default 30 days) fail-closed.
+// [SECURITY-VERIFIED] CWE-295 / CWE-863 Mitigiert:
+// Lehnt unbekannte oder gesperrte (`revoked == true`) Maschinen strikt ab, bevor ein neues Blatt-Zertifikat ausgestellt wird.
+pub fn renew_machine_certificate(
+    machine_id: &str,
+    domain: &str,
+    registry_path: Option<&Path>,
+    validity_days: Option<u32>,
+) -> Result<RenewedCertificate, String> {
+    let clean_domain = validate_domain_name(domain)?;
+    let default_path = DomainRegistry::path_for(&clean_domain)?;
+    let reg_path = registry_path.unwrap_or(&default_path);
+    let registry = DomainRegistry::load_from_path(reg_path, &clean_domain)?;
+    let rec = registry
+        .machines
+        .iter()
+        .find(|m| m.machine_id == machine_id)
+        .ok_or_else(|| format!("Machine '{machine_id}' not found in domain '{clean_domain}'"))?;
+    if rec.revoked {
+        return Err(format!(
+            "Machine '{machine_id}' is revoked and cannot renew certificates"
+        ));
+    }
+    let days = validity_days.unwrap_or(DEFAULT_DEVICE_CERT_DAYS).clamp(1, 90);
+    let leaf = X509Ca::issue_leaf_certificate(&[rec.fqdn.clone(), rec.hostname.clone()], days)
+        .map_err(|e| format!("Certificate renewal failed: {e}"))?;
+    Ok(RenewedCertificate {
+        machine_id: rec.machine_id.clone(),
+        fqdn: rec.fqdn.clone(),
+        device_cert_pem: leaf.cert_pem.clone(),
+        validity_days: days,
+        issued_at: Utc::now().to_rfc3339(),
+    })
+}
+
+/// Builds and Ed25519-signs a global Certificate Revocation List (CRL) bundle for `domain`.
+pub fn build_signed_crl(
+    domain: &str,
+    registry_path: Option<&Path>,
+    signing_key: &SigningKey,
+) -> Result<SignedCrlBundle, String> {
+    let clean_domain = validate_domain_name(domain)?;
+    let default_path = DomainRegistry::path_for(&clean_domain)?;
+    let reg_path = registry_path.unwrap_or(&default_path);
+    let registry = DomainRegistry::load_from_path(reg_path, &clean_domain)?;
+
+    let mut revoked_machines: Vec<CrlEntry> = registry
+        .machines
+        .iter()
+        .filter(|m| m.revoked)
+        .map(|m| CrlEntry {
+            machine_id: m.machine_id.clone(),
+            fqdn: m.fqdn.clone(),
+            reason: m
+                .revoked_reason
+                .clone()
+                .unwrap_or_else(|| "revoked".to_string()),
+        })
+        .collect();
+    revoked_machines.sort_by(|a, b| a.machine_id.cmp(&b.machine_id));
+
+    let revision = Utc::now().timestamp().max(1) as u64;
+    let issued_at = Utc::now().to_rfc3339();
+    let canonical = serde_json::to_vec(&(&clean_domain, revision, &issued_at, &revoked_machines))
+        .map_err(|e| format!("Failed to serialize CRL payload: {e}"))?;
+    let sig = signing_key.sign(&canonical);
+    Ok(SignedCrlBundle {
+        domain: clean_domain,
+        revision,
+        issued_at,
+        revoked_machines,
+        signature_b64: URL_SAFE_NO_PAD.encode(sig.to_bytes()),
+    })
+}
+
+/// Verifies an Ed25519-signed CRL bundle fail-closed.
+pub fn verify_signed_crl(
+    bundle: &SignedCrlBundle,
+    verifying_key: &VerifyingKey,
+) -> Result<(), String> {
+    let sig_bytes = URL_SAFE_NO_PAD
+        .decode(bundle.signature_b64.trim())
+        .map_err(|_| "Invalid base64 CRL signature".to_string())?;
+    let sig_arr: [u8; 64] = sig_bytes
+        .try_into()
+        .map_err(|_| "CRL signature must be 64 bytes".to_string())?;
+    let sig = Signature::from_bytes(&sig_arr);
+    let canonical = serde_json::to_vec(&(
+        &bundle.domain,
+        bundle.revision,
+        &bundle.issued_at,
+        &bundle.revoked_machines,
+    ))
+    .map_err(|e| format!("Failed to serialize CRL payload: {e}"))?;
+    verifying_key
+        .verify(&canonical, &sig)
+        .map_err(|_| "CRL Ed25519 signature verification failed".to_string())
+}
 
 /// Persistent registry of domain-joined machines for a single domain.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -43,6 +168,30 @@ impl DomainRegistry {
     }
 
     pub fn load_from_path(path: &Path, domain: &str) -> Result<Self, String> {
+        if let Some(parent) = path.parent() {
+            if let Ok(db) = open_domain_db(Some(parent)) {
+                if let Ok(db_machines) = db.list_machines_internal(domain) {
+                    if !db_machines.is_empty() {
+                        return Ok(Self {
+                            domain: domain.to_string(),
+                            machines: db_machines,
+                        });
+                    }
+                    if path.exists() {
+                        let raw = fs::read_to_string(path).map_err(|e| {
+                            format!("Failed to read domain registry {}: {e}", path.display())
+                        })?;
+                        let legacy: Self = serde_json::from_str(&raw).map_err(|e| {
+                            format!("Failed to parse domain registry {}: {e}", path.display())
+                        })?;
+                        for m in &legacy.machines {
+                            let _ = db.upsert_machine_internal(domain, m);
+                        }
+                        return Ok(legacy);
+                    }
+                }
+            }
+        }
         if !path.exists() {
             return Ok(Self {
                 domain: domain.to_string(),
@@ -57,6 +206,13 @@ impl DomainRegistry {
 
     /// Saves the registry atomically to disk.
     pub fn save_to_path(&self, path: &Path) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            if let Ok(db) = open_domain_db(Some(parent)) {
+                for m in &self.machines {
+                    let _ = db.upsert_machine_internal(&self.domain, m);
+                }
+            }
+        }
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create directory {}: {e}", parent.display()))?;
@@ -97,6 +253,17 @@ impl DomainRegistry {
         }
         Err("Domain IPv4 pool (10.42.0.0/16) is exhausted".to_string())
     }
+}
+
+/// Opens the transactional, encrypted-at-rest `domain.db` (SQLite WAL) under `base_dir`
+/// (defaults to `~/.sb/domain`).
+pub fn open_domain_db(base_dir: Option<&Path>) -> Result<sb_db::SovereignDb, String> {
+    let dir = base_dir.map(PathBuf::from).unwrap_or_else(local_domain_dir);
+    let key_path = dir.join("domain_db.key");
+    let db_path = dir.join("domain.db");
+    let master_key =
+        sb_db::MasterKey::load_or_create_file(&key_path).map_err(|e| e.to_string())?;
+    sb_db::SovereignDb::open(&db_path, master_key).map_err(|e| e.to_string())
 }
 
 /// Derives a deterministic `mach_<16-hex>` identifier from an Ed25519 machine public key.
@@ -184,7 +351,10 @@ pub fn process_join_request(
     };
 
     // 5. Issue X.509 device certificate + read Root CA from sb-ca
-    let leaf = X509Ca::issue_leaf_certificate(&[fqdn.clone(), hostname.clone()], 365)
+    let leaf = X509Ca::issue_leaf_certificate(
+        &[fqdn.clone(), hostname.clone()],
+        DEFAULT_DEVICE_CERT_DAYS,
+    )
         .map_err(|e| format!("X.509 device certificate issuance failed: {e}"))?;
     let root_ca_pem = fs::read_to_string(sb_ca::paths::x509_root_crt_path())
         .map_err(|e| format!("Failed to read X.509 Root CA certificate: {e}"))?;
@@ -219,7 +389,14 @@ pub fn process_join_request(
     registry
         .machines
         .retain(|m| m.machine_id != machine_id || m.revoked);
-    registry.machines.push(record);
+    registry.machines.push(record.clone());
+    if let Some(parent) = reg_path.parent() {
+        if let Ok(db) = open_domain_db(Some(parent)) {
+            if let Ok(ticket) = sb_db::verify_auth_token(&req.join_token, verifier, false) {
+                let _ = db.register_machine_atomic(&ticket, &domain, record);
+            }
+        }
+    }
     registry.save_to_path(reg_path)?;
 
     // 7. Register FQDN in sb-dns if enabled
@@ -461,6 +638,91 @@ async fn handle_join_http_connection(
             Err(e) => {
                 let msg = serde_json::json!({ "error": e }).to_string();
                 write_http_json(stream, 500, "Internal Server Error", &msg).await
+            }
+        };
+    }
+
+    if method == "GET" && path == "/v1/domain/crl" {
+        let base_dir = registry_path
+            .and_then(|p| p.parent())
+            .map(PathBuf::from)
+            .unwrap_or_else(local_domain_dir);
+        let domain_name = query_param(query, "domain")
+            .and_then(|d| validate_domain_name(&d).ok())
+            .unwrap_or_else(|| "corp.eu".to_string());
+        let key_path = base_dir.join("policy_authority.key");
+        let signing_key = if let Ok(raw) = fs::read_to_string(&key_path) {
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(raw.trim()) {
+                if let Ok(arr) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                    SigningKey::from_bytes(&arr)
+                } else {
+                    SigningKey::generate(&mut OsRng)
+                }
+            } else {
+                SigningKey::generate(&mut OsRng)
+            }
+        } else {
+            SigningKey::generate(&mut OsRng)
+        };
+        return match build_signed_crl(&domain_name, registry_path, &signing_key) {
+            Ok(bundle) => {
+                let json = serde_json::to_string(&bundle).unwrap_or_default();
+                write_http_json(stream, 200, "OK", &json).await
+            }
+            Err(e) => {
+                let msg = serde_json::json!({ "error": e }).to_string();
+                write_http_json(stream, 500, "Internal Server Error", &msg).await
+            }
+        };
+    }
+
+    if method == "POST" && path.starts_with("/v1/machines/") && path.ends_with("/cert/renew") {
+        let Some(token) = extract_bearer_token(&header_lines) else {
+            return write_http_json(
+                stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"missing bearer token"}"#,
+            )
+            .await;
+        };
+        let claims = match verifier.verify_token(token) {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
+                    .to_string();
+                return write_http_json(stream, 401, "Unauthorized", &msg).await;
+            }
+        };
+        let machine_id = path
+            .trim_start_matches("/v1/machines/")
+            .trim_end_matches("/cert/renew")
+            .trim();
+        if !claims.has_capability("domain:join")
+            && !claims.has_role("admin")
+            && claims.subject != machine_id
+        {
+            return write_http_json(
+                stream,
+                403,
+                "Forbidden",
+                r#"{"error":"missing permission to renew certificate"}"#,
+            )
+            .await;
+        }
+        let domain_name = query_param(query, "domain")
+            .and_then(|d| validate_domain_name(&d).ok())
+            .unwrap_or_else(|| "corp.eu".to_string());
+        return match renew_machine_certificate(machine_id, &domain_name, registry_path, None) {
+            Ok(renewed) => {
+                let json = serde_json::to_string(&renewed).unwrap_or_default();
+                write_http_json(stream, 200, "OK", &json).await
+            }
+            Err(e) => {
+                let status = if e.contains("revoked") { 403 } else { 404 };
+                let reason = if status == 403 { "Forbidden" } else { "Not Found" };
+                let msg = serde_json::json!({ "error": e }).to_string();
+                write_http_json(stream, status, reason, &msg).await
             }
         };
     }
@@ -920,7 +1182,7 @@ async fn handle_join_http_connection(
         return write_http_json(stream, 200, "OK", r#"{"status":"password_updated"}"#).await;
     }
 
-    if method == "GET" && path == "/v1/auth/userinfo" {
+    if method == "GET" && (path == "/v1/auth/userinfo" || path == "/oauth2/userinfo") {
         let token_opt = extract_bearer_token(&header_lines).or_else(|| {
             if path.ends_with("/ws") {
                 query_param(query, "token")

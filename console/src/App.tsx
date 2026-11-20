@@ -1,7 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { Suspense, lazy, useEffect, useState } from "react";
 import { DesktopShell, DesktopShortcut, DesktopWindowItem, DESKTOP_SHORTCUTS } from "./DesktopShell";
-import { FilesWindow } from "./FilesWindow";
-import { XtermTerminal } from "./XtermTerminal";
+import { NoticeBanner } from "./ui/NoticeBanner";
+import { DEFAULT_WORKBENCH_THEMES, ThemeProvider } from "./ui";
+import { buildNotice, ConsoleNotice, formatHttpError, formatNetworkError } from "./ui/errors";
+import { LoginView } from "./views/LoginView";
+const FilesWindow = lazy(() => import("./FilesWindow").then((m) => ({ default: m.FilesWindow })));
+const XtermTerminal = lazy(() => import("./XtermTerminal").then((m) => ({ default: m.XtermTerminal })));
 import {
   Activity,
   Download,
@@ -164,7 +168,41 @@ export default function App() {
   const [pkgName, setPkgName] = useState<string>("");
   const [pkgApt, setPkgApt] = useState<string>("");
   const [pkgRollout, setPkgRollout] = useState<number>(100);
-  const [statusMsg, setStatusMsg] = useState<string>("");
+  const [notices, setNotices] = useState<Partial<Record<string, ConsoleNotice>>>({});
+  const pushNotice = (scope: string, data: Omit<ConsoleNotice, "id" | "scope">) => {
+    setNotices((prev) => ({
+      ...prev,
+      [scope]: { ...data, scope, id: `${scope}-${Date.now()}` },
+    }));
+  };
+  const dismissNotice = (scope: string) => {
+    setNotices((prev) => {
+      const next = { ...prev };
+      delete next[scope];
+      return next;
+    });
+  };
+  const pushHttpError = async (scope: string, actionLabel: string, res: Response) => {
+    const body = await res.text().catch(() => "");
+    pushNotice(scope, formatHttpError(actionLabel, res.status, body));
+  };
+  const setStatusMsg = (msg: string) => {
+    if (!msg.trim()) {
+      dismissNotice("global");
+      return;
+    }
+    const lower = msg.toLowerCase();
+    const isErr = lower.includes("fehler") || lower.includes("fehlgeschlagen") || lower.includes("ungültig");
+    pushNotice(
+      "global",
+      buildNotice(
+        isErr ? "error" : "info",
+        isErr ? "Vorgang fehlgeschlagen" : "Status",
+        msg,
+        isErr ? "Prüfen Sie Ihre Eingaben oder die Serververbindung." : undefined
+      )
+    );
+  };
   const [sshSession, setSshSession] = useState<{
     session_id: string;
     fqdn: string;
@@ -459,7 +497,7 @@ export default function App() {
         setFleetHealth(await fhRes.json());
       }
     } catch (err) {
-      setStatusMsg(`API-Verbindung fehlgeschlagen: ${String(err)}`);
+      pushNotice("global", formatNetworkError("Datenabruf", err));
     }
   };
 
@@ -528,7 +566,7 @@ export default function App() {
     if (res.ok) {
       await refreshAll();
     } else {
-      setStatusMsg(`Offboarding fehlgeschlagen (${res.status}): ${await res.text()}`);
+      await pushHttpError("users", "Offboarding", res);
     }
   };
 
@@ -541,123 +579,20 @@ export default function App() {
       await refreshAll();
     } else {
       const err = await res.text();
-      setStatusMsg(`Löschen fehlgeschlagen (${res.status}): ${err}`);
+      await pushHttpError("users", "Benutzer löschen", res);
     }
   };
 
   if (!token.trim()) {
     return (
-      <div className="login-shell">
-        <div className="login-card">
-          <div className="login-header">
-            <ShieldCheck size={32} color="#52c7bd" />
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 18 }}>Skulls &amp; Bones</div>
-              <div style={{ fontSize: 12, color: "var(--accent)" }}>Sovereign Control Console</div>
-            </div>
-          </div>
-
-          <div className="login-tabs">
-            <button
-              className={`btn ${loginMode === "password" ? "btn-primary" : ""}`}
-              onClick={() => { setLoginMode("password"); setAuthError(""); }}
-            >
-              Passwort-Login
-            </button>
-            <button
-              className={`btn ${loginMode === "code" ? "btn-primary" : ""}`}
-              onClick={() => { setLoginMode("code"); setAuthError(""); }}
-            >
-              Einmal-Code
-            </button>
-          </div>
-
-          {authError && <div className="login-error">{authError}</div>}
-
-          {loginMode === "password" ? (
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                setAuthError("");
-                const res = await fetch("/v1/auth/login", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ username: loginUser, password: loginPass }),
-                });
-                if (res.ok) {
-                  const data = await res.json();
-                  saveSession(data.access_token, data.refresh_token || "");
-                  setLoginPass("");
-                  await refreshAll(data.access_token);
-                } else {
-                  setAuthError(`Anmeldung fehlgeschlagen (${res.status})`);
-                }
-              }}
-            >
-              <div className="login-field">
-                <label>Domänen-Benutzer</label>
-                <input
-                  className="input"
-                  placeholder="leon.admin"
-                  value={loginUser}
-                  onChange={(e) => setLoginUser(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="login-field">
-                <label>Passwort</label>
-                <input
-                  className="input"
-                  type="password"
-                  placeholder="••••••••••••"
-                  value={loginPass}
-                  onChange={(e) => setLoginPass(e.target.value)}
-                  required
-                />
-              </div>
-              <button className="btn btn-primary" type="submit" style={{ width: "100%", justifyContent: "center", padding: "10px 14px" }}>
-                Anmelden
-              </button>
-            </form>
-          ) : (
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                setAuthError("");
-                const res = await fetch("/v1/auth/exchange", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ code: loginCode }),
-                });
-                if (res.ok) {
-                  const data = await res.json();
-                  if (data.access_token) {
-                    saveSession(data.access_token, data.refresh_token || "");
-                    setLoginCode("");
-                    await refreshAll(data.access_token);
-                  }
-                } else {
-                  setAuthError(`Ungültiger oder abgelaufener Code (${res.status})`);
-                }
-              }}
-            >
-              <div className="login-field">
-                <label>Einmal-Code (sbc_...)</label>
-                <input
-                  className="input"
-                  placeholder="sbc_..."
-                  value={loginCode}
-                  onChange={(e) => setLoginCode(e.target.value)}
-                  required
-                />
-              </div>
-              <button className="btn btn-primary" type="submit" style={{ width: "100%", justifyContent: "center", padding: "10px 14px" }}>
-                Mit Code anmelden
-              </button>
-            </form>
-          )}
-        </div>
-      </div>
+      <ThemeProvider theme={DEFAULT_WORKBENCH_THEMES.dark}>
+        <LoginView
+          onSuccess={async (acc, ref) => {
+            saveSession(acc, ref);
+            await refreshAll(acc);
+          }}
+        />
+      </ThemeProvider>
     );
   }
 
@@ -689,10 +624,8 @@ export default function App() {
           </div>
         </div>
 
-        {statusMsg && (
-          <div className="card" style={{ borderColor: "#ef5350", marginBottom: 16 }}>
-            {statusMsg}
-          </div>
+        {notices[tab] && (
+          <NoticeBanner notice={notices[tab]!} onDismiss={() => dismissNotice(tab)} />
         )}
 
         {tab === "overview" && (
@@ -781,7 +714,7 @@ export default function App() {
                       setAppUrl("");
                       await refreshAll();
                     } else {
-                      setStatusMsg(`App-Fehler (${res.status}): ${await res.text()}`);
+                      await pushHttpError("users", "App speichern", res);
                     }
                   }}
                 >
@@ -843,7 +776,7 @@ export default function App() {
                     if (res.ok) {
                       await refreshAll();
                     } else {
-                      setStatusMsg(`SSH-Key Fehler (${res.status}): ${await res.text()}`);
+                      await pushHttpError("me", "SSH-Key hinterlegen", res);
                     }
                   }}
                 >
@@ -888,9 +821,9 @@ export default function App() {
                     });
                     if (res.ok) {
                       setMeNewPass("");
-                      setStatusMsg("Passwort erfolgreich aktualisiert!");
+                      pushNotice("me", buildNotice("success", "Passwort aktualisiert", "Ihr neues Domänen-Passwort ist sofort aktiv."));
                     } else {
-                      setStatusMsg(`Passwort-Fehler (${res.status}): ${await res.text()}`);
+                      await pushHttpError("me", "Passwort ändern", res);
                     }
                   }}
                 >
@@ -989,7 +922,7 @@ export default function App() {
                       setVaultSecret("");
                       await refreshAll();
                     } else {
-                      setStatusMsg(`Tresor-Fehler (${res.status}): ${await res.text()}`);
+                      await pushHttpError("vault", "Tresor-Aktion", res);
                     }
                   }}
                 >
@@ -1008,7 +941,7 @@ export default function App() {
                       setVaultSecret("");
                       await refreshAll();
                     } else {
-                      setStatusMsg(`Team-Tresor-Fehler (${res.status}): ${await res.text()}`);
+                      await pushHttpError("vault", "Team-Tresor-Aktion", res);
                     }
                   }}
                 >
@@ -1137,7 +1070,7 @@ export default function App() {
                       setNewEmail("");
                       await refreshAll();
                     } else {
-                      setStatusMsg(`Fehler (${res.status}): ${await res.text()}`);
+                      await pushHttpError("users", "Benutzer anlegen", res);
                     }
                   }}
                 >
@@ -1174,7 +1107,7 @@ export default function App() {
                         setNewOuDesc("");
                         await refreshAll();
                       } else {
-                        setStatusMsg(`OU-Fehler (${r.status})`);
+                        await pushHttpError("users", "OU zuweisen", r);
                       }
                     }}
                   >
@@ -1249,7 +1182,7 @@ export default function App() {
                         setNewGrpMachines("");
                         await refreshAll();
                       } else {
-                        setStatusMsg(`Gruppen-Fehler (${r.status})`);
+                        await pushHttpError("users", "Gruppen zuweisen", r);
                       }
                     }}
                   >
@@ -1370,7 +1303,7 @@ export default function App() {
                       setPkgApt("");
                       await refreshAll();
                     } else {
-                      setStatusMsg(`Paket-Fehler (${res.status}): ${await res.text()}`);
+                      await pushHttpError("machines", "Paket zuweisen", res);
                     }
                   }}
                 >
@@ -1430,7 +1363,11 @@ export default function App() {
                                 headers: { "Content-Type": "application/json", ...authHeaders() },
                                 body: JSON.stringify({ passphrase: pass }),
                               });
-                              setStatusMsg(await r.text());
+                              if (r.ok) {
+                                pushNotice("machines", buildNotice("info", "Notfall-Passwort abgerufen", await r.text()));
+                              } else {
+                                await pushHttpError("machines", "Notfall-Passwort abrufen", r);
+                              }
                             }}
                           >
                             Notfall-PW
@@ -1445,7 +1382,11 @@ export default function App() {
                               if (r.ok) {
                                 setStatusMsg(`LAPS-Rotation für ${m.fqdn} angefordert — Agent führt sie beim nächsten Sync (≤60s) aus.`);
                               } else {
-                                setStatusMsg(await r.text());
+                                if (r.ok) {
+                                pushNotice("machines", buildNotice("info", "Notfall-Passwort abgerufen", await r.text()));
+                              } else {
+                                await pushHttpError("machines", "Notfall-Passwort abrufen", r);
+                              }
                               }
                             }}
                           >
@@ -1758,7 +1699,7 @@ export default function App() {
                       setDnsNewIp("");
                       await refreshAll();
                     } else {
-                      setStatusMsg(`DNS-Fehler (${res.status}): ${await res.text()}`);
+                      await pushHttpError("dns", "DNS-Eintrag speichern", res);
                     }
                   }}
                 >
@@ -1877,31 +1818,34 @@ export default function App() {
         : undefined,
     content:
       w.kind === "terminal" && w.machineId && w.fqdn ? (
-        <XtermTerminal
+        <Suspense fallback={<div className="card">Terminal wird geladen…</div>}><XtermTerminal
           machineId={w.machineId}
           fqdn={w.fqdn}
           authHeaders={authHeaders}
           onStatus={setStatusMsg}
-        />
+        /></Suspense>
       ) : w.kind === "files" && w.machineId && w.fqdn ? (
-        <FilesWindow
+        <Suspense fallback={<div className="card">Dateimanager wird geladen…</div>}><FilesWindow
           machineId={w.machineId}
           fqdn={w.fqdn}
           authHeaders={authHeaders}
           onStatus={setStatusMsg}
-        />
+        /></Suspense>
       ) : (
         renderTabContent((w.tabId as TabId) || "overview")
       ),
   }));
 
   return (
-    <DesktopShell
+    <ThemeProvider theme={DEFAULT_WORKBENCH_THEMES.dark}>
+      <DesktopShell
       windows={renderedWindows}
       focusedId={focusedWinId}
       domainName="skulls-and-bones.sb"
       username={meUser?.username || loginUser}
-      statusMsg={statusMsg}
+      statusMsg=""
+      globalNotice={notices.global || null}
+      onDismissGlobalNotice={() => dismissNotice("global")}
       onOpenShortcut={openShortcutWindow}
       onFocusWindow={focusWindow}
       onCloseWindow={closeWindow}
@@ -1914,5 +1858,6 @@ export default function App() {
         setMeUser(null);
       }}
     />
+    </ThemeProvider>
   );
 }

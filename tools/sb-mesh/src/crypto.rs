@@ -382,4 +382,27 @@ mod tests {
         assert_eq!(unpacked_counter, counter);
         assert_eq!(unpacked_payload, payload);
     }
+
+    #[test]
+    fn test_unpack_v2_rejects_malformed_and_truncated_packets() {
+        assert!(unpack_header_v2(&[]).is_err());
+        assert!(unpack_header_v2(b"SBM2").is_err());
+        assert!(unpack_header_v2(&[0u8; 52]).is_err());
+
+        let mut bad_magic = pack_message_v2(PacketType::Ping, &[1u8; 8], &[2u8; 32], 1, b"x");
+        bad_magic[0] = b'X';
+        assert!(unpack_header_v2(&bad_magic).is_err());
+
+        let mut bad_type = pack_message_v2(PacketType::Ping, &[1u8; 8], &[2u8; 32], 1, b"x");
+        bad_type[12] = 250;
+        assert!(unpack_header_v2(&bad_type).is_err());
+
+        for len in 0..=128usize {
+            let mut buf = vec![0xAAu8; len];
+            if len >= 4 {
+                buf[0..4].copy_from_slice(&PACKET_MAGIC_V2);
+            }
+            let _ = unpack_header_v2(&buf);
+        }
+    }
 }
