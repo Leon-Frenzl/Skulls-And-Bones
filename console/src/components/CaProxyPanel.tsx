@@ -33,6 +33,8 @@ export interface ProxyRouteItem {
 interface CaProxyPanelProps {
   caStatus: CaStatusData | null;
   routes: ProxyRouteItem[];
+  knownDnsDomains?: Set<string>;
+  onOpenDns?: () => void;
 }
 
 type StatusFilter = "all" | "active" | "paused" | "tunnel";
@@ -57,7 +59,7 @@ function statusBadgeClass(status?: string | null): string {
   return "badge badge-err";
 }
 
-export function CaProxyPanel({ caStatus, routes }: CaProxyPanelProps) {
+export function CaProxyPanel({ caStatus, routes, knownDnsDomains, onOpenDns }: CaProxyPanelProps) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [copiedKey, setCopiedKey] = useState(false);
@@ -294,6 +296,21 @@ export function CaProxyPanel({ caStatus, routes }: CaProxyPanelProps) {
                           </span>
                           {route.mesh_isolated && (
                             <span className="badge badge-ok">Mesh-isoliert</span>
+                          )}
+                          {knownDnsDomains && (
+                            knownDnsDomains.has(route.domain.toLowerCase()) ? (
+                              <span className="badge badge-ok">DNS OK</span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="badge badge-warn"
+                                style={{ border: "none", cursor: onOpenDns ? "pointer" : "default" }}
+                                onClick={onOpenDns}
+                                title="Im DNS-Manager einen A-Record für diese Domain anlegen"
+                              >
+                                DNS fehlt
+                              </button>
+                            )
                           )}
                         </div>
                         {(route.required_role || route.required_capability) && (

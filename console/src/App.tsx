@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useState } from "react";
+import React, { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { DesktopShell, DesktopShortcut, DesktopWindowItem, DESKTOP_SHORTCUTS } from "./DesktopShell";
 import { NoticeBanner } from "./ui/NoticeBanner";
 import { DEFAULT_WORKBENCH_THEMES, ThemeProvider } from "./ui";
@@ -27,7 +27,7 @@ import {
   Users,
 } from "lucide-react";
 
-type TabId = "overview" | "me" | "vault" | "users" | "machines" | "policies" | "dns" | "ca" | "audit" | "explorer";
+type TabId = "overview" | "directory" | "machines" | "network" | "workspace" | "security";
 
 interface VaultEntryMeta {
   key: string;
@@ -91,6 +91,12 @@ interface PolicyDocument {
 
 export default function App() {
   const [tab, setTab] = useState<TabId>("overview");
+  const [directorySub, setDirectorySub] = useState<"users" | "policies">("users");
+  const [networkSub, setNetworkSub] = useState<"ca" | "dns">("ca");
+  const [workspaceSub, setWorkspaceSub] = useState<"account" | "vault">("account");
+  const [securitySub, setSecuritySub] = useState<"audit" | "explorer">("audit");
+  const [dirFilterOu, setDirFilterOu] = useState<string>("");
+  const [dirFilterGroup, setDirFilterGroup] = useState<string>("");
   const [token, setToken] = useState<string>(() => localStorage.getItem("sb_token") || "");
   const [refreshToken, setRefreshToken] = useState<string>(() => localStorage.getItem("sb_refresh_token") || "");
   const [loginUser, setLoginUser] = useState<string>("leon.admin");
@@ -232,7 +238,7 @@ export default function App() {
   >([
     {
       id: "app:overview",
-      title: "System-Übersicht",
+      title: "DC-Leitstand",
       kind: "app",
       tabId: "overview",
       x: 136,
@@ -287,6 +293,46 @@ export default function App() {
       return next;
     });
     setFocusedWinId(winId);
+  };
+
+  const openWorkspaceTab = (target: TabId, sub?: string) => {
+    if (target === "directory" && (sub === "users" || sub === "policies")) setDirectorySub(sub);
+    if (target === "network" && (sub === "ca" || sub === "dns")) setNetworkSub(sub);
+    if (target === "workspace" && (sub === "account" || sub === "vault")) setWorkspaceSub(sub);
+    if (target === "security" && (sub === "audit" || sub === "explorer")) setSecuritySub(sub);
+    const sc = DESKTOP_SHORTCUTS.find((s) => s.tabId === target);
+    if (sc) {
+      openShortcutWindow(sc);
+    } else {
+      setTab(target);
+    }
+  };
+
+  const knownDnsDomains = useMemo(() => {
+    const set = new Set<string>();
+    if (!dnsRecords || typeof dnsRecords !== "object") return set;
+    for (const sectionKey of ["a", "aaaa", "cname", "txt", "srv"]) {
+      const section = dnsRecords[sectionKey];
+      if (!section || typeof section !== "object" || Array.isArray(section)) continue;
+      for (const domain of Object.keys(section as Record<string, unknown>)) {
+        set.add(domain.toLowerCase());
+      }
+    }
+    return set;
+  }, [dnsRecords]);
+
+  const createDnsARecord = async (domain: string, ip: string, noticeTab: TabId) => {
+    const res = await fetch("/v1/dns/records", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ domain, ip }),
+    });
+    if (res.ok) {
+      pushNotice(noticeTab, buildNotice("success", "DNS A-Record angelegt", `${domain} → ${ip}`));
+      await refreshAll();
+    } else {
+      await pushHttpError(noticeTab, "DNS A-Record anlegen", res);
+    }
   };
 
   const openFilesWindow = (m: MachineRecord) => {
@@ -600,7 +646,7 @@ export default function App() {
     if (res.ok) {
       await refreshAll();
     } else {
-      await pushHttpError("users", "Offboarding", res);
+      await pushHttpError("directory", "Offboarding", res);
     }
   };
 
@@ -612,8 +658,7 @@ export default function App() {
     if (res.ok) {
       await refreshAll();
     } else {
-      const err = await res.text();
-      await pushHttpError("users", "Benutzer löschen", res);
+      await pushHttpError("directory", "Policy löschen", res);
     }
   };
 
@@ -634,16 +679,12 @@ export default function App() {
     <>
         <div className="topbar" style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: "var(--muted)" }}>
-            {tab === "overview" && "Infrastruktur-Übersicht"}
-            {tab === "me" && "Mein Konto (Self-Service)"}
-            {tab === "vault" && "Sovereign Passwort-Tresor (Argon2id + AES-256-GCM)"}
-            {tab === "users" && "Domänen-Benutzer & Gruppen"}
-            {tab === "machines" && "Domänen-Maschinen & Mobile Enrollment"}
-            {tab === "policies" && "Signierte Cross-Platform GPOs"}
-            {tab === "dns" && "Souveräner DNS-Manager"}
-            {tab === "ca" && "Certificate Authority & Proxy"}
-            {tab === "audit" && "Hash-Verkettetes Audit Log (NIS2 / DSGVO)"}
-            {tab === "explorer" && "Open Graph API Explorer (/v1/*)"}
+            {tab === "overview" && "DC-Leitstand & Domänen-Gesundheit"}
+            {tab === "directory" && "Verzeichnis, OUs, Gruppen & GPOs"}
+            {tab === "machines" && "Flotte, LAPS & Enrollment"}
+            {tab === "network" && "Netzwerk, DNS, PKI & Reverse-Proxy"}
+            {tab === "workspace" && "Mein Konto, Tickets & Tresor"}
+            {tab === "security" && "Sicherheit, Audit Log & API Explorer"}
           </div>
 
           <div className="token-box">
@@ -662,44 +703,180 @@ export default function App() {
           <NoticeBanner notice={notices[tab]!} onDismiss={() => dismissNotice(tab)} />
         )}
 
-        {tab === "overview" && (
-          <>
-            <div className="grid">
-              <div className="card">
-                <div className="card-title">Open Graph Gateway</div>
-                <div className="card-value">
-                  {health?.status === "ok" ? (
-                    <span className="badge badge-ok">ONLINE ({health.api_version})</span>
-                  ) : (
-                    <span className="badge badge-err">OFFLINE</span>
+        {tab === "overview" && (() => {
+          const activeUsers = users.filter((u) => u.enabled).length;
+          const activeMachines = machines.filter((m) => !m.revoked).length;
+          const machinesMissingDns = machines.filter(
+            (m) => !m.revoked && m.mesh_ip && !knownDnsDomains.has(m.fqdn.toLowerCase()),
+          );
+          const activeRoutes = (routes as ProxyRouteItem[]).filter(
+            (r) => (r.status ?? "").toLowerCase() === "active",
+          );
+          const routesMissingDns = activeRoutes.filter(
+            (r) => !knownDnsDomains.has(r.domain.toLowerCase()),
+          );
+          const lapsPending = fleetHealth?.laps_rotate_pending ?? 0;
+
+          return (
+            <>
+              <div className="grid">
+                <div className="card">
+                  <div className="card-title">Open Graph Gateway</div>
+                  <div className="card-value">
+                    {health?.status === "ok" ? (
+                      <span className="badge badge-ok">ONLINE ({health.api_version})</span>
+                    ) : (
+                      <span className="badge badge-err">OFFLINE</span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="card dc-kpi-btn"
+                  onClick={() => openWorkspaceTab("directory", "users")}
+                >
+                  <div className="card-title">Verzeichnis &amp; GPOs</div>
+                  <div className="card-value">{activeUsers} / {users.length}</div>
+                  <div className="ca-muted">{secGroups.length} Gruppen · {policies.length} GPOs</div>
+                </button>
+                <button
+                  type="button"
+                  className="card dc-kpi-btn"
+                  onClick={() => openWorkspaceTab("machines")}
+                >
+                  <div className="card-title">Flotte &amp; LAPS</div>
+                  <div className="card-value">{activeMachines} / {machines.length}</div>
+                  <div className="ca-muted">
+                    {fleetHealth ? `${fleetHealth.heartbeats.length} Heartbeats · ${lapsPending} LAPS offen` : "—"}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="card dc-kpi-btn"
+                  onClick={() => openWorkspaceTab("network", "ca")}
+                >
+                  <div className="card-title">Netzwerk &amp; PKI</div>
+                  <div className="card-value">{activeRoutes.length} Routen</div>
+                  <div className="ca-muted">
+                    X.509 {caStatus?.x509_root_initialized ? "OK" : "Offen"} · SSH {caStatus?.ssh_ca_initialized ? "OK" : "Offen"}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="card dc-kpi-btn"
+                  onClick={() => openWorkspaceTab("workspace", "account")}
+                >
+                  <div className="card-title">Aktive Tickets</div>
+                  <div className="card-value">{1 + elevations.length + (meSshCert ? 1 : 0)}</div>
+                  <div className="ca-muted">
+                    {refreshToken && autoRenew ? "Auto-Renewal EIN" : "Manuell"}
+                  </div>
+                </button>
+              </div>
+
+              {/* Handlungsbedarf & Domänen-Synergien */}
+              <div className="card" style={{ marginBottom: 16 }}>
+                <div className="card-header-row">
+                  <div className="card-title">Domänen-Handlungsbedarf &amp; Synergie-Checks</div>
+                  {machinesMissingDns.length === 0 && routesMissingDns.length === 0 && lapsPending === 0 && (
+                    <span className="badge badge-ok">ALLE CHECKS GRÜN</span>
+                  )}
+                </div>
+                <div className="ca-badge-group" style={{ marginTop: 4 }}>
+                  {machinesMissingDns.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn-secondary btn-compact"
+                      onClick={() => openWorkspaceTab("machines")}
+                    >
+                      {machinesMissingDns.length} Maschine(n) ohne DNS A-Record → In Flotte beheben
+                    </button>
+                  )}
+                  {routesMissingDns.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn-secondary btn-compact"
+                      onClick={() => openWorkspaceTab("network", "ca")}
+                    >
+                      {routesMissingDns.length} Proxy-Route(n) ohne DNS-Record → Im Netzwerk prüfen
+                    </button>
+                  )}
+                  {lapsPending > 0 && (
+                    <button
+                      type="button"
+                      className="btn-secondary btn-compact"
+                      onClick={() => openWorkspaceTab("machines")}
+                    >
+                      {lapsPending} LAPS-Rotation(en) ausstehend → Flotte öffnen
+                    </button>
+                  )}
+                  {auditValid === false && (
+                    <button
+                      type="button"
+                      className="btn-secondary btn-compact"
+                      onClick={() => openWorkspaceTab("security", "audit")}
+                    >
+                      Audit-Hash-Kette prüfen!
+                    </button>
+                  )}
+                  {machinesMissingDns.length === 0 && routesMissingDns.length === 0 && lapsPending === 0 && auditValid !== false && (
+                    <span className="ca-muted">
+                      Alle aktiven Maschinen und Proxy-Routen sind im Split-DNS registriert und keine LAPS-Rotation steht aus.
+                    </span>
                   )}
                 </div>
               </div>
-              <div className="card">
-                <div className="card-title">GPO Policies</div>
-                <div className="card-value">{policies.length}</div>
-              </div>
-              <div className="card">
-                <div className="card-title">Proxy Routen</div>
-                <div className="card-value">{routes.length}</div>
-              </div>
-              <div className="card">
-                <div className="card-title">X.509 / SSH CA</div>
-                <div className="card-value">
-                  {caStatus?.x509_root_initialized ? (
-                    <span className="badge badge-ok">INITIALISIERT</span>
+
+              {/* Letzte Audit-Events & Schnellzugriff */}
+              <div className="grid" style={{ marginBottom: 16 }}>
+                <div className="card">
+                  <div className="card-header-row">
+                    <div className="card-title">Letzte Audit-Events</div>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-compact"
+                      onClick={() => openWorkspaceTab("security", "audit")}
+                    >
+                      Alle ({auditEvents.length})
+                    </button>
+                  </div>
+                  {auditEvents.slice(0, 5).length === 0 ? (
+                    <p className="ca-muted">Keine Audit-Events geladen.</p>
                   ) : (
-                    <span className="badge badge-warn">AUSSTEHEND</span>
+                    <ul className="dc-mini-list">
+                      {auditEvents.slice(0, 5).map((ev) => (
+                        <li key={ev.seq}>
+                          <code>{ev.actor}</code> → <strong>{ev.action}</strong> ({ev.target})
+                        </li>
+                      ))}
+                    </ul>
                   )}
                 </div>
-              </div>
-              <div className="card">
-                <div className="card-title">Flotten-Heartbeats / LAPS Pending</div>
-                <div className="card-value">
-                  {fleetHealth ? `${fleetHealth.heartbeats.length} / ${fleetHealth.laps_rotate_pending}` : "–"}
+
+                <div className="card">
+                  <div className="card-header-row">
+                    <div className="card-title">Eigene Tickets &amp; Sicherheit</div>
+                    <button
+                      type="button"
+                      className="btn-secondary btn-compact"
+                      onClick={() => openWorkspaceTab("workspace", "account")}
+                    >
+                      Tickets verwalten
+                    </button>
+                  </div>
+                  <ul className="dc-mini-list">
+                    <li>
+                      Browser-Sitzung: <strong>{refreshToken && autoRenew ? "Auto-Renewal aktiv" : "Manuell"}</strong>
+                    </li>
+                    <li>
+                      Aktive JIT-Admin-Tickets: <strong>{elevations.length}</strong>
+                    </li>
+                    <li>
+                      SSH User Cert: <strong>{meSshCert ? "Ausgestellt (8h)" : "Bei Bedarf anfordern"}</strong>
+                    </li>
+                  </ul>
                 </div>
               </div>
-            </div>
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="card-title">Firmen-App-Portal ({apps.length})</div>
               {apps.length > 0 ? (
@@ -748,7 +925,7 @@ export default function App() {
                       setAppUrl("");
                       await refreshAll();
                     } else {
-                      await pushHttpError("users", "App speichern", res);
+                      await pushHttpError("overview", "App speichern", res);
                     }
                   }}
                 >
@@ -766,11 +943,35 @@ export default function App() {
                 </a>
               </p>
             </div>
-          </>
-        )}
+            </>
+          );
+        })()}
 
-        {tab === "me" && (
+        {tab === "workspace" && (
           <>
+            <div className="dc-subtabs" role="tablist" aria-label="Konto und Tresor">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={workspaceSub === "account"}
+                className={`dc-subtab ${workspaceSub === "account" ? "active" : ""}`}
+                onClick={() => setWorkspaceSub("account")}
+              >
+                Konto, Tickets &amp; Passkeys
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={workspaceSub === "vault"}
+                className={`dc-subtab ${workspaceSub === "vault" ? "active" : ""}`}
+                onClick={() => setWorkspaceSub("vault")}
+              >
+                Passwort-Tresor ({vaultEntries.length + teamEntries.length})
+              </button>
+            </div>
+
+            {workspaceSub === "account" && (
+              <>
             <TicketsPanel
               token={token}
               refreshToken={refreshToken}
@@ -782,10 +983,10 @@ export default function App() {
               onRefreshSession={async () => {
                 const next = await tryRefreshSession();
                 if (next) {
-                  pushNotice("me", buildNotice("success", "Sitzung erneuert", "Neues Access-Token ausgestellt."));
+                  pushNotice("workspace", buildNotice("success", "Sitzung erneuert", "Neues Access-Token ausgestellt."));
                   return true;
                 }
-                pushNotice("me", buildNotice("error", "Erneuerung fehlgeschlagen", "Bitte erneut anmelden."));
+                pushNotice("workspace", buildNotice("error", "Erneuerung fehlgeschlagen", "Bitte erneut anmelden."));
                 return false;
               }}
               elevations={elevations}
@@ -798,9 +999,9 @@ export default function App() {
                 });
                 if (res.ok) {
                   setMeSshCert(await res.text());
-                  pushNotice("me", buildNotice("success", "SSH-Zertifikat erneuert", "Neues 8h-Zertifikat ausgestellt."));
+                  pushNotice("workspace", buildNotice("success", "SSH-Zertifikat erneuert", "Neues 8h-Zertifikat ausgestellt."));
                 } else {
-                  await pushHttpError("me", "SSH-Zertifikat erneuern", res);
+                  await pushHttpError("workspace", "SSH-Zertifikat erneuern", res);
                 }
               }}
             />
@@ -998,11 +1199,11 @@ export default function App() {
                 </tbody>
               </table>
             </div>
-          </>
-        )}
+              </>
+            )}
 
-        {tab === "vault" && (
-          <>
+            {workspaceSub === "vault" && (
+              <>
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="card-title">Tresor-Master-Passwort (nur im RAM)</div>
               <input
@@ -1138,11 +1339,36 @@ export default function App() {
                 </table>
               </div>
             </div>
+              </>
+            )}
           </>
         )}
 
-        {tab === "users" && (
+        {tab === "directory" && (
           <>
+            <div className="dc-subtabs" role="tablist" aria-label="Verzeichnis und Policies">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={directorySub === "users"}
+                className={`dc-subtab ${directorySub === "users" ? "active" : ""}`}
+                onClick={() => setDirectorySub("users")}
+              >
+                Benutzer, OUs &amp; Gruppen ({users.length})
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={directorySub === "policies"}
+                className={`dc-subtab ${directorySub === "policies" ? "active" : ""}`}
+                onClick={() => setDirectorySub("policies")}
+              >
+                GPO Policies ({policies.length})
+              </button>
+            </div>
+
+            {directorySub === "users" && (
+              <>
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="card-title">Benutzer anlegen / aktualisieren</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -1241,7 +1467,14 @@ export default function App() {
                   <thead><tr><th>OU-Pfad</th><th>Beschreibung</th></tr></thead>
                   <tbody>
                     {ous.map((o) => (
-                      <tr key={o.path}>
+                      <tr
+                        key={o.path}
+                        style={{
+                          cursor: "pointer",
+                          background: dirFilterOu === o.path ? "rgba(82, 199, 189, 0.1)" : undefined,
+                        }}
+                        onClick={() => setDirFilterOu((prev) => (prev === o.path ? "" : o.path))}
+                      >
                         <td><code>{o.path}</code></td>
                         <td>{o.description || "—"}</td>
                       </tr>
@@ -1316,7 +1549,14 @@ export default function App() {
                   <thead><tr><th>Gruppe</th><th>OU</th><th>OS-Admin</th><th>Maschinen</th></tr></thead>
                   <tbody>
                     {secGroups.map((g) => (
-                      <tr key={g.name}>
+                      <tr
+                        key={g.name}
+                        style={{
+                          cursor: "pointer",
+                          background: dirFilterGroup === g.name ? "rgba(82, 199, 189, 0.1)" : undefined,
+                        }}
+                        onClick={() => setDirFilterGroup((prev) => (prev === g.name ? "" : g.name))}
+                      >
                         <td><code>{g.name}</code></td>
                         <td><code>{g.ou || "/"}</code></td>
                         <td>{g.is_local_admin ? <span className="badge badge-ok">ADMIN</span> : "User"}</td>
@@ -1328,48 +1568,212 @@ export default function App() {
               </div>
             </div>
 
-            <div className="card">
-              <div className="card-title">Benutzer ({users.length})</div>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Username</th>
-                    <th>E-Mail</th>
-                    <th>Gruppen</th>
-                    <th>Status</th>
-                    <th>Aktion</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((u) => (
-                    <tr key={u.username}>
-                      <td><code>{u.username}</code></td>
-                      <td>{u.email}</td>
-                      <td>{u.groups.join(", ")}</td>
-                      <td>
-                        <span className={`badge ${u.enabled ? "badge-ok" : "badge-err"}`}>
-                          {u.enabled ? "ACTIVE" : "DISABLED"}
-                        </span>
-                      </td>
-                      <td>
-                        {u.enabled && (
-                          <button className="btn btn-danger" onClick={() => void offboardUser(u.username)}>
-                            <UserX size={14} /> Offboard
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {users.length === 0 && (
-                    <tr>
-                      <td colSpan={5} style={{ color: "var(--muted)" }}>
-                        Keine Benutzer geladen (Bearer Token mit <code>directory:read</code> oder <code>domain:admin</code> erforderlich).
-                      </td>
-                    </tr>
+            {(() => {
+              const filteredUsers = users.filter((u) => {
+                if (dirFilterGroup && !u.groups.includes(dirFilterGroup)) return false;
+                if (dirFilterOu) {
+                  const matchingGroups = secGroups
+                    .filter((g) => (g.ou || "/") === dirFilterOu)
+                    .map((g) => g.name);
+                  if (!u.groups.some((ug) => matchingGroups.includes(ug))) return false;
+                }
+                return true;
+              });
+              return (
+                <div className="card">
+                  <div className="ca-toolbar" style={{ marginBottom: 10 }}>
+                    <div className="card-title" style={{ marginBottom: 0 }}>
+                      Benutzer ({filteredUsers.length} / {users.length})
+                    </div>
+                    {(dirFilterOu || dirFilterGroup) && (
+                      <div className="ca-badge-group" style={{ marginTop: 0 }}>
+                        {dirFilterOu && <span className="badge badge-ok">OU: {dirFilterOu}</span>}
+                        {dirFilterGroup && <span className="badge badge-ok">Gruppe: {dirFilterGroup}</span>}
+                        <button
+                          type="button"
+                          className="btn-secondary btn-compact"
+                          onClick={() => {
+                            setDirFilterOu("");
+                            setDirFilterGroup("");
+                          }}
+                        >
+                          Filter zurücksetzen
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Username</th>
+                        <th>E-Mail</th>
+                        <th>Gruppen</th>
+                        <th>Geräte</th>
+                        <th>Status</th>
+                        <th>Aktion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredUsers.map((u) => {
+                        const userMachines = machines.filter((m) => m.joined_by === u.username && !m.revoked);
+                        return (
+                          <tr key={u.username}>
+                            <td><code>{u.username}</code></td>
+                            <td>{u.email}</td>
+                            <td>{u.groups.join(", ")}</td>
+                            <td>
+                              {userMachines.length > 0 ? (
+                                <button
+                                  type="button"
+                                  className="btn-secondary btn-compact"
+                                  onClick={() => openWorkspaceTab("machines")}
+                                >
+                                  {userMachines.length} Gerät(e)
+                                </button>
+                              ) : (
+                                <span className="ca-muted">0</span>
+                              )}
+                            </td>
+                            <td>
+                              <span className={`badge ${u.enabled ? "badge-ok" : "badge-err"}`}>
+                                {u.enabled ? "ACTIVE" : "DISABLED"}
+                              </span>
+                            </td>
+                            <td>
+                              {u.enabled && (
+                                <button className="btn btn-danger" onClick={() => void offboardUser(u.username)}>
+                                  <UserX size={14} /> Offboard
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {filteredUsers.length === 0 && (
+                        <tr>
+                          <td colSpan={6} style={{ color: "var(--muted)" }}>
+                            {users.length === 0
+                              ? "Keine Benutzer geladen (Bearer Token mit directory:read oder domain:admin erforderlich)."
+                              : "Keine Benutzer für den gewählten OU-/Gruppen-Filter gefunden."}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+              </>
+            )}
+
+            {directorySub === "policies" && (
+              <>
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-title">GPO-Editor (inkl. Dry-Run Vorschau)</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+                    <input className="input" placeholder="Policy ID" value={gpoId} onChange={(e) => setGpoId(e.target.value)} />
+                    <input className="input" placeholder="Name" value={gpoName} onChange={(e) => setGpoName(e.target.value)} />
+                    <label style={{ fontSize: 13 }}>
+                      <input type="checkbox" checked={gpoSsh} onChange={(e) => setGpoSsh(e.target.checked)} /> SSH Hardening
+                    </label>
+                    <button
+                      className="btn"
+                      onClick={async () => {
+                        const res = await fetch(`/v1/policies/${encodeURIComponent(gpoId)}?dry_run=true`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json", ...authHeaders() },
+                          body: JSON.stringify({
+                            id: gpoId,
+                            name: gpoName,
+                            description: "",
+                            version: 1,
+                            scope: { type: "domain" },
+                            target_os: [],
+                            rules: gpoSsh ? [{ kind: "ssh_hardening", password_auth: false, permit_root_login: false, trusted_user_ca_keys: true }] : [],
+                            updated_at: "",
+                            updated_by: "",
+                          }),
+                        });
+                        setGpoOut(await res.text());
+                      }}
+                    >
+                      Dry-Run Vorschau
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      onClick={async () => {
+                        const res = await fetch(`/v1/policies/${encodeURIComponent(gpoId)}`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json", ...authHeaders() },
+                          body: JSON.stringify({
+                            id: gpoId,
+                            name: gpoName,
+                            description: "",
+                            version: 1,
+                            scope: { type: "domain" },
+                            target_os: [],
+                            rules: gpoSsh ? [{ kind: "ssh_hardening", password_auth: false, permit_root_login: false, trusted_user_ca_keys: true }] : [],
+                            updated_at: "",
+                            updated_by: "",
+                          }),
+                        });
+                        if (res.ok) {
+                          setGpoOut(`Policy '${gpoId}' gespeichert.`);
+                          pushNotice("directory", buildNotice("success", "GPO gespeichert", `Policy '${gpoId}' ist sofort aktiv.`));
+                          await refreshAll();
+                        } else {
+                          await pushHttpError("directory", "GPO speichern", res);
+                        }
+                      }}
+                    >
+                      Speichern
+                    </button>
+                  </div>
+                  {gpoOut && (
+                    <div className="ca-badge-group" style={{ marginTop: 10 }}>
+                      <span className="badge badge-ok">{gpoOut}</span>
+                    </div>
                   )}
-                </tbody>
-              </table>
-            </div>
+                </div>
+
+                <div className="card">
+                  <div className="card-title">GPO Policies ({policies.length})</div>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Version</th>
+                        <th>Regeln</th>
+                        <th>Aktion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {policies.map((p) => (
+                        <tr key={p.id}>
+                          <td><code>{p.id}</code></td>
+                          <td>{p.name}</td>
+                          <td>v{p.version}</td>
+                          <td>{p.rules.length}</td>
+                          <td>
+                            <button className="btn btn-danger" onClick={() => void deletePolicy(p.id)}>
+                              <Trash2 size={14} /> Löschen
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {policies.length === 0 && (
+                        <tr>
+                          <td colSpan={5} style={{ color: "var(--muted)" }}>
+                            Noch keine GPO-Policies vorhanden. Erstelle eine über <code>sb-node policy put</code> oder den Editor oben.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </>
         )}
 
@@ -1471,20 +1875,55 @@ export default function App() {
                     <th>FQDN</th>
                     <th>OS</th>
                     <th>Mesh IP</th>
+                    <th>DNS &amp; Proxy-Synergie</th>
                     <th>Joined By</th>
                     <th>GPO / LAPS-Sync</th>
                     <th>Status</th>
-                    <th>LAPS</th>
+                    <th>Aktionen</th>
                   </tr>
                 </thead>
                 <tbody>
                   {machines.map((m) => {
                     const hb = fleetHealth?.heartbeats.find((h) => h.machine_id === m.machine_id);
+                    const hasDns = knownDnsDomains.has(m.fqdn.toLowerCase());
+                    const shortHost = m.fqdn.split(".")[0].toLowerCase();
+                    const machineRoutes = (routes as ProxyRouteItem[]).filter(
+                      (r) =>
+                        (r.node_callsign ?? "").toLowerCase() === shortHost ||
+                        (r.node_callsign ?? "").toLowerCase() === m.fqdn.toLowerCase(),
+                    );
                     return (
                     <tr key={m.machine_id}>
                       <td>{m.fqdn}</td>
                       <td>{m.os}</td>
                       <td>{m.mesh_ip}</td>
+                      <td>
+                        <div className="ca-badge-group" style={{ marginTop: 0 }}>
+                          {hasDns ? (
+                            <span className="badge badge-ok">DNS OK</span>
+                          ) : m.mesh_ip ? (
+                            <button
+                              type="button"
+                              className="btn-secondary btn-compact"
+                              onClick={() => void createDnsARecord(m.fqdn, m.mesh_ip, "machines")}
+                            >
+                              + DNS A-Record
+                            </button>
+                          ) : (
+                            <span className="badge badge-warn">Keine IP</span>
+                          )}
+                          {machineRoutes.length > 0 && (
+                            <button
+                              type="button"
+                              className="badge badge-ok"
+                              style={{ border: "none", cursor: "pointer" }}
+                              onClick={() => openWorkspaceTab("network", "ca")}
+                            >
+                              {machineRoutes.length} Proxy-Route(n)
+                            </button>
+                          )}
+                        </div>
+                      </td>
                       <td>{m.joined_by}</td>
                       <td>
                         {hb ? (
@@ -1585,7 +2024,7 @@ export default function App() {
                   })}
                   {machines.length === 0 && (
                     <tr>
-                      <td colSpan={7} style={{ color: "var(--muted)" }}>
+                      <td colSpan={8} style={{ color: "var(--muted)" }}>
                         Keine Maschinen geladen (Bearer Token mit <code>domain:read</code> oben eintragen &amp; Refresh).
                       </td>
                     </tr>
@@ -1730,155 +2169,97 @@ export default function App() {
           </>
         )}
 
-        {tab === "policies" && (
+        {tab === "network" && (
           <>
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title">GPO-Editor (inkl. Dry-Run Vorschau)</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
-                <input className="input" placeholder="Policy ID" value={gpoId} onChange={(e) => setGpoId(e.target.value)} />
-                <input className="input" placeholder="Name" value={gpoName} onChange={(e) => setGpoName(e.target.value)} />
-                <label style={{ fontSize: 13 }}>
-                  <input type="checkbox" checked={gpoSsh} onChange={(e) => setGpoSsh(e.target.checked)} /> SSH Hardening
-                </label>
-                <button
-                  className="btn"
-                  onClick={async () => {
-                    const res = await fetch(`/v1/policies/${encodeURIComponent(gpoId)}?dry_run=true`, {
-                      method: "PUT",
-                      headers: { "Content-Type": "application/json", ...authHeaders() },
-                      body: JSON.stringify({
-                        id: gpoId,
-                        name: gpoName,
-                        description: "",
-                        version: 1,
-                        scope: { type: "domain" },
-                        target_os: [],
-                        rules: gpoSsh ? [{ kind: "ssh_hardening", password_auth: false, permit_root_login: false, trusted_user_ca_keys: true }] : [],
-                        updated_at: "",
-                        updated_by: "",
-                      }),
-                    });
-                    setGpoOut(await res.text());
-                  }}
-                >
-                  Dry-Run Vorschau
-                </button>
-                <button
-                  className="btn btn-primary"
-                  onClick={async () => {
-                    const res = await fetch(`/v1/policies/${encodeURIComponent(gpoId)}`, {
-                      method: "PUT",
-                      headers: { "Content-Type": "application/json", ...authHeaders() },
-                      body: JSON.stringify({
-                        id: gpoId,
-                        name: gpoName,
-                        description: "",
-                        version: 1,
-                        scope: { type: "domain" },
-                        target_os: [],
-                        rules: gpoSsh ? [{ kind: "ssh_hardening", password_auth: false, permit_root_login: false, trusted_user_ca_keys: true }] : [],
-                        updated_at: "",
-                        updated_by: "",
-                      }),
-                    });
-                    if (res.ok) {
-                      setGpoOut(`Policy '${gpoId}' gespeichert.`);
-                      pushNotice("policies", buildNotice("success", "GPO gespeichert", `Policy '${gpoId}' ist sofort aktiv.`));
-                      await refreshAll();
-                    } else {
-                      await pushHttpError("policies", "GPO speichern", res);
-                    }
-                  }}
-                >
-                  Speichern
-                </button>
-              </div>
-              {gpoOut && (
-                <div className="ca-badge-group" style={{ marginTop: 10 }}>
-                  <span className="badge badge-ok">{gpoOut}</span>
+            <div className="dc-subtabs" role="tablist" aria-label="Netzwerk und PKI">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={networkSub === "ca"}
+                className={`dc-subtab ${networkSub === "ca" ? "active" : ""}`}
+                onClick={() => setNetworkSub("ca")}
+              >
+                CA &amp; Reverse-Proxy ({routes.length})
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={networkSub === "dns"}
+                className={`dc-subtab ${networkSub === "dns" ? "active" : ""}`}
+                onClick={() => setNetworkSub("dns")}
+              >
+                DNS-Manager &amp; IPAM ({knownDnsDomains.size})
+              </button>
+            </div>
+
+            {networkSub === "ca" && (
+              <CaProxyPanel
+                caStatus={caStatus as CaStatusData | null}
+                routes={routes as ProxyRouteItem[]}
+                knownDnsDomains={knownDnsDomains}
+                onOpenDns={() => setNetworkSub("dns")}
+              />
+            )}
+
+            {networkSub === "dns" && (
+              <>
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-title">DNS A-Record hinzufügen</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <input className="input" placeholder="app.corp.eu" value={dnsNewDomain} onChange={(e) => setDnsNewDomain(e.target.value)} />
+                    <input className="input" placeholder="10.42.0.50" value={dnsNewIp} onChange={(e) => setDnsNewIp(e.target.value)} />
+                    <button
+                      className="btn btn-primary"
+                      onClick={async () => {
+                        const res = await fetch("/v1/dns/records", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json", ...authHeaders() },
+                          body: JSON.stringify({ domain: dnsNewDomain, ip: dnsNewIp }),
+                        });
+                        if (res.ok) {
+                          setDnsNewDomain("");
+                          setDnsNewIp("");
+                          pushNotice("network", buildNotice("success", "DNS A-Record gespeichert", `${dnsNewDomain} wurde registriert.`));
+                          await refreshAll();
+                        } else {
+                          await pushHttpError("network", "DNS-Eintrag speichern", res);
+                        }
+                      }}
+                    >
+                      A-Record speichern
+                    </button>
+                  </div>
                 </div>
-              )}
-            </div>
-
-            <div className="card">
-              <div className="card-title">GPO Policies ({policies.length})</div>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Name</th>
-                  <th>Version</th>
-                  <th>Regeln</th>
-                  <th>Aktion</th>
-                </tr>
-              </thead>
-              <tbody>
-                {policies.map((p) => (
-                  <tr key={p.id}>
-                    <td><code>{p.id}</code></td>
-                    <td>{p.name}</td>
-                    <td>v{p.version}</td>
-                    <td>{p.rules.length}</td>
-                    <td>
-                      <button className="btn btn-danger" onClick={() => void deletePolicy(p.id)}>
-                        <Trash2 size={14} /> Löschen
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {policies.length === 0 && (
-                  <tr>
-                    <td colSpan={5} style={{ color: "var(--muted)" }}>
-                      Noch keine GPO-Policies vorhanden. Erstelle eine über den Graph API Explorer (<code>PUT /v1/policies/baseline-ssh</code>) oder <code>sb-node policy put</code>.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                <DnsIpamPanel dnsRecords={dnsRecords} ipamData={ipamData} />
+              </>
+            )}
           </>
         )}
 
-        {tab === "dns" && (
+        {tab === "security" && (
           <>
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title">DNS A-Record hinzufügen</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <input className="input" placeholder="app.corp.eu" value={dnsNewDomain} onChange={(e) => setDnsNewDomain(e.target.value)} />
-                <input className="input" placeholder="10.42.0.50" value={dnsNewIp} onChange={(e) => setDnsNewIp(e.target.value)} />
-                <button
-                  className="btn btn-primary"
-                  onClick={async () => {
-                    const res = await fetch("/v1/dns/records", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json", ...authHeaders() },
-                      body: JSON.stringify({ domain: dnsNewDomain, ip: dnsNewIp }),
-                    });
-                    if (res.ok) {
-                      setDnsNewDomain("");
-                      setDnsNewIp("");
-                      await refreshAll();
-                    } else {
-                      await pushHttpError("dns", "DNS-Eintrag speichern", res);
-                    }
-                  }}
-                >
-                  A-Record speichern
-                </button>
-              </div>
+            <div className="dc-subtabs" role="tablist" aria-label="Sicherheit und API">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={securitySub === "audit"}
+                className={`dc-subtab ${securitySub === "audit" ? "active" : ""}`}
+                onClick={() => setSecuritySub("audit")}
+              >
+                Audit Log ({auditEvents.length})
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={securitySub === "explorer"}
+                className={`dc-subtab ${securitySub === "explorer" ? "active" : ""}`}
+                onClick={() => setSecuritySub("explorer")}
+              >
+                Open Graph API Explorer
+              </button>
             </div>
-            <DnsIpamPanel dnsRecords={dnsRecords} ipamData={ipamData} />
-          </>
-        )}
 
-        {tab === "ca" && (
-          <CaProxyPanel
-            caStatus={caStatus as CaStatusData | null}
-            routes={routes as ProxyRouteItem[]}
-          />
-        )}
-
-        {tab === "audit" && (() => {
+            {securitySub === "audit" && (() => {
           const q = auditQuery.trim().toLowerCase();
           const filteredAudit = q
             ? auditEvents.filter((ev) =>
@@ -1949,7 +2330,7 @@ export default function App() {
           );
         })()}
 
-        {tab === "explorer" && (
+        {securitySub === "explorer" && (
           <div className="card">
             <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
               <select className="select" value={apiMethod} onChange={(e) => setApiMethod(e.target.value)}>
@@ -1978,6 +2359,8 @@ export default function App() {
             )}
             <pre className="code-block">{apiOutput || "// Antwort erscheint hier..."}</pre>
           </div>
+        )}
+          </>
         )}
     </>
   );

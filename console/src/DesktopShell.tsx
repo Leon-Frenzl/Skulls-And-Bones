@@ -45,16 +45,12 @@ export interface DesktopShortcut {
 }
 
 export const DESKTOP_SHORTCUTS: DesktopShortcut[] = [
-  { id: "overview", label: "System-Übersicht", tabId: "overview", icon: <Activity size={24} /> },
-  { id: "machines", label: "Maschinen & SSH", tabId: "machines", icon: <Server size={24} /> },
-  { id: "users", label: "Benutzer & AD", tabId: "users", icon: <Users size={24} /> },
-  { id: "me", label: "Mein Konto", tabId: "me", icon: <HardDrive size={24} /> },
-  { id: "vault", label: "Passwort-Tresor", tabId: "vault", icon: <FolderKey size={24} /> },
-  { id: "policies", label: "GPO Policies", tabId: "policies", icon: <Shield size={24} /> },
-  { id: "dns", label: "DNS Manager", tabId: "dns", icon: <Globe size={24} /> },
-  { id: "ca", label: "CA & Proxy", tabId: "ca", icon: <Settings size={24} /> },
-  { id: "audit", label: "Audit Log", tabId: "audit", icon: <AppWindow size={24} /> },
-  { id: "explorer", label: "API Explorer", tabId: "explorer", icon: <TerminalIcon size={24} /> },
+  { id: "overview", label: "DC-Leitstand", tabId: "overview", icon: <Activity size={24} /> },
+  { id: "directory", label: "Verzeichnis & GPOs", tabId: "directory", icon: <Users size={24} /> },
+  { id: "machines", label: "Flotte & Enrollment", tabId: "machines", icon: <Server size={24} /> },
+  { id: "network", label: "Netzwerk & PKI", tabId: "network", icon: <Globe size={24} /> },
+  { id: "workspace", label: "Mein Konto & Tresor", tabId: "workspace", icon: <FolderKey size={24} /> },
+  { id: "security", label: "Sicherheit & API", tabId: "security", icon: <Shield size={24} /> },
 ];
 
 const TASKBAR_HEIGHT = 48;
