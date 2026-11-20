@@ -1,15 +1,16 @@
 import React, { useState } from "react";
-import { ShieldCheck } from "lucide-react";
+import { KeyRound, ShieldCheck } from "lucide-react";
 import { Button, TextField } from "../ui";
 import { NoticeBanner } from "../ui/NoticeBanner";
 import { formatHttpError, formatNetworkError, type ConsoleNotice } from "../ui/errors";
+import { authenticateWithPasskeyOptions } from "../api/webauthn";
 
 interface LoginViewProps {
   onSuccess: (accessToken: string, refreshToken: string) => Promise<void>;
 }
 
 export function LoginView({ onSuccess }: LoginViewProps) {
-  const [loginMode, setLoginMode] = useState<"password" | "code">("password");
+  const [loginMode, setLoginMode] = useState<"password" | "passkey" | "code">("password");
   const [loginUser, setLoginUser] = useState("");
   const [loginPass, setLoginPass] = useState("");
   const [loginCode, setLoginCode] = useState("");
@@ -30,6 +31,18 @@ export function LoginView({ onSuccess }: LoginViewProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: loginUser, password: loginPass }),
       });
+      if (res.status === 202) {
+        const mfa = (await res.json()) as {
+          mfa_required?: boolean;
+          options?: Record<string, unknown>;
+        };
+        if (mfa.mfa_required && mfa.options) {
+          const tokens = await authenticateWithPasskeyOptions(mfa.options);
+          setLoginPass("");
+          await onSuccess(tokens.access_token, tokens.refresh_token || "");
+          return;
+        }
+      }
       if (res.ok) {
         const data = await res.json();
         setLoginPass("");
@@ -39,7 +52,40 @@ export function LoginView({ onSuccess }: LoginViewProps) {
         pushErr(formatHttpError("Anmeldung", res.status, body));
       }
     } catch (err) {
-      pushErr(formatNetworkError("Anmeldung", err));
+      if (err instanceof Error && err.message) {
+        pushErr({ severity: "error", title: "Passkey-MFA", detail: err.message });
+      } else {
+        pushErr(formatNetworkError("Anmeldung", err));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handlePasskeyLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setNotice(null);
+    setBusy(true);
+    try {
+      const startRes = await fetch("/v1/auth/passkey/login/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginUser }),
+      });
+      if (!startRes.ok) {
+        const body = await startRes.text().catch(() => "");
+        pushErr(formatHttpError("Passkey-Login", startRes.status, body));
+        return;
+      }
+      const options = (await startRes.json()) as Record<string, unknown>;
+      const tokens = await authenticateWithPasskeyOptions(options);
+      await onSuccess(tokens.access_token, tokens.refresh_token || "");
+    } catch (err) {
+      pushErr({
+        severity: "error",
+        title: "Passkey-Login",
+        detail: err instanceof Error ? err.message : "Passkey-Anmeldung fehlgeschlagen.",
+      });
     } finally {
       setBusy(false);
     }
@@ -89,7 +135,16 @@ export function LoginView({ onSuccess }: LoginViewProps) {
               setNotice(null);
             }}
           >
-            Passwort-Login
+            Passwort
+          </Button>
+          <Button
+            variant={loginMode === "passkey" ? "primary" : "secondary"}
+            onClick={() => {
+              setLoginMode("passkey");
+              setNotice(null);
+            }}
+          >
+            <KeyRound size={14} aria-hidden="true" /> Passkey
           </Button>
           <Button
             variant={loginMode === "code" ? "primary" : "secondary"}
@@ -111,7 +166,7 @@ export function LoginView({ onSuccess }: LoginViewProps) {
             <TextField
               label="Domänen-Benutzer"
               placeholder="leon.admin"
-              autoComplete="username"
+              autoComplete="username webauthn"
               value={loginUser}
               onChange={(e) => setLoginUser(e.target.value)}
               required
@@ -127,6 +182,20 @@ export function LoginView({ onSuccess }: LoginViewProps) {
             />
             <Button variant="primary" type="submit" busy={busy} style={{ width: "100%", justifyContent: "center" }}>
               Anmelden
+            </Button>
+          </form>
+        ) : loginMode === "passkey" ? (
+          <form onSubmit={(e) => void handlePasskeyLogin(e)} style={{ display: "grid", gap: 12, marginTop: 12 }}>
+            <TextField
+              label="Domänen-Benutzer"
+              placeholder="leon.admin"
+              autoComplete="username webauthn"
+              value={loginUser}
+              onChange={(e) => setLoginUser(e.target.value)}
+              required
+            />
+            <Button variant="primary" type="submit" busy={busy} style={{ width: "100%", justifyContent: "center" }}>
+              Mit Passkey anmelden
             </Button>
           </form>
         ) : (

@@ -4,6 +4,7 @@ import { NoticeBanner } from "./ui/NoticeBanner";
 import { DEFAULT_WORKBENCH_THEMES, ThemeProvider } from "./ui";
 import { buildNotice, ConsoleNotice, formatHttpError, formatNetworkError } from "./ui/errors";
 import { LoginView } from "./views/LoginView";
+import { PasskeyPanel } from "./components/PasskeyPanel";
 const FilesWindow = lazy(() => import("./FilesWindow").then((m) => ({ default: m.FilesWindow })));
 const XtermTerminal = lazy(() => import("./XtermTerminal").then((m) => ({ default: m.XtermTerminal })));
 import {
@@ -831,6 +832,13 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            <PasskeyPanel
+              authHeaders={authHeaders}
+              onStatus={(ok, title, detail) =>
+                pushNotice("me", buildNotice(ok ? "success" : "error", title, detail))
+              }
+            />
 
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="card-title">Just-in-Time Admin-Rechte (nur bei RBAC-Berechtigung)</div>

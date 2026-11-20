@@ -782,4 +782,26 @@ pub enum ServerAction {
         #[arg(long)]
         dry_run: bool,
     },
+
+    /// Sichert DC-Zustand (domain, ca, auth) lokal oder von einem Remote-Server in ein .tar.gz Archiv
+    Backup {
+        /// Optionaler Zielserver via SSH (z. B. 'srv490042'; ohne Angabe lokal)
+        #[arg(long)]
+        target: Option<String>,
+
+        /// Ausgabedatei (Standard: sb-dc-backup-<timestamp>.tar.gz)
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+
+    /// Stellt einen DC-Zustand aus einem Backup-Archiv lokal oder auf einem Server wieder her
+    Restore {
+        /// Pfad zum Backup-Archiv (.tar.gz)
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Optionaler Zielserver via SSH (z. B. 'srv490042'; ohne Angabe lokal)
+        #[arg(long)]
+        target: Option<String>,
+    },
 }

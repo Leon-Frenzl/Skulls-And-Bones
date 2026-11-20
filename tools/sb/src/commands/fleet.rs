@@ -2001,6 +2001,248 @@ mod tests {
         assert!(build_dc_init_script("corp.eu", None, None, "bad;user", None, "caddy", None).is_err());
         assert!(build_dc_init_script("corp.eu", None, None, "sb.admin", None, "nginx", None).is_err());
     }
+
+    #[test]
+    fn test_local_dc_backup_and_restore_roundtrip() {
+        let tmp = std::env::temp_dir().join(format!("sb_backup_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let src_home = tmp.join("src_sb");
+        let dst_home = tmp.join("dst_sb");
+        fs::create_dir_all(src_home.join("domain")).unwrap();
+        fs::create_dir_all(src_home.join("ca")).unwrap();
+        fs::write(src_home.join("domain").join("users.json"), b"{\"users\":{}}").unwrap();
+        fs::write(src_home.join("ca").join("root_ca.crt"), b"CERT").unwrap();
+
+        let archive_path = tmp.join("dc-backup.tar.gz");
+        let sha = create_dc_backup_archive(&src_home, &archive_path).unwrap();
+        assert_eq!(sha.len(), 64);
+        assert!(archive_path.is_file());
+
+        restore_dc_backup_archive(&archive_path, &dst_home).unwrap();
+        assert_eq!(
+            fs::read_to_string(dst_home.join("domain").join("users.json")).unwrap(),
+            "{\"users\":{}}"
+        );
+        assert_eq!(
+            fs::read_to_string(dst_home.join("ca").join("root_ca.crt")).unwrap(),
+            "CERT"
+        );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+}
+
+/// Creates a `.tar.gz` backup of `domain`, `ca`, and `auth` inside `sb_home` and returns its SHA-256 hex digest.
+pub fn create_dc_backup_archive(sb_home: &std::path::Path, out_path: &std::path::Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+
+    if let Some(parent) = out_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| format!("Kann Zielverzeichnis nicht anlegen: {e}"))?;
+        }
+    }
+    let file = fs::File::create(out_path)
+        .map_err(|e| format!("Kann Backup-Datei '{}' nicht erstellen: {e}", out_path.display()))?;
+    let gz = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    let mut tar_builder = tar::Builder::new(gz);
+    for subdir in ["domain", "ca", "auth"] {
+        let dir = sb_home.join(subdir);
+        if dir.is_dir() {
+            tar_builder
+                .append_dir_all(subdir, &dir)
+                .map_err(|e| format!("Backup von '{subdir}' fehlgeschlagen: {e}"))?;
+        }
+    }
+    let gz = tar_builder
+        .into_inner()
+        .map_err(|e| format!("Tar-Abschluss fehlgeschlagen: {e}"))?;
+    gz.finish()
+        .map_err(|e| format!("Gzip-Abschluss fehlgeschlagen: {e}"))?;
+    let _ = sb_core::paths::ensure_private_permissions(out_path);
+
+    let bytes = fs::read(out_path).map_err(|e| format!("Backup-Prüfung fehlgeschlagen: {e}"))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Safely restores a `.tar.gz` DC backup into `sb_home` (rejects path traversal entries).
+// [SECURITY-HYPOTHESIS] CWE-22: Malicious tar entry containing `..` or absolute path overwriting host files.
+// [SECURITY-VERIFIED] Rejects any entry with `..`, root dir, or prefix outside `domain/`, `ca/`, `auth/`.
+pub fn restore_dc_backup_archive(archive_path: &std::path::Path, sb_home: &std::path::Path) -> Result<(), String> {
+    let file = fs::File::open(archive_path)
+        .map_err(|e| format!("Backup '{}' nicht lesbar: {e}", archive_path.display()))?;
+    let gz = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(gz);
+    fs::create_dir_all(sb_home).map_err(|e| format!("Kann Zielverzeichnis nicht anlegen: {e}"))?;
+
+    let entries = archive
+        .entries()
+        .map_err(|e| format!("Ungültiges tar.gz-Archiv: {e}"))?;
+    for entry in entries {
+        let mut entry = entry.map_err(|e| format!("Fehlerhafter Archiv-Eintrag: {e}"))?;
+        let rel = entry
+            .path()
+            .map_err(|e| format!("Ungültiger Archiv-Pfad: {e}"))?
+            .into_owned();
+        if rel.is_absolute()
+            || rel
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::RootDir))
+        {
+            return Err(format!("Unsicherer Pfad im Backup abgelehnt: {}", rel.display()));
+        }
+        let first = rel
+            .components()
+            .next()
+            .and_then(|c| c.as_os_str().to_str())
+            .unwrap_or("");
+        if !matches!(first, "domain" | "ca" | "auth") {
+            return Err(format!("Unerwartetes Verzeichnis im Backup: '{first}'"));
+        }
+        let target = sb_home.join(&rel);
+        if entry.header().entry_type().is_dir() {
+            fs::create_dir_all(&target)
+                .map_err(|e| format!("Kann Verzeichnis '{}' nicht anlegen: {e}", target.display()))?;
+        } else {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("Kann Elternverzeichnis nicht anlegen: {e}"))?;
+            }
+            entry
+                .unpack(&target)
+                .map_err(|e| format!("Entpacken fehlgeschlagen: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+pub fn handle_server_backup(target: Option<&str>, out: Option<&std::path::Path>) {
+    print_banner();
+    let default_name = format!(
+        "sb-dc-backup-{}.tar.gz",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    let out_path = out
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(&default_name));
+
+    if let Some(remote) = target {
+        let _ = crate::commands::ssh::ensure_ephemeral_ssh_user_cert();
+        let _ = sb_core::ssh_transport::ensure_sovereign_ssh_config();
+        let remote_tmp = "/tmp/sb-dc-backup.tar.gz";
+        let (ssh_bin, ssh_args) = match sb_core::ssh_transport::build_ssh_exec_args(
+            remote,
+            "tar -czf /tmp/sb-dc-backup.tar.gz -C \"$HOME/.sb\" domain ca auth",
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                sb_core::logfmt::error("FLEET_BACKUP_SSH_ARGS", "sb::fleet", "SSH-Args fehlgeschlagen", &[("err", &e)]);
+                std::process::exit(1);
+            }
+        };
+        let status = Command::new(&ssh_bin).args(&ssh_args).status();
+        if !matches!(status, Ok(s) if s.success()) {
+            sb_core::logfmt::error("FLEET_BACKUP_REMOTE_TAR", "sb::fleet", "Remote-Backup fehlgeschlagen", &[("target", remote)]);
+            std::process::exit(1);
+        }
+        let out_str = out_path.to_string_lossy().to_string();
+        let (scp_bin, scp_args) =
+            match sb_core::ssh_transport::build_scp_pull_args(remote, remote_tmp, Some(&out_str)) {
+                Ok(v) => v,
+                Err(e) => {
+                    sb_core::logfmt::error("FLEET_BACKUP_SCP_ARGS", "sb::fleet", "SCP-Pull fehlgeschlagen", &[("err", &e)]);
+                    std::process::exit(1);
+                }
+            };
+        let scp_status = Command::new(&scp_bin).args(&scp_args).status();
+        let _ = sb_core::ssh_transport::build_ssh_exec_args(remote, "rm -f /tmp/sb-dc-backup.tar.gz")
+            .map(|(b, a)| Command::new(b).args(a).status());
+        if !matches!(scp_status, Ok(s) if s.success()) {
+            sb_core::logfmt::error("FLEET_BACKUP_SCP_PULL", "sb::fleet", "Backup-Download fehlgeschlagen", &[("target", remote)]);
+            std::process::exit(1);
+        }
+        println!(
+            "  {} Remote-Backup von '{}' gespeichert: {}",
+            "✓".bright_green().bold(),
+            remote,
+            out_path.display()
+        );
+    } else {
+        match create_dc_backup_archive(&sb_core::paths::sb_home(), &out_path) {
+            Ok(sha) => {
+                println!(
+                    "  {} Lokales DC-Backup erstellt: {}",
+                    "✓".bright_green().bold(),
+                    out_path.display()
+                );
+                println!("  ► SHA-256: {}", sha.bright_black());
+            }
+            Err(e) => {
+                sb_core::logfmt::error("FLEET_BACKUP_LOCAL", "sb::fleet", "Lokales Backup fehlgeschlagen", &[("err", &e)]);
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+pub fn handle_server_restore(input: &std::path::Path, target: Option<&str>) {
+    print_banner();
+    if !input.is_file() {
+        sb_core::logfmt::error(
+            "FLEET_RESTORE_MISSING_FILE",
+            "sb::fleet",
+            "Backup-Datei nicht gefunden",
+            &[("path", &input.display().to_string())],
+        );
+        std::process::exit(1);
+    }
+
+    if let Some(remote) = target {
+        let _ = crate::commands::ssh::ensure_ephemeral_ssh_user_cert();
+        let _ = sb_core::ssh_transport::ensure_sovereign_ssh_config();
+        let in_str = input.to_string_lossy().to_string();
+        let remote_tmp = "/tmp/sb-dc-restore.tar.gz";
+        let (scp_bin, scp_args) =
+            match sb_core::ssh_transport::build_scp_push_args(remote, &in_str, Some(remote_tmp)) {
+                Ok(v) => v,
+                Err(e) => {
+                    sb_core::logfmt::error("FLEET_RESTORE_SCP_ARGS", "sb::fleet", "SCP-Push fehlgeschlagen", &[("err", &e)]);
+                    std::process::exit(1);
+                }
+            };
+        if !matches!(Command::new(&scp_bin).args(&scp_args).status(), Ok(s) if s.success()) {
+            sb_core::logfmt::error("FLEET_RESTORE_SCP_PUSH", "sb::fleet", "Backup-Upload fehlgeschlagen", &[("target", remote)]);
+            std::process::exit(1);
+        }
+        let remote_cmd = "set -euo pipefail; mkdir -p \"$HOME/.sb\"; tar -xzf /tmp/sb-dc-restore.tar.gz -C \"$HOME/.sb\"; rm -f /tmp/sb-dc-restore.tar.gz; systemctl restart sb-dc.service || true";
+        let (ssh_bin, ssh_args) = match sb_core::ssh_transport::build_ssh_exec_args(remote, remote_cmd) {
+            Ok(v) => v,
+            Err(e) => {
+                sb_core::logfmt::error("FLEET_RESTORE_SSH_ARGS", "sb::fleet", "SSH-Restore fehlgeschlagen", &[("err", &e)]);
+                std::process::exit(1);
+            }
+        };
+        if !matches!(Command::new(&ssh_bin).args(&ssh_args).status(), Ok(s) if s.success()) {
+            sb_core::logfmt::error("FLEET_RESTORE_REMOTE_FAILED", "sb::fleet", "Remote-Restore fehlgeschlagen", &[("target", remote)]);
+            std::process::exit(1);
+        }
+        println!(
+            "  {} Backup '{}' auf '{}' wiederhergestellt und sb-dc.service neu gestartet.",
+            "✓".bright_green().bold(),
+            input.display(),
+            remote
+        );
+    } else if let Err(e) = restore_dc_backup_archive(input, &sb_core::paths::sb_home()) {
+        sb_core::logfmt::error("FLEET_RESTORE_LOCAL", "sb::fleet", "Lokaler Restore fehlgeschlagen", &[("err", &e)]);
+        std::process::exit(1);
+    } else {
+        println!(
+            "  {} Backup '{}' lokal nach {} wiederhergestellt.",
+            "✓".bright_green().bold(),
+            input.display(),
+            sb_core::paths::sb_home().display()
+        );
+    }
 }
 
 /// Builds a hardened Ubuntu/Debian setup script for `sb server dc-init` (replacing `scripts/install-dc.sh`).
