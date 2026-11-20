@@ -104,6 +104,7 @@ Bei **jeder** Entwicklungsaufgabe (Feature, Bugfix, Refactoring, Dependency-Änd
 1. **Sicherheitsprüfung** — Skill `security-cve-audit`: betroffene Funktionen und Dependencies prüfen (`cargo audit`, Semgrep-MCP), Funde mit **verifizierter** Kennung im Code kommentieren (`// SECURITY(CVE-YYYY-NNNNN): …`), Ausnutzungswahrscheinlichkeit für dieses Projekt bewerten und Lücken ab Stufe Medium im selben Change beheben. CVE-Nummern werden nie erfunden; ohne CVE gelten `RUSTSEC-…` oder `CWE-…`.
 2. **Standards** — Skill `standards-compliance`: Für definierte Standards (RFC, IEEE, ISO, NIST, …) gilt die Spezifikation. Abweichung nur, wenn die Spezifikation selbst eine Sicherheitslücke erzeugt; dann patchen, mit `// DEVIATION(RFC NNNN §x): …` kennzeichnen, testen und dokumentieren.
 3. **Dokumentation in Typst** — Skill `typst-docs`: Code-Dokumentation wird in `.typ` unter `docs/typ/<crate>/` geschrieben; Rust-Doc-Kommentare bleiben kurze Verweise.
+4. **CLI-Vereinheitlichung** — Standard `docs/CLI_UNIFICATION_STANDARD.md` & `docs/typ/sb/cli-unification.typ`: Keine neuen CLI-Binaries und keine unnötigen Top-Level-Commands erzeugen. Neue Workflows, OS-Dienststeuerung (`sc.exe`/`systemctl`) und Update-Pfade immer in bestehende `sb`-Subcommands (`sb agent`, `sb service`, `sb update`, `sb domain`, …) integrieren.
 
 MCP-Server (`.vscode/mcp.json`): `semgrep` (statische Analyse), `fetch` (RFC-, NVD-, OSV- und RustSec-Abfragen).
 
