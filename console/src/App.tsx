@@ -7,6 +7,7 @@ import { LoginView } from "./views/LoginView";
 import { PasskeyPanel } from "./components/PasskeyPanel";
 import { CaProxyPanel, CaStatusData, ProxyRouteItem } from "./components/CaProxyPanel";
 import { DnsIpamPanel } from "./components/DnsIpamPanel";
+import { ActiveElevationItem, TicketsPanel } from "./components/TicketsPanel";
 const FilesWindow = lazy(() => import("./FilesWindow").then((m) => ({ default: m.FilesWindow })));
 const XtermTerminal = lazy(() => import("./XtermTerminal").then((m) => ({ default: m.XtermTerminal })));
 import {
@@ -128,6 +129,8 @@ export default function App() {
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditValid, setAuditValid] = useState<boolean | null>(null);
   const [auditQuery, setAuditQuery] = useState("");
+  const [elevations, setElevations] = useState<ActiveElevationItem[]>([]);
+  const [autoRenew, setAutoRenew] = useState<boolean>(() => localStorage.getItem("sb_auto_renew") !== "false");
   const [enrollPkg, setEnrollPkg] = useState<Record<string, unknown> | null>(null);
   const [meUser, setMeUser] = useState<(DomainUser & { ssh_public_key?: string }) | null>(null);
   const [meMachines, setMeMachines] = useState<MachineRecord[]>([]);
@@ -468,9 +471,10 @@ export default function App() {
         const uJson = await uRes.json();
         setUsers(Array.isArray(uJson.users) ? uJson.users : []);
       }
-      const [ouRes, grpRes] = await Promise.all([
+      const [ouRes, grpRes, elRes] = await Promise.all([
         fetch("/v1/ous", { headers }),
         fetch("/v1/groups", { headers }),
+        fetch("/v1/me/elevations", { headers }).catch(() => null),
       ]);
       if (ouRes.ok) {
         const ouJson = await ouRes.json();
@@ -479,6 +483,10 @@ export default function App() {
       if (grpRes.ok) {
         const grpJson = await grpRes.json();
         setSecGroups(Array.isArray(grpJson.groups) ? grpJson.groups : []);
+      }
+      if (elRes && elRes.ok) {
+        const elJson = await elRes.json();
+        setElevations(Array.isArray(elJson.elevations) ? elJson.elevations : []);
       }
       if (aRes.ok) {
         const aJson = await aRes.json();
@@ -504,6 +512,28 @@ export default function App() {
       pushNotice("global", formatNetworkError("Datenabruf", err));
     }
   };
+
+  useEffect(() => {
+    if (!token || !refreshToken || !autoRenew) return;
+    const interval = window.setInterval(() => {
+      const parts = token.split(".");
+      if (parts.length !== 3) return;
+      try {
+        const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+        const payload = JSON.parse(atob(padded)) as { exp?: number };
+        if (typeof payload.exp === "number") {
+          const remainingSec = payload.exp - Math.floor(Date.now() / 1000);
+          if (remainingSec < 120) {
+            void tryRefreshSession();
+          }
+        }
+      } catch {
+        // Ignore malformed JWT
+      }
+    }, 30000);
+    return () => window.clearInterval(interval);
+  }, [token, refreshToken, autoRenew]);
 
   useEffect(() => {
     if (token.trim()) {
@@ -741,6 +771,40 @@ export default function App() {
 
         {tab === "me" && (
           <>
+            <TicketsPanel
+              token={token}
+              refreshToken={refreshToken}
+              autoRenew={autoRenew}
+              onToggleAutoRenew={(next) => {
+                setAutoRenew(next);
+                localStorage.setItem("sb_auto_renew", next ? "true" : "false");
+              }}
+              onRefreshSession={async () => {
+                const next = await tryRefreshSession();
+                if (next) {
+                  pushNotice("me", buildNotice("success", "Sitzung erneuert", "Neues Access-Token ausgestellt."));
+                  return true;
+                }
+                pushNotice("me", buildNotice("error", "Erneuerung fehlgeschlagen", "Bitte erneut anmelden."));
+                return false;
+              }}
+              elevations={elevations}
+              sshCertRaw={meSshCert}
+              onIssueSshCert={async () => {
+                const res = await fetch("/v1/me/ssh-cert", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", ...authHeaders() },
+                  body: JSON.stringify({ ttl_seconds: 28800 }),
+                });
+                if (res.ok) {
+                  setMeSshCert(await res.text());
+                  pushNotice("me", buildNotice("success", "SSH-Zertifikat erneuert", "Neues 8h-Zertifikat ausgestellt."));
+                } else {
+                  await pushHttpError("me", "SSH-Zertifikat erneuern", res);
+                }
+              }}
+            />
+
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="card-title">Mein Domänen-Profil</div>
               {meUser ? (
@@ -896,6 +960,7 @@ export default function App() {
                     if (res.ok) {
                       setElevOut(await res.text());
                       pushNotice("me", buildNotice("success", "JIT-Rechte aktiviert", `Regel '${elevRuleId}' für 30 Minuten aktiv.`));
+                      await refreshAll();
                     } else {
                       await pushHttpError("me", "JIT-Rechte anfordern", res);
                     }

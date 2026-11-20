@@ -712,4 +712,54 @@ body {
     font-weight: 600;
     color: var(--muted);
   }
+
+  .tickets-table,
+  .tickets-table thead,
+  .tickets-table tbody,
+  .tickets-table tr,
+  .tickets-table th,
+  .tickets-table td,
+  .dns-records-table,
+  .dns-records-table thead,
+  .dns-records-table tbody,
+  .dns-records-table tr,
+  .dns-records-table th,
+  .dns-records-table td {
+    display: block;
+  }
+
+  .tickets-table thead,
+  .dns-records-table thead {
+    display: none;
+  }
+
+  .tickets-table tr,
+  .dns-records-table tr {
+    margin-block-end: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .tickets-table {
+    --t-label-2: "Wofür";
+    --t-label-3: "Dauer";
+    --t-label-4: "Auto-Renewal";
+    --t-label-5: "Aktion";
+  }
+
+  .tickets-table td:nth-child(2)::before { content: var(--t-label-2) ": "; font-weight: 600; color: var(--muted); }
+  .tickets-table td:nth-child(3)::before { content: var(--t-label-3) ": "; font-weight: 600; color: var(--muted); }
+  .tickets-table td:nth-child(4)::before { content: var(--t-label-4) ": "; font-weight: 600; color: var(--muted); }
+  .tickets-table td:nth-child(5)::before { content: var(--t-label-5) ": "; font-weight: 600; color: var(--muted); }
+
+  .dns-records-table {
+    --d-label-2: "Typ";
+    --d-label-3: "Zielwert";
+    --d-label-4: "Aktion";
+  }
+
+  .dns-records-table td:nth-child(2)::before { content: var(--d-label-2) ": "; font-weight: 600; color: var(--muted); }
+  .dns-records-table td:nth-child(3)::before { content: var(--d-label-3) ": "; font-weight: 600; color: var(--muted); }
+  .dns-records-table td:nth-child(4)::before { content: var(--d-label-4) ": "; font-weight: 600; color: var(--muted); }
 }
