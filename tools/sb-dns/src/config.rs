@@ -8,6 +8,12 @@ use std::io::Read;
 
 pub const MAX_DIRECTORY_SNAPSHOT_FILE_SIZE: u64 = 16 * 1024 * 1024;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DotUpstreamConfig {
+    pub addr: SocketAddr,
+    pub server_name: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DnsConfig {
@@ -16,10 +22,34 @@ pub struct DnsConfig {
     pub sovereign_suffixes: Vec<String>,
     pub enable_upstream_forwarding: bool,
     pub upstream_servers: Vec<SocketAddr>,
+    #[serde(default)]
+    pub doh_upstreams: Vec<String>,
+    #[serde(default)]
+    pub dot_upstreams: Vec<DotUpstreamConfig>,
     pub cache_size: usize,
     pub default_ttl: u32,
+    #[serde(default = "default_negative_cache_ttl")]
+    pub negative_cache_ttl_secs: u32,
+    #[serde(default = "default_serve_stale_secs")]
+    pub serve_stale_secs: u64,
+    #[serde(default = "default_rate_limit_qps")]
+    pub rate_limit_qps: u32,
+    #[serde(default)]
+    pub split_horizon_public_ip: Option<Ipv4Addr>,
     #[serde(default)]
     pub authority_trust: Vec<AuthorityTrustConfig>,
+}
+
+fn default_negative_cache_ttl() -> u32 {
+    60
+}
+
+fn default_serve_stale_secs() -> u64 {
+    300
+}
+
+fn default_rate_limit_qps() -> u32 {
+    100
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,8 +100,14 @@ impl Default for DnsConfig {
             sovereign_suffixes: vec![".sbm".to_string(), ".sb".to_string(), ".mesh".to_string()],
             enable_upstream_forwarding: true,
             upstream_servers: vec!["1.1.1.1:53".parse().unwrap(), "8.8.8.8:53".parse().unwrap()],
+            doh_upstreams: Vec::new(),
+            dot_upstreams: Vec::new(),
             cache_size: 1024,
             default_ttl: 300,
+            negative_cache_ttl_secs: default_negative_cache_ttl(),
+            serve_stale_secs: default_serve_stale_secs(),
+            rate_limit_qps: default_rate_limit_qps(),
+            split_horizon_public_ip: None,
             authority_trust: Vec::new(),
         }
     }
@@ -97,6 +133,8 @@ pub struct RecordsConfig {
     pub txt: HashMap<String, String>,
     #[serde(default)]
     pub srv: HashMap<String, Vec<SrvRecordConfig>>,
+    #[serde(default)]
+    pub wildcards: HashMap<String, Ipv4Addr>,
 }
 
 pub struct ConfigManager;

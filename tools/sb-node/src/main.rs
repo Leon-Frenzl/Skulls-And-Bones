@@ -4750,6 +4750,17 @@ async fn handle_domain_commands(sub: DomainCommands) -> Result<(), String> {
             };
             let state_path =
                 domain_join::persist_local_machine_state(&resp, &signing_key, os, None)?;
+            if let Err(e) = sb_dns::os_integration::OsIntegration::install_split_dns_for_domains(
+                &resp.dns_server,
+                &[".sbm", &resp.domain],
+            ) {
+                sb_core::logfmt::warn(
+                    "WARN_JOIN_SPLIT_DNS",
+                    "node.domain",
+                    "Split-DNS rule installation skipped or requires elevation",
+                    &[("domain", &resp.domain), ("error", &e)],
+                );
+            }
 
             println!(
                 "{} Maschine '{}' erfolgreich in Domäne '{}' aufgenommen!",
@@ -4887,6 +4898,7 @@ async fn handle_domain_commands(sub: DomainCommands) -> Result<(), String> {
 pub fn offboard_this_machine() -> Result<(), String> {
     let purged = os_auth_broker::purge_all_cached_domain_users();
     let _ = handle_domain_logon_cmd("disable", None, None);
+    let _ = sb_dns::os_integration::OsIntegration::uninstall_split_dns();
     let domain_dir = sb_core::domain::local_domain_dir();
     if domain_dir.exists() {
         let _ = fs::remove_dir_all(&domain_dir);

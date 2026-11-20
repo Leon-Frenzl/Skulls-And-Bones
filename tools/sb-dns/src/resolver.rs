@@ -21,6 +21,7 @@ pub(crate) const MAX_DNS_MESSAGE_SIZE: usize = 4096;
 struct CacheEntry {
     message: Message,
     expires_at: Instant,
+    stale_until: Instant,
 }
 
 #[derive(Default)]
@@ -267,7 +268,46 @@ impl DnsResolver {
         })
     }
 
+    /// Immediately revokes a machine or FQDN from the live directory, static A-records, and DNS cache.
+    pub async fn revoke_machine_live(&self, target: &str) {
+        let clean = target.trim().trim_end_matches('.').to_ascii_lowercase();
+        let mut removed_names = vec![clean.clone()];
+        {
+            let mut directory = self.directory.write().await;
+            let keys_to_remove: Vec<String> = directory
+                .nodes
+                .iter()
+                .filter(|(fqdn, node)| {
+                    fqdn.as_str() == clean || node.node_id.eq_ignore_ascii_case(&clean)
+                })
+                .map(|(fqdn, _)| fqdn.clone())
+                .collect();
+            for fqdn in keys_to_remove {
+                directory.nodes.remove(&fqdn);
+                removed_names.push(fqdn);
+            }
+        }
+        if let Ok(mut records) = self.records.lock() {
+            for name in &removed_names {
+                records.a.remove(name);
+                records.aaaa.remove(name);
+            }
+        }
+        for name in &removed_names {
+            self.invalidate_name(name);
+        }
+    }
+
     pub async fn resolve(&self, query: &Message) -> Result<Message, String> {
+        self.resolve_for_client(query, None).await
+    }
+
+    /// Resolves a DNS query with optional Split-Horizon awareness for `client_ip`.
+    pub async fn resolve_for_client(
+        &self,
+        query: &Message,
+        client_ip: Option<IpAddr>,
+    ) -> Result<Message, String> {
         if query.metadata.message_type != MessageType::Query {
             return Ok(self.response(query, ResponseCode::FormErr, false));
         }
@@ -290,16 +330,23 @@ impl DnsResolver {
             .to_ascii_lowercase();
         let qtype = question.query_type();
         if self.is_private_name(&qname) {
-            return Ok(self
+            let mut resp = self
                 .resolve_private(query, question.name(), &qname, qtype)
-                .await);
+                .await;
+            self.apply_split_horizon(&mut resp, &qname, client_ip);
+            return Ok(resp);
         }
 
-        if let Some(response) = self.resolve_static(query, question.name(), &qname, qtype) {
+        if let Some(mut response) = self.resolve_static(query, question.name(), &qname, qtype) {
+            self.apply_split_horizon(&mut response, &qname, client_ip);
             return Ok(response);
         }
 
-        if !self.config.enable_upstream_forwarding || self.config.upstream_servers.is_empty() {
+        if !self.config.enable_upstream_forwarding
+            || (self.config.upstream_servers.is_empty()
+                && self.config.doh_upstreams.is_empty()
+                && self.config.dot_upstreams.is_empty())
+        {
             return Ok(self.response(query, ResponseCode::Refused, false));
         }
 
@@ -308,29 +355,78 @@ impl DnsResolver {
             return Ok(cached);
         }
 
-        let mut last_error = None;
-        for upstream in &self.config.upstream_servers {
-            match forward_query(*upstream, query).await {
-                Ok(response) => {
+        let mut last_error: Option<String> = None;
+        for doh_url in &self.config.doh_upstreams {
+            match crate::encrypted_upstream::forward_query_doh(doh_url, query).await {
+                Ok(mut response) => {
                     self.cache_response(cache_key.clone(), &response);
-                    let mut response = response;
                     response.metadata.id = query.id();
                     return Ok(response);
                 }
                 Err(error) => last_error = Some(error),
             }
         }
+        for dot in &self.config.dot_upstreams {
+            match crate::encrypted_upstream::forward_query_dot(dot.addr, &dot.server_name, query)
+                .await
+            {
+                Ok(mut response) => {
+                    self.cache_response(cache_key.clone(), &response);
+                    response.metadata.id = query.id();
+                    return Ok(response);
+                }
+                Err(error) => last_error = Some(error),
+            }
+        }
+        for upstream in &self.config.upstream_servers {
+            match forward_query(*upstream, query).await {
+                Ok(mut response) => {
+                    self.cache_response(cache_key.clone(), &response);
+                    response.metadata.id = query.id();
+                    return Ok(response);
+                }
+                Err(error) => last_error = Some(error.to_string()),
+            }
+        }
+
+        if let Some(stale) = self.stale_response(&cache_key, query.id()) {
+            sb_core::logfmt::warn(
+                "WARN_DNS_SERVE_STALE",
+                "dns.resolver",
+                "Serving stale cached DNS response after upstream failure",
+                &[("qname", &qname)],
+            );
+            return Ok(stale);
+        }
 
         if let Some(error) = last_error {
-            let e = error.to_string();
             sb_core::logfmt::warn(
                 "ERR_DNS_UPSTREAM",
                 "dns.resolver",
                 "DNS upstream resolution failed",
-                &[("qname", &qname), ("error", &e)],
+                &[("qname", &qname), ("error", &error)],
             );
         }
         Ok(self.response(query, ResponseCode::ServFail, false))
+    }
+
+    fn apply_split_horizon(&self, response: &mut Message, qname: &str, client_ip: Option<IpAddr>) {
+        let Some(public_ip) = self.config.split_horizon_public_ip else {
+            return;
+        };
+        let Some(client) = client_ip else {
+            return;
+        };
+        if is_internal_client_ip(client) || qname.ends_with(".sbm") || qname.ends_with(".mesh") {
+            return;
+        }
+        for ans in response.answers.iter_mut() {
+            if let RData::A(v4) = &ans.data {
+                if is_internal_client_ip(IpAddr::V4(v4.0)) {
+                    ans.data = RData::A(public_ip.into());
+                }
+            }
+        }
     }
 
     fn response(&self, query: &Message, code: ResponseCode, authoritative: bool) -> Message {
@@ -521,6 +617,14 @@ impl DnsResolver {
                     ));
                     return Some(response);
                 }
+                if let Some(ip) = lookup_wildcard(&records.wildcards, qname) {
+                    response.add_answer(Record::from_rdata(
+                        owner.clone(),
+                        ttl,
+                        RData::A(ip.into()),
+                    ));
+                    return Some(response);
+                }
             }
             RecordType::AAAA => {
                 if let Some(ip) = records.aaaa.get(qname) {
@@ -620,6 +724,7 @@ impl DnsResolver {
                 }
                 Some(message)
             }
+            Some(entry) if now < entry.stale_until => None,
             Some(_) => {
                 cache.remove(key);
                 None
@@ -628,11 +733,37 @@ impl DnsResolver {
         }
     }
 
+    fn stale_response(&self, key: &str, id: u16) -> Option<Message> {
+        let cache = self.cache.lock().ok()?;
+        let now = Instant::now();
+        let entry = cache.get(key)?;
+        if now >= entry.stale_until {
+            return None;
+        }
+        let mut message = entry.message.clone();
+        message.metadata.id = id;
+        for record in message.answers.iter_mut() {
+            record.ttl = 1;
+        }
+        Some(message)
+    }
+
     fn cache_response(&self, key: String, message: &Message) {
-        if self.config.cache_size == 0 || message.answers.is_empty() {
+        if self.config.cache_size == 0 {
             return;
         }
-        let ttl = message.answers.iter().map(|r| r.ttl).min().unwrap_or(0);
+        let ttl = if message.answers.is_empty() {
+            if matches!(
+                message.metadata.response_code,
+                ResponseCode::NXDomain | ResponseCode::NoError
+            ) {
+                self.config.negative_cache_ttl_secs
+            } else {
+                0
+            }
+        } else {
+            message.answers.iter().map(|r| r.ttl).min().unwrap_or(0)
+        };
         if ttl == 0 {
             return;
         }
@@ -649,7 +780,8 @@ impl DnsResolver {
                 return;
             }
         };
-        cache.retain(|_, entry| Instant::now() < entry.expires_at);
+        let now = Instant::now();
+        cache.retain(|_, entry| now < entry.stale_until);
         let max_entries = self.config.cache_size.min(65_536);
         if cache.len() >= max_entries {
             if let Some(oldest_key) = cache
@@ -662,14 +794,44 @@ impl DnsResolver {
         }
         let mut cached = message.clone();
         cached.metadata.id = 0;
+        let expires_at = now + Duration::from_secs(ttl as u64);
+        let stale_until = expires_at + Duration::from_secs(self.config.serve_stale_secs);
         cache.insert(
             key,
             CacheEntry {
                 message: cached,
-                expires_at: Instant::now() + Duration::from_secs(ttl as u64),
+                expires_at,
+                stale_until,
             },
         );
     }
+}
+
+fn is_internal_client_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
+        }
+        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unique_local(),
+    }
+}
+
+fn lookup_wildcard(wildcards: &HashMap<String, std::net::Ipv4Addr>, qname: &str) -> Option<std::net::Ipv4Addr> {
+    let mut best: Option<(usize, std::net::Ipv4Addr)> = None;
+    for (pattern, ip) in wildcards {
+        let p = pattern.trim().trim_end_matches('.').to_ascii_lowercase();
+        if let Some(suffix) = p.strip_prefix("*.") {
+            if qname.ends_with(&format!(".{suffix}")) && qname.len() > suffix.len() + 1 {
+                let len = suffix.len();
+                if best.map(|(b_len, _)| len > b_len).unwrap_or(true) {
+                    best = Some((len, *ip));
+                }
+            }
+        }
+    }
+    best.map(|(_, ip)| ip)
 }
 
 fn record_digest<T: serde::Serialize>(record: &T) -> Result<[u8; 32], DirectoryError> {
@@ -1102,5 +1264,50 @@ mod tests {
             .unwrap();
         assert_eq!(res.answers.len(), 1);
         assert_eq!(res.answers[0].record_type(), RecordType::SRV);
+    }
+
+    #[tokio::test]
+    async fn wildcard_and_split_horizon_and_negative_cache_work() {
+        let mut records = RecordsConfig::default();
+        records
+            .wildcards
+            .insert("*.apps.corp.eu".into(), Ipv4Addr::new(10, 42, 0, 1));
+        let mut cfg = DnsConfig::default();
+        cfg.split_horizon_public_ip = Some(Ipv4Addr::new(203, 0, 113, 10));
+        cfg.negative_cache_ttl_secs = 45;
+        let resolver = DnsResolver::new(cfg, records);
+
+        // Internal client gets mesh IP via wildcard
+        let internal_res = resolver
+            .resolve_for_client(
+                &query("grafana.apps.corp.eu", RecordType::A),
+                Some(IpAddr::V4(Ipv4Addr::new(10, 42, 0, 15))),
+            )
+            .await
+            .unwrap();
+        assert_eq!(internal_res.answers.len(), 1);
+        assert_eq!(
+            internal_res.answers[0].data,
+            RData::A(Ipv4Addr::new(10, 42, 0, 1).into())
+        );
+
+        // External client gets public IP via Split-Horizon
+        let external_res = resolver
+            .resolve_for_client(
+                &query("grafana.apps.corp.eu", RecordType::A),
+                Some(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 42))),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            external_res.answers[0].data,
+            RData::A(Ipv4Addr::new(203, 0, 113, 10).into())
+        );
+
+        // Negative caching stores NXDOMAIN
+        let nx = resolver.response(&query("missing.example.org", RecordType::A), ResponseCode::NXDomain, false);
+        resolver.cache_response("missing.example.org:A:IN".into(), &nx);
+        let cached_nx = resolver.cached_response("missing.example.org:A:IN", 99).unwrap();
+        assert_eq!(cached_nx.metadata.response_code, ResponseCode::NXDomain);
     }
 }

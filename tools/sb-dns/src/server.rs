@@ -1,8 +1,9 @@
 use crate::resolver::{DnsResolver, MAX_DNS_MESSAGE_SIZE};
 use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::Semaphore;
@@ -10,15 +11,48 @@ use tokio::sync::Semaphore;
 const MAX_CONCURRENT_QUERIES: usize = 256;
 const UDP_SAFE_RESPONSE_SIZE: usize = 1232;
 const QUERY_TIMEOUT: Duration = Duration::from_secs(5);
+const RATE_LIMIT_MAX_TRACKED_IPS: usize = 4096;
+
+#[derive(Default)]
+struct ClientRateLimiter {
+    buckets: Mutex<HashMap<IpAddr, (Instant, u32)>>,
+}
+
+impl ClientRateLimiter {
+    fn allow(&self, ip: IpAddr, max_qps: u32) -> bool {
+        if max_qps == 0 {
+            return true;
+        }
+        let Ok(mut map) = self.buckets.lock() else {
+            return true;
+        };
+        let now = Instant::now();
+        if map.len() >= RATE_LIMIT_MAX_TRACKED_IPS {
+            map.retain(|_, (ts, _)| now.duration_since(*ts) < Duration::from_secs(2));
+        }
+        let entry = map.entry(ip).or_insert((now, 0));
+        if now.duration_since(entry.0) >= Duration::from_secs(1) {
+            *entry = (now, 1);
+            true
+        } else if entry.1 < max_qps {
+            entry.1 += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
 
 pub struct DnsServer {
     resolver: Arc<DnsResolver>,
+    rate_limiter: Arc<ClientRateLimiter>,
 }
 
 impl DnsServer {
     pub fn new(resolver: DnsResolver) -> Self {
         Self {
             resolver: Arc::new(resolver),
+            rate_limiter: Arc::new(ClientRateLimiter::default()),
         }
     }
 
@@ -62,12 +96,18 @@ impl DnsServer {
                             let Ok(permit) = concurrency.clone().try_acquire_owned() else {
                                 continue;
                             };
+                            if !self
+                                .rate_limiter
+                                .allow(peer.ip(), self.resolver.config.rate_limit_qps)
+                            {
+                                continue;
+                            }
                             let packet = udp_buffer[..length].to_vec();
                             let socket = udp_socket.clone();
                             let resolver = self.resolver.clone();
                             tokio::spawn(async move {
                                 let _permit = permit;
-                                match process_packet(&resolver, &packet).await {
+                                match process_packet(&resolver, &packet, Some(peer.ip())).await {
                                     Ok(response) => match limit_udp_response(response) {
                                         Ok(response) => {
                                             if let Err(error) = socket.send_to(&response, peer).await {
@@ -103,10 +143,16 @@ impl DnsServer {
                             let Ok(permit) = concurrency.clone().try_acquire_owned() else {
                                 continue;
                             };
+                            if !self
+                                .rate_limiter
+                                .allow(peer.ip(), self.resolver.config.rate_limit_qps)
+                            {
+                                continue;
+                            }
                             let resolver = self.resolver.clone();
                             tokio::spawn(async move {
                                 let _permit = permit;
-                                if let Err(error) = handle_tcp_client(stream, resolver).await {
+                                if let Err(error) = handle_tcp_client(stream, peer.ip(), resolver).await {
                                     let p = peer.to_string();
                                     let e = error.to_string();
                                     sb_core::logfmt::warn("ERR_DNS_TCP_SESSION", "dns.server", "DNS TCP session failed", &[("peer", &p), ("error", &e)]);
@@ -125,9 +171,18 @@ impl DnsServer {
     }
 }
 
-async fn process_packet(resolver: &DnsResolver, packet: &[u8]) -> Result<Vec<u8>, String> {
+async fn process_packet(
+    resolver: &DnsResolver,
+    packet: &[u8],
+    client_ip: Option<IpAddr>,
+) -> Result<Vec<u8>, String> {
     match Message::from_vec(packet) {
-        Ok(query) => match tokio::time::timeout(QUERY_TIMEOUT, resolver.resolve(&query)).await {
+        Ok(query) => match tokio::time::timeout(
+            QUERY_TIMEOUT,
+            resolver.resolve_for_client(&query, client_ip),
+        )
+        .await
+        {
             Ok(Ok(response)) => response
                 .to_vec()
                 .map_err(|error| format!("DNS response encoding failed: {error}")),
@@ -197,6 +252,7 @@ fn limit_udp_response(response: Vec<u8>) -> Result<Vec<u8>, String> {
 
 async fn handle_tcp_client(
     mut stream: TcpStream,
+    client_ip: IpAddr,
     resolver: Arc<DnsResolver>,
 ) -> Result<(), String> {
     loop {
@@ -220,7 +276,7 @@ async fn handle_tcp_client(
             .map_err(|_| "DNS TCP query read timed out".to_string())?
             .map_err(|error| format!("DNS TCP query read failed: {error}"))?;
 
-        let response = process_packet(&resolver, &packet).await?;
+        let response = process_packet(&resolver, &packet, Some(client_ip)).await?;
         if response.len() > u16::MAX as usize {
             return Err("DNS TCP response exceeds protocol size".to_string());
         }

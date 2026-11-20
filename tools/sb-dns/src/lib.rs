@@ -1,6 +1,8 @@
 pub mod client;
 pub mod config;
+pub mod dc_sync;
 pub mod directory;
+pub mod encrypted_upstream;
 pub mod ipam;
 pub mod os_integration;
 pub mod protocol;
