@@ -2,36 +2,25 @@ use clap::Parser;
 use colored::*;
 
 mod cli;
-mod cockpit;
 mod commands;
 mod context;
 mod logger;
 mod logs;
 mod meta;
 mod process_ledger;
-mod quorum;
-mod trace;
 
-use cli::{
-    Cli, Commands, EscapeAction, InviteAction, QuorumAction, ReleaseAction, ServerAction, WebAction,
-};
-use commands::config::handle_config;
-use commands::context::{handle_context_cmd, handle_use_cmd};
+use cli::{Cli, Commands, ReleaseAction, ServerAction};
+use commands::context::handle_context_cmd;
 use commands::daemon::run_daemon;
 use commands::delegate::delegate_to;
-use commands::doctor::{handle_completions, handle_doctor};
+use commands::doctor::handle_doctor;
 use commands::env::handle_sb_env;
 use commands::fleet::{
-    handle_approve, handle_domain_bootstrap, handle_invite_client, handle_invite_list, handle_join,
-    handle_revoke, handle_server_init, handle_server_list, handle_server_token,
+    handle_domain_bootstrap, handle_join, handle_server_init, handle_server_list,
+    handle_server_token,
 };
-use commands::init::handle_sb_init;
 use commands::logs::handle_logs_cmd;
-use commands::pkg::{
-    cleanup_old_binary, handle_identity, handle_install_with_options, handle_uninstall,
-    handle_update_with_options,
-};
-use commands::share::handle_share;
+use commands::pkg::{cleanup_old_binary, handle_update_with_options};
 use commands::status::handle_status;
 
 fn main() {
@@ -84,82 +73,6 @@ fn real_main() {
         Some(Commands::Service { action, json }) => {
             commands::service::handle_service(action, json);
         }
-        Some(Commands::Link {
-            target,
-            name,
-            mesh,
-            json,
-        }) => {
-            commands::link::handle_link(&target, name, mesh, json);
-        }
-        Some(Commands::Catalog { json }) => {
-            if let Err(error) = commands::catalog::handle_catalog(json) {
-                sb_core::logfmt::error(
-                    "ERR_SB_CATALOG",
-                    "sb.cli",
-                    "Failed to load product inventory",
-                    &[("error", &error.to_string())],
-                );
-                std::process::exit(1);
-            }
-        }
-        Some(Commands::Ps) => {
-            process_ledger::cmd_ps();
-        }
-        Some(Commands::Start { target }) => {
-            let t = target.as_deref().unwrap_or("agent");
-            if t.eq_ignore_ascii_case("agent") || t.eq_ignore_ascii_case("sb-node-agent") {
-                delegate_to("agent", "sb-node", &["service".into(), "start".into()]);
-            } else {
-                sb_core::logfmt::error(
-                    "ERR_SB_UNKNOWN_TARGET",
-                    "sb.cli",
-                    "Unknown start target",
-                    &[("target", t)],
-                );
-                std::process::exit(1);
-            }
-        }
-        Some(Commands::Stop { target }) => {
-            let t = target.as_deref().unwrap_or("all");
-            if t.eq_ignore_ascii_case("agent") || t.eq_ignore_ascii_case("sb-node-agent") {
-                delegate_to("agent", "sb-node", &["service".into(), "stop".into()]);
-            } else if t.eq_ignore_ascii_case("all") {
-                let node_bin = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| {
-                        p.parent().map(|d| {
-                            d.join(if cfg!(windows) {
-                                "sb-node.exe"
-                            } else {
-                                "sb-node"
-                            })
-                        })
-                    })
-                    .filter(|p| p.is_file())
-                    .unwrap_or_else(|| std::path::PathBuf::from("sb-node"));
-                let _ = std::process::Command::new(node_bin)
-                    .args(["service", "stop"])
-                    .status();
-                process_ledger::cmd_stop(target.as_deref());
-            } else {
-                process_ledger::cmd_stop(target.as_deref());
-            }
-        }
-        Some(Commands::Lease { args }) => {
-            let mut pass_args = vec!["lease".to_string()];
-            pass_args.extend(args);
-            delegate_to("key", "sb-key", &pass_args);
-        }
-        Some(Commands::Lock) => {
-            delegate_to("key", "sb-key", &["lock".to_string()]);
-        }
-        Some(Commands::Key { args }) => {
-            delegate_to("key", "sb-key", &args);
-        }
-        Some(Commands::Init { force, template }) => {
-            handle_sb_init(force, template.as_deref());
-        }
         Some(Commands::Run { env, command }) => {
             handle_sb_env(cli::EnvAction::Run { env, command });
         }
@@ -168,40 +81,6 @@ fn real_main() {
         }
         Some(Commands::Doctor { fix, json }) => {
             handle_doctor(fix, json);
-        }
-        Some(Commands::Completions { shell }) => {
-            handle_completions(shell);
-        }
-        Some(Commands::Share { port, name }) => {
-            handle_share(port, name);
-        }
-        Some(Commands::Install {
-            tools,
-            force,
-            allow_downgrade,
-            from_dir,
-            from_url,
-            from_mesh,
-        }) => {
-            if let Err(error) = handle_install_with_options(
-                &tools,
-                force,
-                allow_downgrade,
-                from_dir,
-                from_url,
-                from_mesh,
-            ) {
-                sb_core::logfmt::error(
-                    "ERR_SB_INSTALL",
-                    "sb.pkg",
-                    "Installation failed",
-                    &[("error", &error.to_string())],
-                );
-                std::process::exit(1);
-            }
-        }
-        Some(Commands::Uninstall { tools }) => {
-            handle_uninstall(&tools);
         }
         Some(Commands::Update {
             tools,
@@ -393,74 +272,8 @@ fn real_main() {
                 }
             }
         },
-        Some(Commands::Identity) => {
-            handle_identity();
-        }
         Some(Commands::Ssh { args }) => {
             commands::ssh::handle_ssh(&args);
-        }
-        Some(Commands::Mesh { args }) => {
-            delegate_to("mesh", "sb-mesh", &args);
-        }
-        Some(Commands::Cockpit {
-            snapshot,
-            poll_interval,
-        }) => {
-            if let Err(e) = cockpit::run_cockpit(snapshot, poll_interval) {
-                sb_core::logfmt::error(
-                    "ERR_SB_COCKPIT",
-                    "sb.cockpit",
-                    "Failed to start cockpit",
-                    &[("error", &e.to_string())],
-                );
-                std::process::exit(1);
-            }
-        }
-        Some(Commands::Vault { args }) => {
-            if args.iter().any(|a| a == "--tui" || a == "-t") || which::which("sb-vault").is_err() {
-                if let Err(e) = cockpit::run_cockpit(false, 1000) {
-                    sb_core::logfmt::error(
-                        "ERR_SB_COCKPIT",
-                        "sb.cockpit",
-                        "Failed to start cockpit",
-                        &[("error", &e.to_string())],
-                    );
-                    std::process::exit(1);
-                }
-            } else {
-                delegate_to("vault", "sb-vault", &args);
-            }
-        }
-        Some(Commands::Node { action }) => match action {
-            Some(cli::NodeAction::Bootstrap(args)) => {
-                if let Err(e) = commands::bootstrap::handle_node_bootstrap(args) {
-                    sb_core::logfmt::error(
-                        "ERR_SB_NODE_BOOTSTRAP",
-                        "sb.bootstrap",
-                        "Node bootstrap failed",
-                        &[("error", &e.to_string())],
-                    );
-                    std::process::exit(1);
-                }
-            }
-            Some(cli::NodeAction::External(args)) => {
-                delegate_to("node", "sb-node", &args);
-            }
-            None => {
-                delegate_to("node", "sb-node", &[]);
-            }
-        },
-        Some(Commands::Proxy { args }) => {
-            delegate_to("proxy", "sb-proxy", &args);
-        }
-        Some(Commands::Dns { args }) => {
-            delegate_to("dns", "sb-dns", &args);
-        }
-        Some(Commands::Ca { args }) => {
-            delegate_to("ca", "sb-ca", &args);
-        }
-        Some(Commands::Auth { args }) => {
-            delegate_to("auth", "sb-auth", &args);
         }
         Some(Commands::Domain { args }) => {
             let mut full = vec!["domain".to_string()];
@@ -472,11 +285,6 @@ fn real_main() {
             full.extend(args);
             delegate_to("policy", "sb-node", &full);
         }
-        Some(Commands::Laps { args }) => {
-            let mut full = vec!["laps".to_string()];
-            full.extend(args);
-            delegate_to("laps", "sb-node", &full);
-        }
         Some(Commands::Agent { args }) => {
             let mut full = vec!["service".to_string()];
             full.extend(args);
@@ -486,41 +294,6 @@ fn real_main() {
             let mut full = vec!["user".to_string()];
             full.extend(args);
             delegate_to("user", "sb-node", &full);
-        }
-        Some(Commands::Publish { args }) => {
-            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            if cwd.join("tools").is_dir() && args.is_empty() {
-                sb_core::logfmt::error(
-                    "ERR_MONOREPO_PUBLISH_BLOCKED",
-                    "sb.publish",
-                    "Monorepo publish blocked; specify a single tool",
-                    &[],
-                );
-                std::process::exit(1);
-            }
-            let mut full_args = vec!["publish".to_string()];
-            full_args.extend(args);
-            delegate_to("code", "sb-code", &full_args);
-        }
-        Some(Commands::Subscribe { args }) => {
-            if let Some(target) = args.first() {
-                let target_lower = target.to_lowercase();
-                if target_lower.contains("skulls-and-bones")
-                    || target_lower.contains("workspace")
-                    || target_lower == "suite"
-                {
-                    sb_core::logfmt::error(
-                        "ERR_MONOREPO_SUBSCRIBE_BLOCKED",
-                        "sb.subscribe",
-                        "Cannot subscribe to monorepo; choose a single tool",
-                        &[("target", target)],
-                    );
-                    std::process::exit(1);
-                }
-            }
-            let mut full_args = vec!["subscribe".to_string()];
-            full_args.extend(args);
-            delegate_to("code", "sb-code", &full_args);
         }
         Some(Commands::Server { action }) => match action {
             ServerAction::Init {
@@ -593,20 +366,6 @@ fn real_main() {
                 );
             }
         },
-        Some(Commands::Invite { action }) => match action {
-            InviteAction::Client { name, role, ttl } => {
-                handle_invite_client(&name, &role, ttl);
-            }
-            InviteAction::List => {
-                handle_invite_list();
-            }
-        },
-        Some(Commands::Approve {
-            request_id,
-            approver,
-        }) => {
-            handle_approve(&request_id, approver.as_deref());
-        }
         Some(Commands::Join {
             target,
             name,
@@ -631,9 +390,6 @@ fn real_main() {
                 );
             }
         }
-        Some(Commands::Revoke { name, reason }) => {
-            handle_revoke(&name, &reason);
-        }
         Some(Commands::Tunnel {
             machine,
             remote_port,
@@ -647,69 +403,8 @@ fn real_main() {
                 dc.as_deref(),
             );
         }
-        Some(Commands::Escape { action }) => match action {
-            EscapeAction::Share {
-                port,
-                domain,
-                gateway,
-            } => {
-                let args = vec![
-                    "escape".to_string(),
-                    "share".to_string(),
-                    port.to_string(),
-                    "--as".to_string(),
-                    domain,
-                    "--gateway".to_string(),
-                    gateway,
-                ];
-                delegate_to("code", "sb-code", &args);
-            }
-            EscapeAction::List => {
-                let args = vec!["escape".to_string(), "list".to_string()];
-                delegate_to("code", "sb-code", &args);
-            }
-            EscapeAction::Tunnel { space, enable } => {
-                let mut args = vec!["escape".to_string(), "tunnel".to_string(), space];
-                if enable {
-                    args.push("--enable".to_string());
-                }
-                delegate_to("code", "sb-code", &args);
-            }
-        },
-        Some(Commands::Web { action }) => match action {
-            WebAction::Publish {
-                domain,
-                project_dir,
-                port,
-                node,
-            } => {
-                let runtime = tokio::runtime::Runtime::new()
-                    .expect("Tokio-Runtime konnte nicht initialisiert werden");
-                if let Err(error) =
-                    runtime.block_on(commands::web::publish(&domain, &project_dir, port, &node))
-                {
-                    eprintln!("Web-Veröffentlichung fehlgeschlagen: {error}");
-                    std::process::exit(1);
-                }
-            }
-        },
         Some(Commands::Context { action }) => {
             handle_context_cmd(action);
-        }
-        Some(Commands::Use { name, args }) => {
-            if name.eq_ignore_ascii_case("domain-logon")
-                || name.eq_ignore_ascii_case("domain-login")
-            {
-                let mut full = vec![
-                    "domain".to_string(),
-                    "logon".to_string(),
-                    "enable".to_string(),
-                ];
-                full.extend(args);
-                delegate_to("domain", "sb-node", &full);
-            } else {
-                handle_use_cmd(&name);
-            }
         }
         Some(Commands::Logs {
             server,
@@ -720,54 +415,6 @@ fn real_main() {
         }) => {
             handle_logs_cmd(server, service, follow, lines, local);
         }
-        Some(Commands::Trace {
-            server,
-            watch,
-            interval,
-        }) => {
-            trace::run_trace(server, watch, interval);
-        }
-        Some(Commands::Quorum { action }) => match action {
-            QuorumAction::List { all, category } => {
-                quorum::handle_quorum_list(all, category.as_deref());
-            }
-            QuorumAction::Create {
-                category,
-                target,
-                description,
-                required,
-                ttl,
-                payload,
-                initiator,
-            } => {
-                quorum::handle_quorum_create(
-                    &category,
-                    &target,
-                    &description,
-                    required,
-                    ttl,
-                    payload.as_deref(),
-                    initiator.as_deref(),
-                );
-            }
-            QuorumAction::Approve { id, approver } => {
-                quorum::handle_quorum_approve(&id, approver.as_deref());
-            }
-            QuorumAction::Reject {
-                id,
-                reason,
-                rejecter,
-            } => {
-                quorum::handle_quorum_reject(&id, reason.as_deref(), rejecter.as_deref());
-            }
-            QuorumAction::Show { id } => {
-                quorum::handle_quorum_show(&id);
-            }
-            QuorumAction::Execute { id } => {
-                quorum::handle_quorum_execute(&id);
-            }
-        },
-
         Some(Commands::Daemon { port, api, detach }) => {
             if detach {
                 let daemon_port = port.unwrap_or(sb_core::ports::DEFAULT_DAEMON_API_PORT);
@@ -818,9 +465,6 @@ fn real_main() {
                     );
                 }
             }
-        }
-        Some(Commands::Config { action }) => {
-            handle_config(action);
         }
     }
 }
@@ -880,15 +524,6 @@ mod tests {
         // Test unknown
         let err = resolve_tools(&["unknown_tool".to_string()]);
         assert!(err.is_err());
-    }
-
-    #[test]
-    fn test_catalog_cli_is_available() {
-        let parsed = Cli::try_parse_from(["sb", "catalog", "--json"]).unwrap();
-        assert!(matches!(
-            parsed.command,
-            Some(Commands::Catalog { json: true })
-        ));
     }
 
     #[test]
@@ -976,38 +611,6 @@ mod tests {
 
     #[test]
     fn test_install_and_update_cli_parsing() {
-        use std::path::PathBuf;
-
-        let install_dir = Cli::try_parse_from([
-            "sb",
-            "install",
-            "mesh",
-            "code",
-            "--force",
-            "--from-dir",
-            "dist/releases",
-        ])
-        .unwrap();
-        match install_dir.command {
-            Some(Commands::Install {
-                tools,
-                force,
-                allow_downgrade,
-                from_dir,
-                from_url,
-                from_mesh,
-                ..
-            }) => {
-                assert_eq!(tools, vec!["mesh".to_string(), "code".to_string()]);
-                assert!(force);
-                assert!(!allow_downgrade);
-                assert_eq!(from_dir, Some(PathBuf::from("dist/releases")));
-                assert_eq!(from_url, None);
-                assert_eq!(from_mesh, None);
-            }
-            _ => panic!("Expected Install command"),
-        }
-
         let update_url = Cli::try_parse_from([
             "sb",
             "update",

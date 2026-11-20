@@ -230,6 +230,7 @@ pub fn install_requested_with_source_and_key(
     install_requested_with_options_and_key(requested, force, false, source, public_key)
 }
 
+#[allow(dead_code)]
 pub fn install_requested_with_options(
     requested: &[String],
     force: bool,

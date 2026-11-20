@@ -8,7 +8,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::cli::Cli;
-use crate::commands::pkg::{handle_identity, handle_install};
+use crate::commands::pkg::{handle_identity, handle_update_with_source};
 use crate::meta::{available_tools, get_sb_dir, print_banner, SovereignIdentity};
 
 /// Generates shell autocompletion scripts including dynamic context and fleet server hints.
@@ -18,6 +18,7 @@ use crate::meta::{available_tools, get_sb_dir, print_banner, SovereignIdentity};
 /// - CVE / CWE Mapping: CWE-78 (OS Command Injection), CWE-116 (Improper Encoding or Escaping of Output).
 /// - Likelihood & Exploitability: Low (2/10).
 /// - Applied Mitigation: Filters context and server names strictly to ASCII alphanumeric, dash, underscore, and dot characters (`is_ascii_alphanumeric() || '-' || '_' || '.'`).
+#[allow(dead_code)]
 pub fn handle_completions(shell: clap_complete::Shell) {
     use clap::CommandFactory;
     let mut cmd = Cli::command();
@@ -588,7 +589,7 @@ fn check_tool_integrity(fix: bool) -> DiagnosticCheck {
         }
     } else {
         let (fixed, items) = if fix {
-            match handle_install(&["all".to_string()], false) {
+            match handle_update_with_source(&["all".to_string()], None) {
                 Ok(()) => (
                     1,
                     vec!["[AUTO-FIX] Basis-Tools erfolgreich installiert".to_string()],

@@ -71,6 +71,7 @@ pub fn load_team_requests() -> Vec<TeamJoinRequest> {
     Vec::new()
 }
 
+#[allow(dead_code)]
 pub fn save_team_requests(reqs: &[TeamJoinRequest]) -> std::io::Result<()> {
     let sb_dir = get_sb_dir();
     fs::create_dir_all(&sb_dir)?;
@@ -78,6 +79,7 @@ pub fn save_team_requests(reqs: &[TeamJoinRequest]) -> std::io::Result<()> {
     fs::write(team_requests_file(), content)
 }
 
+#[allow(dead_code)]
 pub fn compute_required_quorum(member_count: usize) -> usize {
     if member_count <= 1 {
         1 // Initialzustand (1 Entwickler + Server): Sponsor reicht aus
@@ -86,6 +88,7 @@ pub fn compute_required_quorum(member_count: usize) -> usize {
     }
 }
 
+#[allow(dead_code)]
 pub fn get_system_callsign() -> String {
     if let Ok(val) = std::env::var("SB_CALLSIGN") {
         let trimmed = val.trim();
@@ -658,6 +661,7 @@ pub fn handle_server_list() {
     println!("  {}", "─".repeat(78).bright_black());
 }
 
+#[allow(dead_code)]
 pub fn handle_invite_client(name: &str, role: &str, ttl_mins: u64) {
     print_banner();
     println!(
@@ -771,6 +775,7 @@ pub fn handle_invite_client(name: &str, role: &str, ttl_mins: u64) {
     }
 }
 
+#[allow(dead_code)]
 pub fn handle_invite_list() {
     print_banner();
     println!(
@@ -829,6 +834,7 @@ pub fn handle_invite_list() {
     );
 }
 
+#[allow(dead_code)]
 pub fn handle_approve(request_id: &str, approver_override: Option<&str>) {
     print_banner();
     println!(
@@ -1108,6 +1114,7 @@ pub fn handle_join(token: &str, name_override: Option<String>) {
     );
 }
 
+#[allow(dead_code)]
 pub fn handle_revoke(name: &str, reason: &str) {
     print_banner();
     println!(

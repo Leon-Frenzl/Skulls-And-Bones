@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -48,80 +48,6 @@ pub enum Commands {
         json: bool,
     },
 
-    /// 1-Befehl Bidirektionale Workstation-zu-Server-Kopplung (OpenSSH Dual-CA + Host-Cert + WireGuard Mesh-Peers)
-    #[command(alias = "pair", hide = true)]
-    Link {
-        /// Zielserver (z. B. 'root@145.223.83.235' oder registrierter Alias)
-        target: String,
-
-        /// Optionaler Aliasname für ~/.sb/servers.toml und <alias>.sbm
-        #[arg(short, long)]
-        name: Option<String>,
-
-        /// Lokales Mesh-Netz, in das der Server als Peer eingetragen wird (Standard: aktives Netz)
-        #[arg(short, long)]
-        mesh: Option<String>,
-
-        /// Maschinenlesbare JSON-Ausgabe (RFC 8259)
-        #[arg(long)]
-        json: bool,
-    },
-    /// Zeigt das kanonische Suite-Produktinventar über den lokalen Daemon an
-    #[command(hide = true)]
-    Catalog {
-        /// Ausgabe des vollständigen Inventars als JSON
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Zeigt aktive S&B Hintergrund-Dienste und Tunnels (sb ps)
-    #[command(alias = "p", hide = true)]
-    Ps,
-
-    /// Startet den S&B Node-Agent-Dienst (sb start [agent])
-    #[command(hide = true)]
-    Start {
-        /// Dienstname (Standard: 'agent' / sb-node-agent)
-        target: Option<String>,
-    },
-
-    /// Beendet laufende S&B Hintergrund-Dienste (sb stop <NAME|PID|all>)
-    #[command(hide = true)]
-    Stop {
-        /// Name, PID oder 'all' (Standard: 'all')
-        target: Option<String>,
-    },
-
-    /// Verwaltet oder erneuert das flüchtige 8-Stunden Ephemeral Lease (sb lease [--ttl <hours>])
-    #[command(alias = "l", hide = true)]
-    Lease {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// Beendet die aktive Sitzung sofort, schreddert das Lease im RAM und sperrt das System
-    #[command(alias = "k", hide = true)]
-    Lock,
-
-    /// Delegiert an S&B Key (sb-key) — Sovereign Root Identity & Ephemeral RAM Leases
-    #[command(hide = true)]
-    Key {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// 1-Befehl Projekt-Bootstrap: Erzeugt Forge.toml und erkennt den Tech-Stack
-    #[command(hide = true)]
-    Init {
-        /// Überschreibt bestehende Konfigurationen (--force)
-        #[arg(short, long)]
-        force: bool,
-
-        /// Optional: Spezifisches Template erzwingen (rust, node, python, go, generic)
-        #[arg(short, long)]
-        template: Option<String>,
-    },
-
     /// Direkter 1-Klick Shortcut: Startet Prozess mit im RAM injizierten Secrets (sb run -- <cmd...>)
     #[command(alias = "r")]
     Run {
@@ -139,42 +65,6 @@ pub enum Commands {
     Env {
         #[command(subcommand)]
         action: EnvAction,
-    },
-
-    /// Signierte, vorgebaute S&B-Releases installieren (ohne Cargo auf dem Zielsystem)
-    #[command(hide = true)]
-    Install {
-        /// Werkzeuge: drive, forge, mesh, ports, node, key, code, proxy, shell, securenet, dns, db, sb, all
-        #[arg(num_args = 0..)]
-        tools: Vec<String>,
-
-        /// Erzwingt die Neuinstallation (--force)
-        #[arg(short, long)]
-        force: bool,
-
-        /// Erlaubt ausdrücklich die Installation einer älteren signierten Version
-        #[arg(long)]
-        allow_downgrade: bool,
-
-        /// Lokales Verzeichnis mit signierten Release-Archiven (.tar.gz/.zip + .sig)
-        #[arg(long, value_name = "DIR")]
-        from_dir: Option<PathBuf>,
-
-        /// Basis-URL für HTTP(S)-Release-Mirrors
-        #[arg(long, value_name = "URL")]
-        from_url: Option<String>,
-
-        /// Installation aus einem lokalen/verbundenen Mesh-Netzwerk (z.B. public oder dev)
-        #[arg(long, value_name = "MESH")]
-        from_mesh: Option<String>,
-    },
-
-    /// Modular ein oder mehrere S&B-Werkzeuge deinstallieren (z.B. 'sb uninstall vault')
-    #[command(hide = true)]
-    Uninstall {
-        /// Werkzeuge zum Deinstallieren: ssh, forge, mesh, vault, all
-        #[arg(num_args = 0..)]
-        tools: Vec<String>,
     },
 
     /// Aktualisiert installierte S&B-Binaries aus signierten Releases
@@ -217,15 +107,10 @@ pub enum Commands {
     },
 
     /// Erstellt und signiert verifizierbare S&B-Releases
-    #[command(hide = true)]
     Release {
         #[command(subcommand)]
         action: ReleaseAction,
     },
-
-    /// Zeigt oder erzeugt die gemeinsame kryptographische Identität (~/.sb/identity.json)
-    #[command(hide = true)]
-    Identity,
 
     /// Führt einen 360-Grad Integritäts- und Sicherheits-Check der S&B Suite durch
     Doctor {
@@ -238,95 +123,8 @@ pub enum Commands {
         json: bool,
     },
 
-    /// Generiert Shell-Autovervollständigungen (powershell, bash, zsh, fish, elvish)
-    #[command(hide = true)]
-    Completions {
-        /// Ziel-Shell: powershell, bash, zsh, fish, elvish
-        shell: clap_complete::Shell,
-    },
-
-    /// Teilt einen lokalen Entwicklungs-Port Ende-zu-Ende verschlüsselt über das S&B Mesh (Ngrok-Alternative)
-    #[command(hide = true)]
-    Share {
-        /// Lokaler Port zum Teilen (z.B. 3000, 8080). Erkennt automatisch aktive Dev-Server, wenn weggelassen.
-        port: Option<u16>,
-
-        /// Optionales Label / Subdomain (z.B. 'dev-api')
-        #[arg(short, long)]
-        name: Option<String>,
-    },
-
     /// Delegiert an S&B NetGate (sb-ssh)
     Ssh {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// Delegiert an S&B Mesh (sb-mesh)
-    #[command(hide = true)]
-    Mesh {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// Delegiert an S&B Vault (sb-vault Desktop) oder startet das Terminal-Cockpit (--tui)
-    #[command(hide = true)]
-    Vault {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// Interaktives Terminal-Cockpit & Operator HUD (sb cockpit / sb hud) für Daemons, Mesh & Audit
-    #[command(alias = "hud", hide = true)]
-    Cockpit {
-        /// Headless Snapshot-Modus: Gibt den aktuellen HUD-Status non-interaktiv auf stdout aus und beendet sich mit 0
-        #[arg(
-            long,
-            help = "Headless Snapshot-Modus: Gibt den aktuellen HUD-Status non-interaktiv auf stdout aus und beendet sich mit 0"
-        )]
-        snapshot: bool,
-
-        /// Aktualisierungsintervall in Millisekunden
-        #[arg(
-            short,
-            long,
-            default_value_t = 1000,
-            help = "Aktualisierungsintervall in Millisekunden"
-        )]
-        poll_interval: u64,
-    },
-
-    /// Delegiert an S&B Server Agent (sb-node) — Headless Daemon & Port Watchdog, oder führt Node-Bootstrap aus
-    #[command(hide = true)]
-    Node {
-        #[command(subcommand)]
-        action: Option<NodeAction>,
-    },
-
-    /// Delegiert an S&B Proxy (sb-proxy) — Sovereign Pure-Rust Reverse-Proxy & Edge Gateway
-    #[command(alias = "px", hide = true)]
-    Proxy {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// Delegiert an S&B Unified PKI & CA (sb-ca) — OpenSSH (RFC 4251) & X.509 (RFC 5280) Certificate Authority
-    #[command(hide = true)]
-    Ca {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// Delegiert an S&B Auth (sb-auth) — Sovereign Authentication, Multi-Tier Revocation & Identity CLI
-    #[command(hide = true)]
-    Auth {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// Delegiert an S&B Sovereign DNS (sb-dns) — Systemweiter .sbm Split-DNS Resolver & Mesh Router
-    #[command(hide = true)]
-    Dns {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -339,13 +137,6 @@ pub enum Commands {
 
     /// Signierte Cross-Platform GPOs (sb policy apply | list | status) -> delegiert an sb-node
     Policy {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// Cross-Platform LAPS Notfall-Admin-Passwörter (sb laps rotate | reveal | status) -> delegiert an sb-node
-    #[command(hide = true)]
-    Laps {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -376,31 +167,10 @@ pub enum Commands {
         dc: Option<String>,
     },
 
-    /// Veröffentlicht das aktuelle Projekt als P2P Code-Stream im Swarm (sb publish [project])
-    #[command(hide = true)]
-    Publish {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// Abonniert einen P2P Code-Stream aus dem Mesh Swarm (sb subscribe <project>)
-    #[command(hide = true)]
-    Subscribe {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-
-    /// Server-Management & Flotten-Bootstrap (sb server init <target>, sb server token)
+    /// Server-Management & Flotten-Bootstrap (sb server dc-init, sb server init <target>)
     Server {
         #[command(subcommand)]
         action: ServerAction,
-    },
-
-    /// Team-Onboarding mit 4-Augen-Prinzip (sb invite client <name>, sb invite list)
-    #[command(hide = true)]
-    Invite {
-        #[command(subcommand)]
-        action: InviteAction,
     },
 
     /// Tritt einer Domäne (z. B. corp.example.sb) oder einem Mesh (sbm-pair://...) bei
@@ -437,57 +207,11 @@ pub enum Commands {
         dry_run: bool,
     },
 
-    /// 4-Augen-Prinzip: Gibt eine ausstehende Beitrittsanfrage frei (sb approve <request_id>)
-    #[command(hide = true)]
-    Approve {
-        /// ID der Beitrittsanfrage (z. B. 'req-3a8f')
-        request_id: String,
-
-        /// Approver-Identität überschreiben (für Tests/Simulations-Zwecke)
-        #[arg(long)]
-        approver: Option<String>,
-    },
-
-    /// Atomarer Hardware- & Identitäts-Rauswurf (sb revoke <name>)
-    #[command(hide = true)]
-    Revoke {
-        /// Name des zu entfernenden Entwicklers / Knotens
-        name: String,
-
-        /// Grund für den Rauswurf (z. B. 'offboarding', 'lost-device')
-        #[arg(short, long, default_value = "admin-revocation")]
-        reason: String,
-    },
-
-    /// Sovereign Egress & Tunnel: Gibt lokale Webdienste ohne Port-Forwarding über das S&B Gateway frei
-    #[command(hide = true)]
-    Escape {
-        #[command(subcommand)]
-        action: EscapeAction,
-    },
-
-    /// Baut eine Web-App und veröffentlicht sie über den S&B Proxy aus dem Mesh
-    #[command(hide = true)]
-    Web {
-        #[command(subcommand)]
-        action: WebAction,
-    },
-
     /// Verwaltet Isolations- und Projekt-Kontexte (sb context list|use|create|remove)
     #[command(alias = "ctx")]
     Context {
         #[command(subcommand)]
         action: Option<ContextAction>,
-    },
-
-    /// Blitzschneller Shortcut zum Umschalten des aktiven Kontexts (sb use <name>)
-    #[command(alias = "u", hide = true)]
-    Use {
-        /// Name des zu aktivierenden Kontexts (z. B. 'acme-corp', 'homelab', 'domain-logon')
-        name: String,
-        /// Optionale Zusatzargumente (z. B. --dll-path bei 'sb use domain-logon')
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
     },
 
     /// Live-Log-Streaming und Smart Crash Inspector von Flottenknoten und lokalen Diensten (sb logs)
@@ -512,30 +236,7 @@ pub enum Commands {
         local: bool,
     },
 
-    /// Flotten-Telemetrie & Watchdog Alerts (sb trace [server])
-    #[command(hide = true)]
-    Trace {
-        /// Optionaler Server-Name oder .sbm Domain (Standard: lokaler Knoten & Edge-Proxy)
-        server: Option<String>,
-
-        /// Live-Monitoring kontinuierlich im Terminal aktualisieren (-w / --watch)
-        #[arg(short, long)]
-        watch: bool,
-
-        /// Aktualisierungs-Intervall in Sekunden (Standard: 2s)
-        #[arg(short, long, default_value_t = 2)]
-        interval: u64,
-    },
-
-    /// Kryptographisches 4-Augen Quorum Gate für Code-Merges, Secrets und Flottenaktionen (sb quorum)
-    #[command(alias = "q", hide = true)]
-    Quorum {
-        #[command(subcommand)]
-        action: QuorumAction,
-    },
-
     /// Startet den Sovereign Headless Daemon & Loopback JSON-RPC API Server (sb daemon [--port <p>] [--api])
-    #[command(hide = true)]
     Daemon {
         /// Port für die lokale JSON-RPC API (Standard: 58905)
         #[arg(short, long)]
@@ -548,13 +249,6 @@ pub enum Commands {
         /// Startet den Daemon im Hintergrund (Detached Service)
         #[arg(short = 'd', long)]
         detach: bool,
-    },
-
-    /// Zentrale Suite-Konfiguration anzeigen oder anpassen (~/.sb/config.toml)
-    #[command(alias = "cfg", hide = true)]
-    Config {
-        #[command(subcommand)]
-        action: Option<ConfigAction>,
     },
 }
 
@@ -1088,60 +782,4 @@ pub enum ServerAction {
         #[arg(long)]
         dry_run: bool,
     },
-}
-
-#[derive(Subcommand, Debug, Clone)]
-pub enum NodeAction {
-    /// 1-Befehl Remote Server Provisioning via SSH & Swarm-CA
-    Bootstrap(BootstrapArgs),
-
-    /// Delegiert alle sonstigen Befehle transparent an den sb-node Agenten
-    #[command(external_subcommand)]
-    External(Vec<String>),
-}
-
-#[derive(Args, Debug, Clone)]
-pub struct BootstrapArgs {
-    /// Zielserver (z. B. 'root@192.0.2.1' oder '192.0.2.1')
-    pub target: String,
-
-    /// SSH-Port für den Initial-Connect (Standard: 22)
-    #[arg(short, long, default_value = "22")]
-    pub port: u16,
-
-    /// SSH Identity-File für den Initial-Connect
-    #[arg(short = 'k', long = "key", alias = "identity", short_alias = 'i')]
-    pub key: Option<PathBuf>,
-
-    /// Optionales SSH-Passwort für den Initial-Connect
-    #[arg(long)]
-    pub password: Option<String>,
-
-    /// Name des einzurichtenden unprivilegierten Admin-Benutzers (Standard: sbadmin)
-    #[arg(short = 'a', long = "admin", default_value = "sbadmin")]
-    pub admin: String,
-
-    /// Swarm-CA Public Key in RFC 4251 Wire-Format (Standard: auto-detect via sb-ca)
-    #[arg(long = "ca-key")]
-    pub ca_key: Option<String>,
-
-    /// Optionaler Pairing-Token (Standard: auto-generiert via Swarm-CA)
-    #[arg(long = "mesh-token")]
-    pub mesh_token: Option<String>,
-
-    /// Mesh-Netzwerke, denen der Knoten beitreten soll (mehrfach angebbar)
-    #[arg(short = 'm', long = "mesh")]
-    pub mesh: Vec<String>,
-
-    /// Verzeichnis mit vorgebauten Linux-Binaries (sb-node, sb-mesh ...)
-    #[arg(short = 'b', long = "binaries")]
-    pub binaries: Option<PathBuf>,
-
-    /// Überschreibt bestehende Konfigurationen und Services
-    #[arg(short = 'f', long = "force")]
-    pub force: bool,
-
-    /// Simuliert den Vorgang und gibt Ausführungsplan & Konfigurationen aus
-    #[arg(short = 'n', long = "dry-run")]
-    pub dry_run: bool,
 }

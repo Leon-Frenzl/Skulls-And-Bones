@@ -106,6 +106,7 @@ impl CrashInspector {
     }
 
     /// Gibt Typ und Details eines erkannten Crashes zurück (für TUI/Cockpit-Banners)
+    #[allow(dead_code)]
     pub fn inspect_type(line: &str) -> Option<(&'static str, String)> {
         let trimmed = line.trim();
         if trimmed.contains("panicked at")
@@ -144,6 +145,7 @@ impl CrashInspector {
 }
 
 /// Liest die letzten N Zeilen der lokalen Logs aus
+#[allow(dead_code)]
 pub fn fetch_recent_logs(lines: usize) -> Vec<String> {
     crate::logger::read_recent_log_lines(None, lines)
 }
