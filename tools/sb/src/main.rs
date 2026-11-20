@@ -109,15 +109,7 @@ fn real_main() {
         Some(Commands::Start { target }) => {
             let t = target.as_deref().unwrap_or("agent");
             if t.eq_ignore_ascii_case("agent") || t.eq_ignore_ascii_case("sb-node-agent") {
-                if let Err(e) = commands::pkg::control_agent_service(true) {
-                    sb_core::logfmt::error(
-                        "ERR_SB_START_AGENT",
-                        "sb.cli",
-                        "Failed to start agent service",
-                        &[("error", &e.to_string())],
-                    );
-                    std::process::exit(1);
-                }
+                delegate_to("agent", "sb-node", &["service".into(), "start".into()]);
             } else {
                 sb_core::logfmt::error(
                     "ERR_SB_UNKNOWN_TARGET",
@@ -130,20 +122,27 @@ fn real_main() {
         }
         Some(Commands::Stop { target }) => {
             let t = target.as_deref().unwrap_or("all");
-            if t.eq_ignore_ascii_case("all")
-                || t.eq_ignore_ascii_case("agent")
-                || t.eq_ignore_ascii_case("sb-node-agent")
-            {
-                if let Err(e) = commands::pkg::control_agent_service(false) {
-                    sb_core::logfmt::warn(
-                        "ERR_SB_STOP_AGENT",
-                        "sb.cli",
-                        "Failed to stop agent service",
-                        &[("error", &e.to_string())],
-                    );
-                }
-            }
-            if !t.eq_ignore_ascii_case("agent") && !t.eq_ignore_ascii_case("sb-node-agent") {
+            if t.eq_ignore_ascii_case("agent") || t.eq_ignore_ascii_case("sb-node-agent") {
+                delegate_to("agent", "sb-node", &["service".into(), "stop".into()]);
+            } else if t.eq_ignore_ascii_case("all") {
+                let node_bin = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| {
+                        p.parent().map(|d| {
+                            d.join(if cfg!(windows) {
+                                "sb-node.exe"
+                            } else {
+                                "sb-node"
+                            })
+                        })
+                    })
+                    .filter(|p| p.is_file())
+                    .unwrap_or_else(|| std::path::PathBuf::from("sb-node"));
+                let _ = std::process::Command::new(node_bin)
+                    .args(["service", "stop"])
+                    .status();
+                process_ledger::cmd_stop(target.as_deref());
+            } else {
                 process_ledger::cmd_stop(target.as_deref());
             }
         }
@@ -212,14 +211,22 @@ fn real_main() {
             from_mesh,
             github,
             tag,
+            server,
+            from_workspace,
         }) => {
             let no_explicit_source = !github
                 && tag.is_none()
+                && server.is_none()
+                && !from_workspace
                 && tools.is_empty()
                 && from_dir.is_none()
                 && from_url.is_none()
                 && from_mesh.is_none();
-            let res = if no_explicit_source {
+            let res = if let Some(srv) = server.as_deref() {
+                commands::pkg::update_remote_server(srv)
+            } else if from_workspace {
+                commands::pkg::update_from_local_workspace(&tools)
+            } else if no_explicit_source {
                 match commands::pkg::try_local_stage_update() {
                     Ok(true) => Ok(()),
                     Ok(false) => commands::pkg::self_update_from_github(tag.as_deref()),

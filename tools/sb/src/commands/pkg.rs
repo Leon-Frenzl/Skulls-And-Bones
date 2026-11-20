@@ -608,74 +608,6 @@ pub fn handle_identity() {
     }
 }
 
-/// Starts or stops the system `sb-node-agent` service (`sb start` / `sb stop`).
-///
-/// # Security Audit
-/// - **Dynamic Threat Vector:** Uncontrolled service tampering or command injection via service names.
-/// - **CWE Mapping:** CWE-78 (OS Command Injection).
-/// - **Likelihood & Exploitability:** Low (1/10); service name is hardcoded to `"sb-node-agent"`.
-/// - **Applied Mitigation:** Hardcodes service identifier `"sb-node-agent"` and uses OS native service managers (`sc.exe` / `powershell` / `systemctl`).
-pub fn control_agent_service(start: bool) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        let action = if start {
-            "Start-Service sb-node-agent"
-        } else {
-            "Stop-Service sb-node-agent -Force"
-        };
-        let ps_cmd = format!(
-            "$svc = Get-Service -Name 'sb-node-agent' -ErrorAction SilentlyContinue; if (-not $svc) {{ Write-Output 'NOT_INSTALLED'; exit 0 }}; {action}; (Get-Service -Name 'sb-node-agent').Status"
-        );
-        let out = Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
-            .output()
-            .map_err(|e| format!("PowerShell-Aufruf fehlgeschlagen: {e}"))?;
-        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        if stdout == "NOT_INSTALLED" {
-            return Ok(());
-        }
-        if !out.status.success() {
-            return Err(format!(
-                "Dienst sb-node-agent konnte nicht {} werden: {}",
-                if start { "gestartet" } else { "gestoppt" },
-                if stderr.is_empty() { stdout } else { stderr }
-            ));
-        }
-        println!(
-            "  {} Dienst sb-node-agent: {}",
-            "✓".bright_green().bold(),
-            if stdout.is_empty() {
-                if start {
-                    "Running"
-                } else {
-                    "Stopped"
-                }
-            } else {
-                &stdout
-            }
-        );
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    {
-        let verb = if start { "start" } else { "stop" };
-        let status = Command::new("systemctl")
-            .args([verb, "sb-node-agent"])
-            .status()
-            .map_err(|e| format!("systemctl {verb} sb-node-agent fehlgeschlagen: {e}"))?;
-        if !status.success() {
-            return Err(format!("systemctl {verb} sb-node-agent fehlgeschlagen"));
-        }
-        println!(
-            "  {} Dienst sb-node-agent: {}",
-            "✓".bright_green().bold(),
-            if start { "active" } else { "stopped" }
-        );
-        Ok(())
-    }
-}
-
 /// Checks if a locally staged `target/rel-stage/release/sb-node(.exe)` exists in the current
 /// workspace (or known service parent) and installs it directly into the `sb-node-agent` binary path.
 ///
@@ -772,6 +704,170 @@ pub fn try_local_stage_update() -> Result<bool, String> {
     }
 
     Ok(true)
+}
+
+/// Builds release binaries from the local Cargo workspace and installs them into `~/.sb/bin`.
+// [SECURITY-HYPOTHESIS] CWE-78 / CWE-426: Untrusted tool names could select unintended Cargo packages or paths.
+// [SECURITY-VERIFIED] Package names are strictly validated against an explicit static allowlist.
+pub fn update_from_local_workspace(tools: &[String]) -> Result<(), String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("Arbeitsverzeichnis nicht lesbar: {e}"))?;
+    if !cwd.join("Cargo.toml").is_file() || !cwd.join("tools").is_dir() {
+        return Err("Kein Skulls-And-Bones Cargo-Workspace im aktuellen Verzeichnis gefunden.".into());
+    }
+
+    const ALLOWED_PACKAGES: &[(&str, &str)] = &[
+        ("sb-cli", "sb"),
+        ("sb-node", "sb-node"),
+        ("sb-proxy", "sb-proxy"),
+        ("sb-mesh", "sb-mesh"),
+        ("sb-dns", "sb-dns"),
+        ("sb-auth", "sb-auth"),
+        ("sb-ca", "sb-ca"),
+        ("sb-key", "sb-key"),
+    ];
+
+    let mut selected: Vec<(&str, &str)> = Vec::new();
+    if tools.is_empty() || tools.iter().any(|t| t == "all") {
+        selected.extend_from_slice(ALLOWED_PACKAGES);
+    } else {
+        for raw in tools {
+            let norm = raw.trim().to_ascii_lowercase();
+            let matched = ALLOWED_PACKAGES
+                .iter()
+                .find(|(pkg, bin)| *pkg == norm || *bin == norm || bin.strip_prefix("sb-") == Some(norm.as_str()));
+            match matched {
+                Some(pair) => {
+                    if !selected.contains(pair) {
+                        selected.push(*pair);
+                    }
+                }
+                None => return Err(format!("Unbekanntes Workspace-Werkzeug: '{raw}'")),
+            }
+        }
+    }
+
+    let mut cargo_args = vec!["build".to_string(), "--release".to_string()];
+    for (pkg, _) in &selected {
+        cargo_args.push("-p".to_string());
+        cargo_args.push((*pkg).to_string());
+    }
+
+    println!(
+        "  {} Baue lokale Release-Binaries im Workspace...",
+        "►".bright_cyan()
+    );
+    let status = Command::new("cargo")
+        .args(&cargo_args)
+        .current_dir(&cwd)
+        .status()
+        .map_err(|e| format!("cargo build fehlgeschlagen: {e}"))?;
+    if !status.success() {
+        return Err(format!("cargo build --release beendet mit {status}"));
+    }
+
+    let bin_dir = get_sb_dir().join("bin");
+    fs::create_dir_all(&bin_dir).map_err(|e| format!("Kann ~/.sb/bin nicht anlegen: {e}"))?;
+    let release_dir = cwd.join("target").join("release");
+
+    for (_, bin_base) in &selected {
+        let filename = executable_filename(bin_base);
+        let src = release_dir.join(&filename);
+        if src.is_file() {
+            let dst = bin_dir.join(&filename);
+            replace_binary_atomically(&src, &dst)?;
+            println!("  {} Aktualisiert: {}", "✓".bright_green(), dst.display());
+        }
+    }
+    Ok(())
+}
+
+/// Updates a configured remote server from `~/.sb/servers.toml` using `sb ssh` (`git archive` -> `scp` -> remote build & restart).
+// [SECURITY-HYPOTHESIS] CWE-78: Unsanitized server alias passed into remote shell or scp arguments.
+// [SECURITY-VERIFIED] `server_name` is strictly validated to `[A-Za-z0-9._-]` and resolved via `sb_core::ssh_transport`.
+pub fn update_remote_server(server_name: &str) -> Result<(), String> {
+    if server_name.is_empty()
+        || !server_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err(format!("Ungültiger Server-Name: '{server_name}'"));
+    }
+
+    let cwd = std::env::current_dir().map_err(|e| format!("Arbeitsverzeichnis nicht lesbar: {e}"))?;
+    if !cwd.join("Cargo.toml").is_file() || !cwd.join(".git").exists() {
+        return Err("Remote-Server-Update benötigt ein Git-Repository des Skulls-And-Bones-Workspace.".into());
+    }
+
+    let _ = crate::commands::ssh::ensure_ephemeral_ssh_user_cert();
+    let _ = sb_core::ssh_transport::ensure_sovereign_ssh_config();
+
+    let tmp_tar = std::env::temp_dir().join(format!("sb-src-{}.tar.gz", std::process::id()));
+    println!(
+        "  {} Erstelle Source-Archiv von HEAD für '{}'...",
+        "►".bright_cyan(),
+        server_name
+    );
+    let archive_status = Command::new("git")
+        .args(["archive", "--format=tar.gz", "-o"])
+        .arg(&tmp_tar)
+        .arg("HEAD")
+        .current_dir(&cwd)
+        .status()
+        .map_err(|e| format!("git archive fehlgeschlagen: {e}"))?;
+    if !archive_status.success() {
+        let _ = fs::remove_file(&tmp_tar);
+        return Err("git archive HEAD fehlgeschlagen".into());
+    }
+
+    let tmp_tar_str = tmp_tar.to_string_lossy().to_string();
+    let (scp_bin, scp_args) =
+        sb_core::ssh_transport::build_scp_push_args(server_name, &tmp_tar_str, Some("/tmp/sb-src.tar.gz"))
+            .inspect_err(|_| {
+                let _ = fs::remove_file(&tmp_tar);
+            })?;
+    let scp_status = Command::new(&scp_bin).args(&scp_args).status();
+    let _ = fs::remove_file(&tmp_tar);
+    match scp_status {
+        Ok(s) if s.success() => {}
+        Ok(s) => return Err(format!("SCP-Upload nach '{server_name}' fehlgeschlagen ({s})")),
+        Err(e) => return Err(format!("SCP konnte nicht gestartet werden: {e}")),
+    }
+
+    let remote_cmd = concat!(
+        "set -euo pipefail; ",
+        "export PATH=\"$HOME/.cargo/bin:$PATH\"; ",
+        "rm -rf /opt/skulls-and-bones-src/tools /opt/skulls-and-bones-src/console; ",
+        "tar -xzf /tmp/sb-src.tar.gz -C /opt/skulls-and-bones-src; ",
+        "rm -f /tmp/sb-src.tar.gz; ",
+        "cd /opt/skulls-and-bones-src/console && npm ci --no-audit --no-fund && npm run build; ",
+        "rm -rf /opt/skulls-and-bones/console/dist && mkdir -p /opt/skulls-and-bones/console && cp -r /opt/skulls-and-bones-src/console/dist /opt/skulls-and-bones/console/dist; ",
+        "cd /opt/skulls-and-bones-src && cargo build --release -p sb-cli -p sb-node -p sb-proxy -p sb-mesh -p sb-dns -p sb-auth -p sb-ca -p sb-key; ",
+        "systemctl stop sb-dc.service || true; ",
+        "cp -f target/release/sb target/release/sb-node target/release/sb-proxy target/release/sb-mesh target/release/sb-dns target/release/sb-auth target/release/sb-ca target/release/sb-key /usr/local/bin/; ",
+        "systemctl start sb-dc.service; ",
+        "systemctl is-active sb-dc.service"
+    );
+
+    println!(
+        "  {} Baue & deploye auf '{}' (Console + Rust Release + sb-dc.service)...",
+        "►".bright_cyan(),
+        server_name
+    );
+    let (ssh_bin, ssh_args) = sb_core::ssh_transport::build_ssh_exec_args(server_name, remote_cmd)?;
+    let ssh_status = Command::new(&ssh_bin)
+        .args(&ssh_args)
+        .status()
+        .map_err(|e| format!("SSH konnte nicht gestartet werden: {e}"))?;
+    if !ssh_status.success() {
+        return Err(format!("Remote-Update auf '{server_name}' fehlgeschlagen ({ssh_status})"));
+    }
+
+    println!(
+        "  {} Server '{}' erfolgreich aktualisiert.",
+        "✓".bright_green().bold(),
+        server_name
+    );
+    Ok(())
 }
 
 #[cfg(test)]

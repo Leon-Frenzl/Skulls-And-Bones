@@ -198,6 +198,14 @@ pub enum Commands {
         /// Bestimmtes Release-Tag für GitHub-Update (z. B. v0.2.2)
         #[arg(long, value_name = "TAG")]
         tag: Option<String>,
+
+        /// Aktualisiert einen registrierten Remote-Server aus ~/.sb/servers.toml (z. B. 'srv490042')
+        #[arg(long, value_name = "SERVER")]
+        server: Option<String>,
+
+        /// Baut und installiert Release-Binaries direkt aus dem lokalen Cargo-Workspace nach ~/.sb/bin
+        #[arg(long)]
+        from_workspace: bool,
     },
 
     /// Erstellt und signiert verifizierbare S&B-Releases
@@ -323,7 +331,7 @@ pub enum Commands {
         args: Vec<String>,
     },
 
-    /// Domänen-Agent-Dienst (sb agent install | status | update | uninstall) -> delegiert an sb-node service
+    /// Domänen-Agent-Dienst (sb agent install | start | stop | restart | status | update | uninstall) -> delegiert an sb-node service
     Agent {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,

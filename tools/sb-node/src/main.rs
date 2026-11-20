@@ -229,6 +229,12 @@ enum ServiceCommands {
     },
     /// Zeigt den Status des sb-node-agent Hintergrunddienstes
     Status,
+    /// Startet den sb-node-agent Hintergrunddienst
+    Start,
+    /// Stoppt den sb-node-agent Hintergrunddienst
+    Stop,
+    /// Startet den sb-node-agent Hintergrunddienst neu
+    Restart,
     /// Stoppt den Dienst, baut sb-node neu und startet den Dienst automatisch wieder
     Update {
         /// Pfad zum Skulls-And-Bones-Workspace (Standard: aktuelles Verzeichnis)
@@ -2641,6 +2647,9 @@ async fn main() {
                 }
                 ServiceCommands::Status => service_mgr::service_status()
                     .map(|s| format!("Service '{}' status: {}", service_mgr::SERVICE_NAME, s)),
+                ServiceCommands::Start => service_mgr::start_service(),
+                ServiceCommands::Stop => service_mgr::stop_service(),
+                ServiceCommands::Restart => service_mgr::restart_service(),
                 ServiceCommands::Update { repo_dir, dry_run } => {
                     let dir = repo_dir.unwrap_or_else(|| {
                         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))

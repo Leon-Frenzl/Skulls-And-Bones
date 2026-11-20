@@ -336,6 +336,158 @@ pub fn service_status() -> Result<String, String> {
     }
 }
 
+/// Starts the `sb-node-agent` OS service.
+pub fn start_service() -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    {
+        run_cmd("systemctl", &["start", &format!("{SERVICE_NAME}.service")])?;
+        Ok(format!("Service '{SERVICE_NAME}' gestartet."))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let status = service_status()?;
+        if status == "not_installed" {
+            return Err(format!(
+                "Dienst '{SERVICE_NAME}' ist nicht installiert. Installiere ihn zuerst mit 'sb agent install'."
+            ));
+        }
+        if status == "running" {
+            return Ok(format!("Service '{SERVICE_NAME}' läuft bereits."));
+        }
+        run_windows_sc(&["start", SERVICE_NAME])?;
+        Ok(format!("Service '{SERVICE_NAME}' gestartet."))
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        Err("Service-Steuerung wird auf diesem Betriebssystem nicht unterstützt.".into())
+    }
+}
+
+/// Stops the `sb-node-agent` OS service.
+pub fn stop_service() -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    {
+        run_cmd("systemctl", &["stop", &format!("{SERVICE_NAME}.service")])?;
+        Ok(format!("Service '{SERVICE_NAME}' gestoppt."))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let status = service_status()?;
+        if status == "not_installed" {
+            return Err(format!("Dienst '{SERVICE_NAME}' ist nicht installiert."));
+        }
+        if status == "stopped" {
+            return Ok(format!("Service '{SERVICE_NAME}' ist bereits gestoppt."));
+        }
+        stop_windows_service_gracefully(false)?;
+        Ok(format!("Service '{SERVICE_NAME}' gestoppt."))
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        Err("Service-Steuerung wird auf diesem Betriebssystem nicht unterstützt.".into())
+    }
+}
+
+/// Restarts the `sb-node-agent` OS service.
+pub fn restart_service() -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    {
+        run_cmd("systemctl", &["restart", &format!("{SERVICE_NAME}.service")])?;
+        Ok(format!("Service '{SERVICE_NAME}' neu gestartet."))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let status = service_status()?;
+        if status == "not_installed" {
+            return Err(format!(
+                "Dienst '{SERVICE_NAME}' ist nicht installiert. Installiere ihn zuerst mit 'sb agent install'."
+            ));
+        }
+        if status != "stopped" {
+            stop_windows_service_gracefully(false)?;
+        }
+        run_windows_sc(&["start", SERVICE_NAME])?;
+        Ok(format!("Service '{SERVICE_NAME}' neu gestartet."))
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        Err("Service-Steuerung wird auf diesem Betriebssystem nicht unterstützt.".into())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_sc(args: &[&str]) -> Result<(), String> {
+    let out = std::process::Command::new("sc.exe")
+        .args(args)
+        .output()
+        .map_err(|e| format!("sc.exe {} fehlgeschlagen: {e}", args.join(" ")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{stdout} {stderr}").trim().to_string();
+    if combined.contains("FAILED 5") || combined.to_ascii_lowercase().contains("access is denied") {
+        return Err(format!(
+            "Zugriff verweigert für 'sc.exe {}': Starte das Terminal als Administrator und führe den Befehl erneut aus.",
+            args.join(" ")
+        ));
+    }
+    Err(format!(
+        "sc.exe {} fehlgeschlagen ({}): {}",
+        args.join(" "),
+        out.status,
+        combined
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn stop_windows_service_gracefully(force_kill_on_timeout: bool) -> Result<(), String> {
+    run_windows_sc(&["stop", SERVICE_NAME])?;
+    let mut stopped = false;
+    for _ in 0..10 {
+        if let Ok(out) = std::process::Command::new("sc.exe")
+            .args(["query", SERVICE_NAME])
+            .output()
+        {
+            if String::from_utf8_lossy(&out.stdout).contains("STOPPED") {
+                stopped = true;
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    if !stopped && force_kill_on_timeout {
+        if let Ok(qex) = std::process::Command::new("sc.exe")
+            .args(["queryex", SERVICE_NAME])
+            .output()
+        {
+            let text = String::from_utf8_lossy(&qex.stdout);
+            for line in text.lines() {
+                if let Some(rest) = line.trim().strip_prefix("PID") {
+                    if let Some(pid_str) = rest.split(':').nth(1) {
+                        let pid = pid_str.trim();
+                        if !pid.is_empty() && pid != "0" {
+                            let _ = std::process::Command::new("taskkill")
+                                .args(["/F", "/PID", pid])
+                                .output();
+                            std::thread::sleep(std::time::Duration::from_millis(800));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    Ok(())
+}
+
 /// Stops the background service, rebuilds `sb-node` in release mode from `repo_dir`,
 /// updates the installed service binary if needed, and restarts the service.
 pub fn update_service(repo_dir: &Path, dry_run: bool) -> Result<String, String> {
@@ -354,44 +506,7 @@ pub fn update_service(repo_dir: &Path, dry_run: bool) -> Result<String, String> 
 
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("sc.exe")
-            .args(["stop", SERVICE_NAME])
-            .output();
-        let mut stopped = false;
-        for _ in 0..10 {
-            let q = std::process::Command::new("sc.exe")
-                .args(["query", SERVICE_NAME])
-                .output();
-            if let Ok(out) = q {
-                if String::from_utf8_lossy(&out.stdout).contains("STOPPED") {
-                    stopped = true;
-                    break;
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
-        if !stopped {
-            if let Ok(qex) = std::process::Command::new("sc.exe")
-                .args(["queryex", SERVICE_NAME])
-                .output()
-            {
-                let text = String::from_utf8_lossy(&qex.stdout);
-                for line in text.lines() {
-                    if let Some(rest) = line.trim().strip_prefix("PID") {
-                        if let Some(pid_str) = rest.split(':').nth(1) {
-                            let pid = pid_str.trim();
-                            if !pid.is_empty() && pid != "0" {
-                                let _ = std::process::Command::new("taskkill")
-                                    .args(["/F", "/PID", pid])
-                                    .output();
-                                std::thread::sleep(std::time::Duration::from_millis(800));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(400));
+        let _ = stop_windows_service_gracefully(true);
     }
     #[cfg(target_os = "linux")]
     {
