@@ -4,7 +4,9 @@
 pub mod audit_log;
 pub mod catalog_membership;
 pub mod catalog_sync;
+pub mod dc_discovery;
 pub mod dc_orchestrator;
+pub mod dc_routes;
 pub mod directory_users;
 pub mod domain_join;
 pub mod fleet;
@@ -12,6 +14,7 @@ pub mod laps;
 pub mod oidc;
 pub mod os_auth_broker;
 pub mod os_logon_provision;
+pub mod passkey;
 pub mod policy_engine;
 pub mod rbac;
 pub mod service_mgr;
@@ -2476,12 +2479,18 @@ async fn main() {
                 console_dir,
             } => {
                 let cfg = dc_orchestrator::DcBootstrapConfig {
-                    domain,
+                    domain: domain.clone(),
                     admin_username: admin,
                     dc_bind,
                     graph_bind,
                     console_dir,
                 };
+                let _ = dc_discovery::register_dc_srv_records(
+                    &domain,
+                    &format!("dc.{domain}"),
+                    8443,
+                    Some(&format!("console.{domain}")),
+                );
                 if let Err(error) = dc_orchestrator::run_one_command_dc(cfg).await {
                     sb_core::logfmt::error(
                         "ERR_NODE_DC",

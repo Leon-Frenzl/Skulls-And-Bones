@@ -23,6 +23,20 @@ pub struct OrganizationalUnit {
     pub updated_at: String,
 }
 
+/// Fine-grained delegated administration permission for non-root operators (Helpdesk, SecOps, etc.).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegatedPermission {
+    UserManage,
+    UserResetPassword,
+    LapsReveal,
+    MachineManage,
+    PolicyManage,
+    GroupManage,
+    AuditRead,
+    OidcClientManage,
+}
+
 /// Persistent domain user and group directory (`~/.sb/domain/users.json`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IdentityDirectory {
@@ -31,6 +45,9 @@ pub struct IdentityDirectory {
     pub groups: BTreeMap<String, DomainGroup>,
     #[serde(default)]
     pub ous: BTreeMap<String, OrganizationalUnit>,
+    /// Delegated permissions keyed by `"group:<name>"` or `"ou:<path>"`.
+    #[serde(default)]
+    pub delegations: BTreeMap<String, Vec<DelegatedPermission>>,
 }
 
 /// Returns the default path for the domain user/group directory.
@@ -53,6 +70,7 @@ impl IdentityDirectory {
             users: BTreeMap::new(),
             groups: BTreeMap::new(),
             ous: BTreeMap::new(),
+            delegations: BTreeMap::new(),
         })
     }
 
@@ -220,6 +238,93 @@ impl IdentityDirectory {
         Ok(ou)
     }
 
+    /// Deletes an Organizational Unit by path (`"/"` cannot be deleted).
+    pub fn delete_ou(&mut self, path: &str) -> Result<bool, String> {
+        let clean = sb_core::identity::validate_ou_path(path)?;
+        if clean == "/" {
+            return Err("Root OU '/' cannot be deleted".into());
+        }
+        Ok(self.ous.remove(&clean).is_some())
+    }
+
+    /// Deletes a security group and removes it from all user memberships.
+    pub fn delete_group(&mut self, name: &str) -> Result<bool, String> {
+        let clean_name = validate_policy_id(name)?;
+        if clean_name == "admins" {
+            return Err("Built-in 'admins' group cannot be deleted".into());
+        }
+        let removed = self.groups.remove(&clean_name).is_some();
+        if removed {
+            for user in self.users.values_mut() {
+                user.groups.retain(|g| g != &clean_name);
+            }
+        }
+        Ok(removed)
+    }
+
+    /// Grants delegated permissions to `"group:<name>"` or `"ou:<path>"`.
+    pub fn set_delegations(
+        &mut self,
+        principal: &str,
+        permissions: Vec<DelegatedPermission>,
+    ) -> Result<(), String> {
+        let trimmed = principal.trim();
+        let valid = if let Some(grp) = trimmed.strip_prefix("group:") {
+            validate_policy_id(grp).map(|g| format!("group:{g}"))?
+        } else if let Some(ou) = trimmed.strip_prefix("ou:") {
+            sb_core::identity::validate_ou_path(ou).map(|o| format!("ou:{o}"))?
+        } else {
+            return Err("Delegation principal must start with 'group:' or 'ou:'".into());
+        };
+        self.delegations.insert(valid, permissions);
+        Ok(())
+    }
+
+    /// Evaluates whether `username` holds `perm` via admin membership, group delegation, or OU delegation.
+    // [SECURITY-HYPOTHESIS] CWE-284 / CWE-863: Disabled users or unprivileged groups gaining delegated admin actions.
+    // [SECURITY-VERIFIED] Fails closed if user is missing/disabled; checks explicit group/OU delegation mappings.
+    pub fn has_delegated_permission(&self, username: &str, perm: DelegatedPermission) -> bool {
+        let Ok(clean) = validate_username(username) else {
+            return false;
+        };
+        let Some(user) = self.users.get(&clean) else {
+            return false;
+        };
+        if !user.enabled {
+            return false;
+        }
+        if user.groups.iter().any(|g| {
+            g == "admins"
+                || self
+                    .groups
+                    .get(g)
+                    .map(|grp| grp.is_local_admin)
+                    .unwrap_or(false)
+        }) {
+            return true;
+        }
+        for grp in &user.groups {
+            if let Some(perms) = self.delegations.get(&format!("group:{grp}")) {
+                if perms.contains(&perm) {
+                    return true;
+                }
+            }
+        }
+        for (principal, perms) in &self.delegations {
+            if let Some(ou_prefix) = principal.strip_prefix("ou:") {
+                let matches_ou = if ou_prefix == "/" {
+                    true
+                } else {
+                    user.ou == ou_prefix || user.ou.starts_with(&format!("{ou_prefix}/"))
+                };
+                if matches_ou && perms.contains(&perm) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Evaluates whether `username` may log into `machine_id` / `fqdn` and whether they
     /// hold local administrator privileges on that machine.
     ///
@@ -328,5 +433,54 @@ mod tests {
         dir.save(&path).unwrap();
 
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn groups_ous_and_delegated_permissions_enforce_scoped_access() {
+        let mut dir = IdentityDirectory {
+            domain: "corp.eu".into(),
+            ..Default::default()
+        };
+        dir.upsert_ou("/eu/support", "EU Helpdesk").unwrap();
+        dir.upsert_group(DomainGroup {
+            name: "helpdesk".into(),
+            description: "Support Team".into(),
+            ou: "/eu/support".into(),
+            is_local_admin: false,
+            allowed_machines: vec![],
+            members: vec![],
+            updated_at: String::new(),
+        })
+        .unwrap();
+        dir.set_delegations(
+            "group:helpdesk",
+            vec![
+                DelegatedPermission::LapsReveal,
+                DelegatedPermission::UserResetPassword,
+            ],
+        )
+        .unwrap();
+
+        dir.upsert_user(DomainUser {
+            username: "max.support".into(),
+            display_name: "Max".into(),
+            email: "max@corp.eu".into(),
+            ou: "/eu/support".into(),
+            groups: vec!["helpdesk".into()],
+            ssh_public_key: None,
+            enabled: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        })
+        .unwrap();
+
+        assert!(dir.has_delegated_permission("max.support", DelegatedPermission::LapsReveal));
+        assert!(
+            dir.has_delegated_permission("max.support", DelegatedPermission::UserResetPassword)
+        );
+        assert!(!dir.has_delegated_permission("max.support", DelegatedPermission::PolicyManage));
+
+        dir.disable_user("max.support").unwrap();
+        assert!(!dir.has_delegated_permission("max.support", DelegatedPermission::LapsReveal));
     }
 }

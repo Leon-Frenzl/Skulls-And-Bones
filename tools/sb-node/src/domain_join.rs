@@ -15,9 +15,16 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+
+static REVOCATION_HUB: OnceLock<crate::dc_discovery::RevocationBroadcaster> = OnceLock::new();
+
+/// Returns the process-wide real-time revocation broadcaster.
+pub fn revocation_hub() -> &'static crate::dc_discovery::RevocationBroadcaster {
+    REVOCATION_HUB.get_or_init(crate::dc_discovery::RevocationBroadcaster::default)
+}
 
 pub const MAX_JOIN_REQUEST_BYTES: usize = 64 * 1024;
 pub const DEFAULT_DEVICE_CERT_DAYS: u32 = 30;
@@ -507,6 +514,10 @@ pub fn revoke_machine(
     if remove_dns {
         let _ = ConfigManager::remove_record(&updated.fqdn);
     }
+    revocation_hub().publish(crate::dc_discovery::RevocationEvent::machine_revoked(
+        &updated.machine_id,
+        &domain,
+    ));
     Ok(updated)
 }
 
@@ -618,11 +629,16 @@ async fn handle_join_http_connection(
                 k.trim().eq_ignore_ascii_case("host").then(|| v.trim())
             })
             .unwrap_or("127.0.0.1:8090");
-        let spec = crate::oidc::openid_configuration(&format!("http://{host}")).to_string();
+        let scheme = if host.starts_with("127.0.0.1") || host.starts_with("localhost") {
+            "http"
+        } else {
+            "https"
+        };
+        let spec = crate::oidc::discovery_document(&format!("{scheme}://{host}")).to_string();
         return write_http_json(stream, 200, "OK", &spec).await;
     }
 
-    if method == "GET" && path == "/.well-known/jwks.json" {
+    if method == "GET" && (path == "/.well-known/jwks.json" || path == "/oauth2/jwks.json") {
         let pub_path = sb_core::paths::sb_home().join("auth").join("auth.pub");
         let pub_b64 = match fs::read_to_string(&pub_path) {
             Ok(s) => s,
@@ -1072,7 +1088,47 @@ async fn handle_join_http_connection(
                 "audit:read".into(),
                 "dns:write".into(),
                 "vault:write".into(),
+                "laps:read".into(),
             ]);
+        } else {
+            use crate::directory_users::DelegatedPermission as DP;
+            if dir.has_delegated_permission(&user.username, DP::LapsReveal) {
+                caps.push("laps:read".into());
+            }
+            if dir.has_delegated_permission(&user.username, DP::PolicyManage) {
+                caps.push("policy:write".into());
+            }
+            if dir.has_delegated_permission(&user.username, DP::UserManage)
+                || dir.has_delegated_permission(&user.username, DP::GroupManage)
+            {
+                caps.push("directory:write".into());
+            }
+            if dir.has_delegated_permission(&user.username, DP::AuditRead) {
+                caps.push("audit:read".into());
+            }
+        }
+        let passkeys_path = base_dir.join("passkeys.json");
+        let mut pk_store = crate::passkey::PasskeyStore::load(&passkeys_path).unwrap_or_default();
+        if pk_store.user_has_passkey(&user.username) {
+            let rp_id = header_lines
+                .iter()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    k.trim().eq_ignore_ascii_case("host").then(|| v.trim())
+                })
+                .and_then(|h| h.split(':').next())
+                .unwrap_or("console.skulls-and-bones.org");
+            if let Ok(opts) = pk_store.start_authentication(&user.username, rp_id) {
+                let _ = pk_store.save(&passkeys_path);
+                let msg = serde_json::json!({
+                    "mfa_required": true,
+                    "mfa_method": "passkey",
+                    "username": user.username,
+                    "options": opts,
+                })
+                .to_string();
+                return write_http_json(stream, 202, "Accepted", &msg).await;
+            }
         }
         return match engine.issue_session(
             &user.username,
@@ -1098,6 +1154,21 @@ async fn handle_join_http_connection(
                 write_http_json(stream, 500, "Internal Server Error", &msg).await
             }
         };
+    }
+
+    if crate::dc_routes::handle_dc_extended_routes(
+        stream,
+        method,
+        path,
+        &header_lines,
+        &mut buf,
+        &mut chunk,
+        header_end,
+        registry_path,
+    )
+    .await?
+    {
+        return Ok(());
     }
 
     if method == "POST" && path == "/v1/auth/refresh" {
@@ -4250,6 +4321,10 @@ pub fn offboard_user(
             "revoked_machines": revoked_machines,
         }),
     );
+    revocation_hub().publish(crate::dc_discovery::RevocationEvent::user_offboarded(
+        &disabled_user.username,
+        &users_dir.domain,
+    ));
 
     Ok(OffboardReport {
         username: disabled_user.username,
@@ -4259,7 +4334,7 @@ pub fn offboard_user(
     })
 }
 
-fn session_tokens_json(tokens: &sb_auth::SessionTokens) -> String {
+pub(crate) fn session_tokens_json(tokens: &sb_auth::SessionTokens) -> String {
     serde_json::json!({
         "access_token": tokens.access_token,
         "refresh_token": tokens.refresh_token,
@@ -4268,7 +4343,7 @@ fn session_tokens_json(tokens: &sb_auth::SessionTokens) -> String {
     .to_string()
 }
 
-fn load_local_auth_engine() -> Result<sb_auth::AuthEngine, String> {
+pub(crate) fn load_local_auth_engine() -> Result<sb_auth::AuthEngine, String> {
     let auth_dir = sb_core::paths::sb_home().join("auth");
     let key_b64 = fs::read_to_string(auth_dir.join("auth.key"))
         .map_err(|e| format!("Missing auth.key: {e}"))?;
@@ -4308,7 +4383,7 @@ async fn write_problem_json(
         .map_err(|e| format!("Write error: {e}"))
 }
 
-async fn write_http_json(
+pub(crate) async fn write_http_json(
     stream: &mut TcpStream,
     code: u16,
     reason: &str,
@@ -4325,7 +4400,7 @@ async fn write_http_json(
         .map_err(|e| format!("Write error: {e}"))
 }
 
-fn extract_bearer_token<'a>(headers: &[&'a str]) -> Option<&'a str> {
+pub(crate) fn extract_bearer_token<'a>(headers: &[&'a str]) -> Option<&'a str> {
     headers.iter().find_map(|line| {
         let (name, val) = line.split_once(':')?;
         if name.trim().eq_ignore_ascii_case("authorization") {
@@ -4361,7 +4436,7 @@ fn parse_os_kind(raw: &str) -> Option<OsKind> {
     }
 }
 
-async fn read_http_body(
+pub(crate) async fn read_http_body(
     stream: &mut TcpStream,
     buf: &mut Vec<u8>,
     chunk: &mut [u8],

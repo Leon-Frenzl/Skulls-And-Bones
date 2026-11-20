@@ -209,11 +209,268 @@ pub fn discovery_document(issuer: &str) -> serde_json::Value {
         "userinfo_endpoint": format!("{base}/oauth2/userinfo"),
         "jwks_uri": format!("{base}/.well-known/jwks.json"),
         "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["EdDSA"],
         "scopes_supported": ["openid", "profile", "email", "groups"],
+        "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["client_secret_post", "none"],
+        "claims_supported": [
+            "sub",
+            "iss",
+            "aud",
+            "exp",
+            "iat",
+            "nonce",
+            "preferred_username",
+            "groups",
+            "ou",
+            "amr"
+        ],
     })
+}
+
+/// Registered OpenID Connect client application (e.g. GitLab, Grafana, Gitea, Nextcloud).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OidcClient {
+    pub client_id: String,
+    pub client_name: String,
+    pub redirect_uris: Vec<String>,
+    #[serde(default)]
+    pub client_secret_hash_hex: Option<String>,
+    #[serde(default)]
+    pub allowed_scopes: Vec<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OidcClientRegistry {
+    pub clients: BTreeMap<String, OidcClient>,
+}
+
+impl OidcClientRegistry {
+    pub fn load(path: &Path) -> Result<Self, String> {
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let raw = fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read OIDC clients {}: {e}", path.display()))?;
+        serde_json::from_str(&raw)
+            .map_err(|e| format!("Invalid OIDC clients JSON {}: {e}", path.display()))
+    }
+
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create OIDC clients dir: {e}"))?;
+        }
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize OIDC clients: {e}"))?;
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, json).map_err(|e| format!("Failed to write temp OIDC clients: {e}"))?;
+        let _ = sb_core::paths::ensure_private_permissions(&tmp);
+        fs::rename(&tmp, path).map_err(|e| format!("Failed to commit OIDC clients: {e}"))?;
+        Ok(())
+    }
+
+    pub fn register_client(
+        &mut self,
+        client_id: &str,
+        client_name: &str,
+        redirect_uris: Vec<String>,
+        client_secret: Option<&str>,
+    ) -> Result<OidcClient, String> {
+        let id = sb_core::policy::validate_policy_id(client_id)?;
+        if client_name.trim().is_empty() || client_name.len() > 80 {
+            return Err("client_name must be 1..=80 characters".into());
+        }
+        if redirect_uris.is_empty() {
+            return Err("redirect_uris cannot be empty".into());
+        }
+        for uri in &redirect_uris {
+            if !(uri.starts_with("https://") || uri.starts_with("http://localhost"))
+                || uri.chars().any(char::is_whitespace)
+            {
+                return Err(format!("Invalid redirect_uri '{uri}'"));
+            }
+        }
+        let secret_hash = client_secret
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(sha256_hex);
+
+        let entry = OidcClient {
+            client_id: id.clone(),
+            client_name: client_name.trim().to_string(),
+            redirect_uris,
+            client_secret_hash_hex: secret_hash,
+            allowed_scopes: vec![
+                "openid".into(),
+                "profile".into(),
+                "email".into(),
+                "groups".into(),
+            ],
+            created_at: Utc::now().to_rfc3339(),
+        };
+        self.clients.insert(id, entry.clone());
+        Ok(entry)
+    }
+
+    pub fn validate_redirect(&self, client_id: &str, redirect_uri: &str) -> Result<&OidcClient, String> {
+        let client = self
+            .clients
+            .get(client_id.trim())
+            .ok_or_else(|| format!("Unknown OIDC client_id '{client_id}'"))?;
+        if !client.redirect_uris.iter().any(|u| u == redirect_uri) {
+            return Err("OIDC redirect_uri mismatch".into());
+        }
+        Ok(client)
+    }
+}
+
+/// Single-use OIDC Authorization Code entry with RFC 7636 PKCE (`S256`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OidcAuthCodeEntry {
+    pub code_hash_hex: String,
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub username: String,
+    pub scope: String,
+    pub nonce: Option<String>,
+    pub code_challenge: String,
+    pub amr: Vec<String>,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OidcAuthCodeStore {
+    pub codes: BTreeMap<String, OidcAuthCodeEntry>,
+}
+
+impl OidcAuthCodeStore {
+    /// Issues a single-use OIDC authorization code bound to `client_id`, `redirect_uri`, and PKCE `S256` challenge.
+    // [SECURITY-HYPOTHESIS] CWE-294 / CWE-345: Auth code interception or redirect_uri tampering.
+    // [SECURITY-VERIFIED] Stores SHA-256 digest only, enforces 5-minute TTL, binds to exact client_id/redirect_uri/PKCE challenge.
+    #[allow(clippy::too_many_arguments)]
+    pub fn issue_authorization_code(
+        &mut self,
+        client_id: &str,
+        redirect_uri: &str,
+        username: &str,
+        scope: &str,
+        nonce: Option<String>,
+        code_challenge: &str,
+        code_challenge_method: &str,
+        amr: Vec<String>,
+    ) -> Result<String, String> {
+        if code_challenge_method != "S256" || code_challenge.trim().len() < 32 {
+            return Err("PKCE code_challenge_method=S256 and valid code_challenge required".into());
+        }
+        self.prune_expired(Utc::now());
+        let mut raw = [0u8; 24];
+        rand::rngs::OsRng.fill_bytes(&mut raw);
+        let code = format!("sboc_{}", URL_SAFE_NO_PAD.encode(raw));
+        let digest = sha256_hex(&code);
+        self.codes.insert(
+            digest.clone(),
+            OidcAuthCodeEntry {
+                code_hash_hex: digest,
+                client_id: client_id.to_string(),
+                redirect_uri: redirect_uri.to_string(),
+                username: username.to_string(),
+                scope: scope.to_string(),
+                nonce,
+                code_challenge: code_challenge.trim().to_string(),
+                amr,
+                expires_at: (Utc::now() + Duration::seconds(300)).to_rfc3339(),
+            },
+        );
+        Ok(code)
+    }
+
+    /// Consumes an authorization code after verifying `client_id`, `redirect_uri`, and PKCE `code_verifier`.
+    pub fn consume_authorization_code(
+        &mut self,
+        code: &str,
+        client_id: &str,
+        redirect_uri: &str,
+        code_verifier: &str,
+    ) -> Result<OidcAuthCodeEntry, String> {
+        self.prune_expired(Utc::now());
+        let digest = sha256_hex(code.trim());
+        let entry = self
+            .codes
+            .remove(&digest)
+            .ok_or_else(|| "Invalid or expired authorization code".to_string())?;
+        if entry.client_id != client_id || entry.redirect_uri != redirect_uri {
+            return Err("OIDC client_id or redirect_uri mismatch".into());
+        }
+        let verifier_hash = URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()));
+        if verifier_hash != entry.code_challenge {
+            return Err("PKCE code_verifier verification failed".into());
+        }
+        Ok(entry)
+    }
+
+    fn prune_expired(&mut self, now: DateTime<Utc>) {
+        self.codes.retain(|_, v| {
+            DateTime::parse_from_rfc3339(&v.expires_at)
+                .map(|dt| dt.with_timezone(&Utc) > now)
+                .unwrap_or(false)
+        });
+    }
+}
+
+/// Signs a standard RFC 7519 EdDSA JWT `id_token` whose `kid` matches `jwks_document`.
+#[allow(clippy::too_many_arguments)]
+pub fn sign_oidc_id_token(
+    keypair: &sb_auth::crypto::Keypair,
+    issuer: &str,
+    client_id: &str,
+    username: &str,
+    groups: &[String],
+    ou: &str,
+    amr: &[String],
+    nonce: Option<&str>,
+    ttl_seconds: i64,
+) -> Result<String, String> {
+    let pub_b64 = keypair.to_public_base64();
+    let pub_raw = base64::engine::general_purpose::STANDARD
+        .decode(pub_b64.trim())
+        .or_else(|_| URL_SAFE_NO_PAD.decode(pub_b64.trim()))
+        .map_err(|e| format!("Failed to decode public key: {e}"))?;
+    let mut h = Sha256::new();
+    h.update(&pub_raw);
+    let kid = hex::encode(&h.finalize()[..8]);
+
+    let now = Utc::now().timestamp();
+    let header = serde_json::json!({
+        "alg": "EdDSA",
+        "typ": "JWT",
+        "kid": kid,
+    });
+    let mut payload = serde_json::json!({
+        "iss": issuer.trim_end_matches('/'),
+        "sub": username,
+        "aud": client_id,
+        "iat": now,
+        "exp": now + ttl_seconds.clamp(60, 86400),
+        "preferred_username": username,
+        "groups": groups,
+        "ou": ou,
+        "amr": amr,
+    });
+    if let Some(n) = nonce {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("nonce".into(), serde_json::Value::String(n.to_string()));
+        }
+    }
+    let header_b64 = URL_SAFE_NO_PAD.encode(header.to_string().as_bytes());
+    let payload_b64 = URL_SAFE_NO_PAD.encode(payload.to_string().as_bytes());
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let sig = keypair.sign(signing_input.as_bytes());
+    let sig_b64 = URL_SAFE_NO_PAD.encode(&sig);
+    Ok(format!("{signing_input}.{sig_b64}"))
 }
 
 /// Persistent Argon2id password credential store (`~/.sb/domain/credentials.json`).
@@ -375,5 +632,97 @@ mod tests {
         let loaded_creds = CredentialStore::load_from_db(&db, &ticket).unwrap();
         assert!(loaded_creds.verify("leon.admin", "StrongPass!2026"));
         assert!(!loaded_creds.verify("leon.admin", "wrong"));
+    }
+
+    #[test]
+    fn oidc_pkce_authorize_exchange_and_id_token_verify_against_jwks() {
+        let mut clients = OidcClientRegistry::default();
+        clients
+            .register_client(
+                "grafana",
+                "Grafana",
+                vec!["https://grafana.corp.eu/login/generic_oauth".into()],
+                None,
+            )
+            .unwrap();
+        assert!(clients
+            .validate_redirect("grafana", "https://grafana.corp.eu/login/generic_oauth")
+            .is_ok());
+        assert!(clients
+            .validate_redirect("grafana", "https://evil.example/cb")
+            .is_err());
+
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+
+        let mut codes = OidcAuthCodeStore::default();
+        let code = codes
+            .issue_authorization_code(
+                "grafana",
+                "https://grafana.corp.eu/login/generic_oauth",
+                "leon.admin",
+                "openid profile groups",
+                Some("nonce-123".into()),
+                &challenge,
+                "S256",
+                vec!["pwd".into(), "hwk".into()],
+            )
+            .unwrap();
+
+        // Wrong PKCE verifier must fail (and consumes code)
+        assert!(codes
+            .consume_authorization_code(
+                &code,
+                "grafana",
+                "https://grafana.corp.eu/login/generic_oauth",
+                "wrong-verifier",
+            )
+            .is_err());
+
+        let code2 = codes
+            .issue_authorization_code(
+                "grafana",
+                "https://grafana.corp.eu/login/generic_oauth",
+                "leon.admin",
+                "openid profile groups",
+                Some("nonce-123".into()),
+                &challenge,
+                "S256",
+                vec!["pwd".into(), "hwk".into()],
+            )
+            .unwrap();
+        let consumed = codes
+            .consume_authorization_code(
+                &code2,
+                "grafana",
+                "https://grafana.corp.eu/login/generic_oauth",
+                verifier,
+            )
+            .unwrap();
+        assert_eq!(consumed.username, "leon.admin");
+
+        let kp = sb_auth::crypto::Keypair::generate();
+        let jwt = sign_oidc_id_token(
+            &kp,
+            "https://console.skulls-and-bones.org",
+            "grafana",
+            &consumed.username,
+            &["admins".into()],
+            "/eu/engineering",
+            &consumed.amr,
+            consumed.nonce.as_deref(),
+            3600,
+        )
+        .unwrap();
+        let parts: Vec<&str> = jwt.split('.').collect();
+        assert_eq!(parts.len(), 3);
+        let sig = URL_SAFE_NO_PAD.decode(parts[2]).unwrap();
+        let signing_input = format!("{}.{}", parts[0], parts[1]);
+        assert!(kp.verify(signing_input.as_bytes(), &sig).is_ok());
+
+        let jwks = jwks_document(&kp.to_public_base64()).unwrap();
+        let header: serde_json::Value =
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).unwrap()).unwrap();
+        assert_eq!(header["kid"], jwks["keys"][0]["kid"]);
     }
 }
