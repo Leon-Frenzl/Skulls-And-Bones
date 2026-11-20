@@ -6,6 +6,7 @@ import { buildNotice, ConsoleNotice, formatHttpError, formatNetworkError } from 
 import { LoginView } from "./views/LoginView";
 import { PasskeyPanel } from "./components/PasskeyPanel";
 import { CaProxyPanel, CaStatusData, ProxyRouteItem } from "./components/CaProxyPanel";
+import { DnsIpamPanel } from "./components/DnsIpamPanel";
 const FilesWindow = lazy(() => import("./FilesWindow").then((m) => ({ default: m.FilesWindow })));
 const XtermTerminal = lazy(() => import("./XtermTerminal").then((m) => ({ default: m.XtermTerminal })));
 import {
@@ -126,6 +127,7 @@ export default function App() {
   const [routes, setRoutes] = useState<unknown[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditValid, setAuditValid] = useState<boolean | null>(null);
+  const [auditQuery, setAuditQuery] = useState("");
   const [enrollPkg, setEnrollPkg] = useState<Record<string, unknown> | null>(null);
   const [meUser, setMeUser] = useState<(DomainUser & { ssh_public_key?: string }) | null>(null);
   const [meMachines, setMeMachines] = useState<MachineRecord[]>([]);
@@ -792,14 +794,51 @@ export default function App() {
                       headers: { "Content-Type": "application/json", ...authHeaders() },
                       body: JSON.stringify({ ttl_seconds: 28800 }),
                     });
-                    const text = await res.text();
-                    setMeSshCert(text);
+                    if (res.ok) {
+                      const text = await res.text();
+                      setMeSshCert(text);
+                      pushNotice("me", buildNotice("success", "SSH-Zertifikat ausgestellt", "Das 8h-Zertifikat ist bereit."));
+                    } else {
+                      await pushHttpError("me", "SSH-Zertifikat anfordern", res);
+                    }
                   }}
                 >
                   8h SSH-Zertifikat holen
                 </button>
               </div>
-              {meSshCert && <pre className="code-block">{meSshCert}</pre>}
+              {meSshCert && (() => {
+                let parsed: Record<string, unknown> | null = null;
+                try {
+                  parsed = JSON.parse(meSshCert) as Record<string, unknown>;
+                } catch {
+                  parsed = null;
+                }
+                const certText = typeof parsed?.certificate === "string" ? parsed.certificate : meSshCert;
+                const principals = Array.isArray(parsed?.principals) ? parsed.principals.join(", ") : null;
+                const validUntil = typeof parsed?.valid_until === "string" ? parsed.valid_until : null;
+                return (
+                  <div className="ca-key-row" style={{ marginTop: 10, alignItems: "flex-start", flexDirection: "column" }}>
+                    <div className="ca-badge-group" style={{ marginTop: 0 }}>
+                      <span className="badge badge-ok">8h SSH-Zertifikat aktiv</span>
+                      {principals && <span className="badge badge-warn">Principals: {principals}</span>}
+                      {validUntil && <span className="ca-muted">Gültig bis: {validUntil}</span>}
+                    </div>
+                    <div className="ca-key-row" style={{ width: "100%" }}>
+                      <code className="ca-mono-pill" title={certText}>{certText}</code>
+                      <button
+                        type="button"
+                        className="btn-secondary btn-compact"
+                        onClick={async () => {
+                          await navigator.clipboard.writeText(certText);
+                          pushNotice("me", buildNotice("success", "Kopiert", "SSH-Zertifikat in die Zwischenablage kopiert."));
+                        }}
+                      >
+                        Kopieren
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="card" style={{ marginBottom: 16 }}>
@@ -854,13 +893,23 @@ export default function App() {
                       headers: { "Content-Type": "application/json", ...authHeaders() },
                       body: JSON.stringify({ rule_id: elevRuleId, reason: elevReason, ttl_seconds: 1800 }),
                     });
-                    setElevOut(await res.text());
+                    if (res.ok) {
+                      setElevOut(await res.text());
+                      pushNotice("me", buildNotice("success", "JIT-Rechte aktiviert", `Regel '${elevRuleId}' für 30 Minuten aktiv.`));
+                    } else {
+                      await pushHttpError("me", "JIT-Rechte anfordern", res);
+                    }
                   }}
                 >
                   30 Min anfordern
                 </button>
               </div>
-              {elevOut && <pre className="code-block">{elevOut}</pre>}
+              {elevOut && (
+                <div className="ca-badge-group">
+                  <span className="badge badge-ok">Elevation aktiv (30 Min)</span>
+                  <span className="ca-muted">Regel: {elevRuleId}</span>
+                </div>
+              )}
             </div>
 
             <div className="card">
@@ -1279,7 +1328,35 @@ export default function App() {
                   </button>
                 )}
               </div>
-              {enrollResult && <pre className="code-block">{enrollResult}</pre>}
+              {enrollPkg && (
+                <div className="grid" style={{ marginBottom: 0, marginTop: 8 }}>
+                  <div className="card" style={{ padding: 14 }}>
+                    <div className="card-header-row">
+                      <span className="card-title">Enrollment-Token bereit</span>
+                      <span className="badge badge-ok">BEREIT</span>
+                    </div>
+                    <div className="ca-muted" style={{ marginBottom: 8 }}>
+                      Domäne: <strong>{String(enrollPkg.domain ?? enrollDomain)}</strong> · Endpunkt:{" "}
+                      <code>{String(enrollPkg.api_endpoint ?? "/v1/machines/join")}</code>
+                    </div>
+                    {typeof enrollPkg.token === "string" && (
+                      <div className="ca-key-row">
+                        <code className="ca-mono-pill" title={enrollPkg.token}>{enrollPkg.token}</code>
+                        <button
+                          type="button"
+                          className="btn-secondary btn-compact"
+                          onClick={async () => {
+                            await navigator.clipboard.writeText(String(enrollPkg.token));
+                            pushNotice("machines", buildNotice("success", "Token kopiert", "Enrollment-Token in die Zwischenablage kopiert."));
+                          }}
+                        >
+                          Kopieren
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="card" style={{ marginBottom: 16 }}>
@@ -1639,14 +1716,23 @@ export default function App() {
                         updated_by: "",
                       }),
                     });
-                    setGpoOut(await res.text());
-                    if (res.ok) await refreshAll();
+                    if (res.ok) {
+                      setGpoOut(`Policy '${gpoId}' gespeichert.`);
+                      pushNotice("policies", buildNotice("success", "GPO gespeichert", `Policy '${gpoId}' ist sofort aktiv.`));
+                      await refreshAll();
+                    } else {
+                      await pushHttpError("policies", "GPO speichern", res);
+                    }
                   }}
                 >
                   Speichern
                 </button>
               </div>
-              {gpoOut && <pre className="code-block">{gpoOut}</pre>}
+              {gpoOut && (
+                <div className="ca-badge-group" style={{ marginTop: 10 }}>
+                  <span className="badge badge-ok">{gpoOut}</span>
+                </div>
+              )}
             </div>
 
             <div className="card">
@@ -1716,16 +1802,7 @@ export default function App() {
                 </button>
               </div>
             </div>
-            <div className="grid">
-              <div className="card">
-                <div className="card-title">Souveräne DNS-Zonen (A / AAAA / CNAME / TXT / SRV)</div>
-                <pre className="code-block">{JSON.stringify(dnsRecords, null, 2)}</pre>
-              </div>
-              <div className="card">
-                <div className="card-title">DHCP &amp; IPAM Subnets / Leases</div>
-                <pre className="code-block">{JSON.stringify(ipamData, null, 2)}</pre>
-              </div>
-            </div>
+            <DnsIpamPanel dnsRecords={dnsRecords} ipamData={ipamData} />
           </>
         )}
 
@@ -1736,49 +1813,76 @@ export default function App() {
           />
         )}
 
-        {tab === "audit" && (
-          <div className="card">
-            <div className="card-title">
-              Audit Events ({auditEvents.length}){" "}
-              {auditValid !== null && (
-                <span className={`badge ${auditValid ? "badge-ok" : "badge-err"}`}>
-                  {auditValid ? "HASH-KETTE INTACT" : "MANIPULATION ERKANNT"}
-                </span>
-              )}
+        {tab === "audit" && (() => {
+          const q = auditQuery.trim().toLowerCase();
+          const filteredAudit = q
+            ? auditEvents.filter((ev) =>
+                [ev.actor, ev.action, ev.target, ev.outcome].join(" ").toLowerCase().includes(q),
+              )
+            : auditEvents;
+          return (
+            <div className="card">
+              <div className="ca-toolbar">
+                <div className="card-title" style={{ marginBottom: 0 }}>
+                  Audit Events ({filteredAudit.length} / {auditEvents.length}){" "}
+                  {auditValid !== null && (
+                    <span className={`badge ${auditValid ? "badge-ok" : "badge-err"}`}>
+                      {auditValid ? "HASH-KETTE INTACT" : "MANIPULATION ERKANNT"}
+                    </span>
+                  )}
+                </div>
+                <div className="ca-field">
+                  <label htmlFor="audit-search" className="ca-field-label">
+                    Suche
+                  </label>
+                  <input
+                    id="audit-search"
+                    type="search"
+                    className="ca-input"
+                    value={auditQuery}
+                    onChange={(e) => setAuditQuery(e.target.value)}
+                    placeholder="Akteur, Aktion oder Ziel…"
+                  />
+                </div>
+              </div>
+              <div tabIndex={0} role="region" aria-label="Audit Events" className="table-wrapper">
+                <table className="table responsive-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">#</th>
+                      <th scope="col">Zeitpunkt</th>
+                      <th scope="col">Akteur</th>
+                      <th scope="col">Aktion</th>
+                      <th scope="col">Ziel</th>
+                      <th scope="col">Ergebnis</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredAudit.map((ev) => (
+                      <tr key={ev.seq}>
+                        <th scope="row">{ev.seq}</th>
+                        <td>{ev.timestamp}</td>
+                        <td><code>{ev.actor}</code></td>
+                        <td><code>{ev.action}</code></td>
+                        <td>{ev.target}</td>
+                        <td><span className="badge badge-ok">{ev.outcome}</span></td>
+                      </tr>
+                    ))}
+                    {filteredAudit.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="ca-empty-cell">
+                          {auditEvents.length === 0
+                            ? "Keine Audit-Events geladen (Bearer Token mit audit:read oder domain:admin erforderlich)."
+                            : "Keine passenden Audit-Events gefunden."}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Zeitpunkt</th>
-                  <th>Akteur</th>
-                  <th>Aktion</th>
-                  <th>Ziel</th>
-                  <th>Ergebnis</th>
-                </tr>
-              </thead>
-              <tbody>
-                {auditEvents.map((ev) => (
-                  <tr key={ev.seq}>
-                    <td>{ev.seq}</td>
-                    <td>{ev.timestamp}</td>
-                    <td><code>{ev.actor}</code></td>
-                    <td><code>{ev.action}</code></td>
-                    <td>{ev.target}</td>
-                    <td><span className="badge badge-ok">{ev.outcome}</span></td>
-                  </tr>
-                ))}
-                {auditEvents.length === 0 && (
-                  <tr>
-                    <td colSpan={6} style={{ color: "var(--muted)" }}>
-                      Keine Audit-Events geladen (Bearer Token mit <code>audit:read</code> oder <code>domain:admin</code> erforderlich).
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
+          );
+        })()}
 
         {tab === "explorer" && (
           <div className="card">
