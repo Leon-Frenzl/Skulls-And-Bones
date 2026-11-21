@@ -365,11 +365,29 @@ fn real_main() {
                     dry_run,
                 );
             }
-            ServerAction::Backup { target, out } => {
-                commands::fleet::handle_server_backup(target.as_deref(), out.as_deref());
+            ServerAction::Backup {
+                target,
+                out,
+                encrypt,
+                password,
+            } => {
+                commands::fleet::handle_server_backup(
+                    target.as_deref(),
+                    out.as_deref(),
+                    encrypt,
+                    password.as_deref(),
+                );
             }
-            ServerAction::Restore { input, target } => {
-                commands::fleet::handle_server_restore(&input, target.as_deref());
+            ServerAction::Restore {
+                input,
+                target,
+                password,
+            } => {
+                commands::fleet::handle_server_restore(
+                    &input,
+                    target.as_deref(),
+                    password.as_deref(),
+                );
             }
         },
         Some(Commands::Join {

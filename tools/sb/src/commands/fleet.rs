@@ -2029,6 +2029,35 @@ mod tests {
         );
         let _ = fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn test_encrypted_dc_backup_and_restore_roundtrip() {
+        let tmp = std::env::temp_dir().join(format!("sb_enc_backup_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let src_home = tmp.join("src_sb");
+        let dst_home = tmp.join("dst_sb");
+        fs::create_dir_all(src_home.join("auth")).unwrap();
+        fs::write(src_home.join("auth").join("auth.pub"), b"PUBKEY").unwrap();
+
+        let tar_path = tmp.join("dc-backup.tar.gz");
+        let enc_path = tmp.join("dc-backup.sbbk");
+        let dec_path = tmp.join("dc-backup-dec.tar.gz");
+        create_dc_backup_archive(&src_home, &tar_path).unwrap();
+        encrypt_backup_file(&tar_path, &enc_path, "strong-backup-pass").unwrap();
+        assert!(is_encrypted_backup_file(&enc_path));
+
+        // Falsches Passwort muss fehlschlagen
+        assert!(decrypt_backup_file(&enc_path, &dec_path, "wrong-pass").is_err());
+
+        // Richtiges Passwort muss exakt wiederherstellen
+        decrypt_backup_file(&enc_path, &dec_path, "strong-backup-pass").unwrap();
+        restore_dc_backup_archive(&dec_path, &dst_home).unwrap();
+        assert_eq!(
+            fs::read_to_string(dst_home.join("auth").join("auth.pub")).unwrap(),
+            "PUBKEY"
+        );
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }
 
 /// Creates a `.tar.gz` backup of `domain`, `ca`, and `auth` inside `sb_home` and returns its SHA-256 hex digest.
@@ -2116,15 +2145,151 @@ pub fn restore_dc_backup_archive(archive_path: &std::path::Path, sb_home: &std::
     Ok(())
 }
 
-pub fn handle_server_backup(target: Option<&str>, out: Option<&std::path::Path>) {
+const BACKUP_MAGIC_V1: &[u8; 5] = b"SBBK1";
+
+fn is_encrypted_backup_file(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = fs::File::open(path) else {
+        return false;
+    };
+    let mut magic = [0u8; 5];
+    f.read_exact(&mut magic).is_ok() && &magic == BACKUP_MAGIC_V1
+}
+
+// [SECURITY-HYPOTHESIS] CWE-327 / CWE-326: Weak KDF or nonce reuse when encrypting DC backup archives.
+// [SECURITY-VERIFIED] Derives 256-bit key via Argon2id with random 16-byte salt, encrypts with AES-256-GCM and fresh 12-byte nonce, and zeroizes key material.
+fn encrypt_backup_file(
+    plain_path: &std::path::Path,
+    enc_path: &std::path::Path,
+    passphrase: &str,
+) -> Result<(), String> {
+    use aes_gcm::{
+        aead::{Aead, KeyInit},
+        Aes256Gcm, Nonce,
+    };
+    use argon2::Argon2;
+    use rand::RngCore;
+    use zeroize::Zeroizing;
+
+    if passphrase.is_empty() {
+        return Err("Backup-Passphrase darf nicht leer sein.".into());
+    }
+    let plaintext = fs::read(plain_path).map_err(|e| format!("Backup-Archiv lesen fehlgeschlagen: {e}"))?;
+    let mut salt = [0u8; 16];
+    let mut nonce_bytes = [0u8; 12];
+    rand::thread_rng().fill_bytes(&mut salt);
+    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+
+    let mut key = Zeroizing::new([0u8; 32]);
+    Argon2::default()
+        .hash_password_into(passphrase.as_bytes(), &salt, key.as_mut())
+        .map_err(|e| format!("Argon2id Key-Ableitung fehlgeschlagen: {e}"))?;
+
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref())
+        .map_err(|e| format!("AES-256-GCM Init fehlgeschlagen: {e}"))?;
+    let ciphertext = cipher
+        .encrypt(Nonce::from_slice(&nonce_bytes), plaintext.as_slice())
+        .map_err(|e| format!("Backup-Verschlüsselung fehlgeschlagen: {e}"))?;
+
+    let mut out = Vec::with_capacity(5 + 16 + 12 + ciphertext.len());
+    out.extend_from_slice(BACKUP_MAGIC_V1);
+    out.extend_from_slice(&salt);
+    out.extend_from_slice(&nonce_bytes);
+    out.extend_from_slice(&ciphertext);
+    fs::write(enc_path, out).map_err(|e| format!("Verschlüsseltes Backup schreiben fehlgeschlagen: {e}"))?;
+    Ok(())
+}
+
+fn decrypt_backup_file(
+    enc_path: &std::path::Path,
+    plain_path: &std::path::Path,
+    passphrase: &str,
+) -> Result<(), String> {
+    use aes_gcm::{
+        aead::{Aead, KeyInit},
+        Aes256Gcm, Nonce,
+    };
+    use argon2::Argon2;
+    use zeroize::Zeroizing;
+
+    let data = fs::read(enc_path).map_err(|e| format!("Backup lesen fehlgeschlagen: {e}"))?;
+    if data.len() < 5 + 16 + 12 + 16 || &data[..5] != BACKUP_MAGIC_V1 {
+        return Err("Ungültiges verschlüsseltes Backup-Format (erwartet SBBK1).".into());
+    }
+    let salt = &data[5..21];
+    let nonce_bytes = &data[21..33];
+    let ciphertext = &data[33..];
+
+    let mut key = Zeroizing::new([0u8; 32]);
+    Argon2::default()
+        .hash_password_into(passphrase.as_bytes(), salt, key.as_mut())
+        .map_err(|e| format!("Argon2id Key-Ableitung fehlgeschlagen: {e}"))?;
+
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref())
+        .map_err(|e| format!("AES-256-GCM Init fehlgeschlagen: {e}"))?;
+    let plaintext = cipher
+        .decrypt(Nonce::from_slice(nonce_bytes), ciphertext)
+        .map_err(|_| "Entschlüsselung fehlgeschlagen (falsches Passwort oder beschädigte Datei).".to_string())?;
+
+    fs::write(plain_path, plaintext).map_err(|e| format!("Entschlüsseltes Archiv schreiben fehlgeschlagen: {e}"))?;
+    Ok(())
+}
+
+fn resolve_backup_passphrase(cli_password: Option<&str>, prompt_label: &str) -> Result<String, String> {
+    if let Some(pw) = cli_password.filter(|s| !s.is_empty()) {
+        return Ok(pw.to_string());
+    }
+    if let Ok(env_pw) = std::env::var("SB_BACKUP_PASSWORD") {
+        if !env_pw.is_empty() {
+            return Ok(env_pw);
+        }
+    }
+    eprint!("{prompt_label}: ");
+    let mut input = String::new();
+    std::io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| format!("Passwort-Eingabe fehlgeschlagen: {e}"))?;
+    let trimmed = input.trim_end_matches(&['\r', '\n'][..]).to_string();
+    if trimmed.is_empty() {
+        return Err("Keine Passphrase angegeben (nutze --password oder SB_BACKUP_PASSWORD).".into());
+    }
+    Ok(trimmed)
+}
+
+pub fn handle_server_backup(
+    target: Option<&str>,
+    out: Option<&std::path::Path>,
+    encrypt: bool,
+    password: Option<&str>,
+) {
     print_banner();
+    let do_encrypt = encrypt || password.is_some();
+    let ext = if do_encrypt { "sbbk" } else { "tar.gz" };
     let default_name = format!(
-        "sb-dc-backup-{}.tar.gz",
+        "sb-dc-backup-{}.{ext}",
         chrono::Utc::now().format("%Y%m%d-%H%M%S")
     );
     let out_path = out
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(&default_name));
+
+    let passphrase = if do_encrypt {
+        match resolve_backup_passphrase(password, "Backup-Verschlüsselungspasswort") {
+            Ok(p) => Some(p),
+            Err(e) => {
+                sb_core::logfmt::error("FLEET_BACKUP_PASS", "sb::fleet", "Passphrase fehlt", &[("err", &e)]);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+
+    let staging_tar = if do_encrypt {
+        std::env::temp_dir().join(format!("sb-dc-backup-{}.tar.gz", std::process::id()))
+    } else {
+        out_path.clone()
+    };
 
     if let Some(remote) = target {
         let _ = crate::commands::ssh::ensure_ephemeral_ssh_user_cert();
@@ -2145,7 +2310,7 @@ pub fn handle_server_backup(target: Option<&str>, out: Option<&std::path::Path>)
             sb_core::logfmt::error("FLEET_BACKUP_REMOTE_TAR", "sb::fleet", "Remote-Backup fehlgeschlagen", &[("target", remote)]);
             std::process::exit(1);
         }
-        let out_str = out_path.to_string_lossy().to_string();
+        let out_str = staging_tar.to_string_lossy().to_string();
         let (scp_bin, scp_args) =
             match sb_core::ssh_transport::build_scp_pull_args(remote, remote_tmp, Some(&out_str)) {
                 Ok(v) => v,
@@ -2158,24 +2323,45 @@ pub fn handle_server_backup(target: Option<&str>, out: Option<&std::path::Path>)
         let _ = sb_core::ssh_transport::build_ssh_exec_args(remote, "rm -f /tmp/sb-dc-backup.tar.gz")
             .map(|(b, a)| Command::new(b).args(a).status());
         if !matches!(scp_status, Ok(s) if s.success()) {
+            let _ = fs::remove_file(&staging_tar);
             sb_core::logfmt::error("FLEET_BACKUP_SCP_PULL", "sb::fleet", "Backup-Download fehlgeschlagen", &[("target", remote)]);
             std::process::exit(1);
         }
+        if let Some(ref pw) = passphrase {
+            if let Err(e) = encrypt_backup_file(&staging_tar, &out_path, pw) {
+                let _ = fs::remove_file(&staging_tar);
+                sb_core::logfmt::error("FLEET_BACKUP_ENC", "sb::fleet", "Backup-Verschlüsselung fehlgeschlagen", &[("err", &e)]);
+                std::process::exit(1);
+            }
+            let _ = fs::remove_file(&staging_tar);
+        }
         println!(
-            "  {} Remote-Backup von '{}' gespeichert: {}",
+            "  {} Remote-Backup von '{}' gespeichert{}: {}",
             "✓".bright_green().bold(),
             remote,
+            if do_encrypt { " (AES-256-GCM verschlüsselt)" } else { "" },
             out_path.display()
         );
     } else {
-        match create_dc_backup_archive(&sb_core::paths::sb_home(), &out_path) {
+        match create_dc_backup_archive(&sb_core::paths::sb_home(), &staging_tar) {
             Ok(sha) => {
+                if let Some(ref pw) = passphrase {
+                    if let Err(e) = encrypt_backup_file(&staging_tar, &out_path, pw) {
+                        let _ = fs::remove_file(&staging_tar);
+                        sb_core::logfmt::error("FLEET_BACKUP_ENC", "sb::fleet", "Backup-Verschlüsselung fehlgeschlagen", &[("err", &e)]);
+                        std::process::exit(1);
+                    }
+                    let _ = fs::remove_file(&staging_tar);
+                }
                 println!(
-                    "  {} Lokales DC-Backup erstellt: {}",
+                    "  {} Lokales DC-Backup erstellt{}: {}",
                     "✓".bright_green().bold(),
+                    if do_encrypt { " (AES-256-GCM verschlüsselt)" } else { "" },
                     out_path.display()
                 );
-                println!("  ► SHA-256: {}", sha.bright_black());
+                if !do_encrypt {
+                    println!("  ► SHA-256: {}", sha.bright_black());
+                }
             }
             Err(e) => {
                 sb_core::logfmt::error("FLEET_BACKUP_LOCAL", "sb::fleet", "Lokales Backup fehlgeschlagen", &[("err", &e)]);
@@ -2185,7 +2371,11 @@ pub fn handle_server_backup(target: Option<&str>, out: Option<&std::path::Path>)
     }
 }
 
-pub fn handle_server_restore(input: &std::path::Path, target: Option<&str>) {
+pub fn handle_server_restore(
+    input: &std::path::Path,
+    target: Option<&str>,
+    password: Option<&str>,
+) {
     print_banner();
     if !input.is_file() {
         sb_core::logfmt::error(
@@ -2197,23 +2387,47 @@ pub fn handle_server_restore(input: &std::path::Path, target: Option<&str>) {
         std::process::exit(1);
     }
 
+    let encrypted = is_encrypted_backup_file(input);
+    let mut temp_plain: Option<PathBuf> = None;
+    let effective_tar = if encrypted {
+        let pw = match resolve_backup_passphrase(password, "Backup-Entschlüsselungspasswort") {
+            Ok(p) => p,
+            Err(e) => {
+                sb_core::logfmt::error("FLEET_RESTORE_PASS", "sb::fleet", "Passphrase fehlt", &[("err", &e)]);
+                std::process::exit(1);
+            }
+        };
+        let dec_path = std::env::temp_dir().join(format!("sb-dc-restore-{}.tar.gz", std::process::id()));
+        if let Err(e) = decrypt_backup_file(input, &dec_path, &pw) {
+            sb_core::logfmt::error("FLEET_RESTORE_DEC", "sb::fleet", "Entschlüsselung fehlgeschlagen", &[("err", &e)]);
+            std::process::exit(1);
+        }
+        temp_plain = Some(dec_path.clone());
+        dec_path
+    } else {
+        input.to_path_buf()
+    };
+
     if let Some(remote) = target {
         let _ = crate::commands::ssh::ensure_ephemeral_ssh_user_cert();
         let _ = sb_core::ssh_transport::ensure_sovereign_ssh_config();
-        let in_str = input.to_string_lossy().to_string();
+        let in_str = effective_tar.to_string_lossy().to_string();
         let remote_tmp = "/tmp/sb-dc-restore.tar.gz";
         let (scp_bin, scp_args) =
             match sb_core::ssh_transport::build_scp_push_args(remote, &in_str, Some(remote_tmp)) {
                 Ok(v) => v,
                 Err(e) => {
+                    if let Some(ref p) = temp_plain { let _ = fs::remove_file(p); }
                     sb_core::logfmt::error("FLEET_RESTORE_SCP_ARGS", "sb::fleet", "SCP-Push fehlgeschlagen", &[("err", &e)]);
                     std::process::exit(1);
                 }
             };
         if !matches!(Command::new(&scp_bin).args(&scp_args).status(), Ok(s) if s.success()) {
+            if let Some(ref p) = temp_plain { let _ = fs::remove_file(p); }
             sb_core::logfmt::error("FLEET_RESTORE_SCP_PUSH", "sb::fleet", "Backup-Upload fehlgeschlagen", &[("target", remote)]);
             std::process::exit(1);
         }
+        if let Some(ref p) = temp_plain { let _ = fs::remove_file(p); }
         let remote_cmd = "set -euo pipefail; mkdir -p \"$HOME/.sb\"; tar -xzf /tmp/sb-dc-restore.tar.gz -C \"$HOME/.sb\"; rm -f /tmp/sb-dc-restore.tar.gz; systemctl restart sb-dc.service || true";
         let (ssh_bin, ssh_args) = match sb_core::ssh_transport::build_ssh_exec_args(remote, remote_cmd) {
             Ok(v) => v,
@@ -2232,16 +2446,20 @@ pub fn handle_server_restore(input: &std::path::Path, target: Option<&str>) {
             input.display(),
             remote
         );
-    } else if let Err(e) = restore_dc_backup_archive(input, &sb_core::paths::sb_home()) {
-        sb_core::logfmt::error("FLEET_RESTORE_LOCAL", "sb::fleet", "Lokaler Restore fehlgeschlagen", &[("err", &e)]);
-        std::process::exit(1);
     } else {
-        println!(
-            "  {} Backup '{}' lokal nach {} wiederhergestellt.",
-            "✓".bright_green().bold(),
-            input.display(),
-            sb_core::paths::sb_home().display()
-        );
+        let res = restore_dc_backup_archive(&effective_tar, &sb_core::paths::sb_home());
+        if let Some(ref p) = temp_plain { let _ = fs::remove_file(p); }
+        if let Err(e) = res {
+            sb_core::logfmt::error("FLEET_RESTORE_LOCAL", "sb::fleet", "Lokaler Restore fehlgeschlagen", &[("err", &e)]);
+            std::process::exit(1);
+        } else {
+            println!(
+                "  {} Backup '{}' lokal nach {} wiederhergestellt.",
+                "✓".bright_green().bold(),
+                input.display(),
+                sb_core::paths::sb_home().display()
+            );
+        }
     }
 }
 

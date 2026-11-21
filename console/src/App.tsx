@@ -156,8 +156,16 @@ export default function App() {
   const [elevOut, setElevOut] = useState<string>("");
   const [loginCode, setLoginCode] = useState<string>("");
   const [ipamData, setIpamData] = useState<Record<string, unknown> | null>(null);
+  const [dnsNewType, setDnsNewType] = useState<"A" | "AAAA" | "CNAME" | "TXT" | "SRV">("A");
   const [dnsNewDomain, setDnsNewDomain] = useState<string>("");
   const [dnsNewIp, setDnsNewIp] = useState<string>("");
+  const [backupStatus, setBackupStatus] = useState<{
+    backup_count: number;
+    last_backup_at: string | null;
+    latest_path: string | null;
+    size_bytes: number;
+    encrypted: boolean;
+  } | null>(null);
   const [gpoId, setGpoId] = useState<string>("baseline-ssh");
   const [gpoName, setGpoName] = useState<string>("SSH Hardening");
   const [gpoSsh, setGpoSsh] = useState<boolean>(true);
@@ -517,10 +525,11 @@ export default function App() {
         const uJson = await uRes.json();
         setUsers(Array.isArray(uJson.users) ? uJson.users : []);
       }
-      const [ouRes, grpRes, elRes] = await Promise.all([
+      const [ouRes, grpRes, elRes, bkRes] = await Promise.all([
         fetch("/v1/ous", { headers }),
         fetch("/v1/groups", { headers }),
         fetch("/v1/me/elevations", { headers }).catch(() => null),
+        fetch("/v1/dc/backup-status", { headers }).catch(() => null),
       ]);
       if (ouRes.ok) {
         const ouJson = await ouRes.json();
@@ -533,6 +542,9 @@ export default function App() {
       if (elRes && elRes.ok) {
         const elJson = await elRes.json();
         setElevations(Array.isArray(elJson.elevations) ? elJson.elevations : []);
+      }
+      if (bkRes && bkRes.ok) {
+        setBackupStatus(await bkRes.json());
       }
       if (aRes.ok) {
         const aJson = await aRes.json();
@@ -772,6 +784,23 @@ export default function App() {
                     {refreshToken && autoRenew ? "Auto-Renewal EIN" : "Manuell"}
                   </div>
                 </button>
+                <div className="card">
+                  <div className="card-title">DC-Backup</div>
+                  <div className="card-value">
+                    {backupStatus && backupStatus.backup_count > 0 ? (
+                      <span className="badge badge-ok">
+                        {backupStatus.backup_count} ARCHIV(E){backupStatus.encrypted ? " · SBBK1" : ""}
+                      </span>
+                    ) : (
+                      <span className="badge badge-warn">KEIN BACKUP</span>
+                    )}
+                  </div>
+                  <div className="ca-muted">
+                    {backupStatus?.last_backup_at
+                      ? `Letztes: ${new Date(backupStatus.last_backup_at).toLocaleString("de-DE")}`
+                      : "Täglicher Timer oder 'sb server backup --encrypt'"}
+                  </div>
+                </div>
               </div>
 
               {/* Handlungsbedarf & Domänen-Synergien */}
@@ -2198,39 +2227,110 @@ export default function App() {
                 routes={routes as ProxyRouteItem[]}
                 knownDnsDomains={knownDnsDomains}
                 onOpenDns={() => setNetworkSub("dns")}
+                onCreateRoute={async (payload) => {
+                  const res = await fetch("/v1/proxy/routes", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", ...authHeaders() },
+                    body: JSON.stringify(payload),
+                  });
+                  if (res.ok) {
+                    pushNotice("network", buildNotice("success", "Proxy-Route erstellt", `${payload.domain} wurde registriert.`));
+                    await refreshAll();
+                  } else {
+                    await pushHttpError("network", "Proxy-Route erstellen", res);
+                  }
+                }}
+                onToggleRouteStatus={async (id, active) => {
+                  const res = await fetch(`/v1/proxy/routes/${encodeURIComponent(id)}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json", ...authHeaders() },
+                    body: JSON.stringify({ active }),
+                  });
+                  if (res.ok) {
+                    pushNotice("network", buildNotice("success", active ? "Route aktiviert" : "Route pausiert", `Status für '${id}' aktualisiert.`));
+                    await refreshAll();
+                  } else {
+                    await pushHttpError("network", "Proxy-Status ändern", res);
+                  }
+                }}
+                onDeleteRoute={async (id) => {
+                  const res = await fetch(`/v1/proxy/routes/${encodeURIComponent(id)}`, {
+                    method: "DELETE",
+                    headers: { ...authHeaders() },
+                  });
+                  if (res.ok) {
+                    pushNotice("network", buildNotice("success", "Proxy-Route gelöscht", `Route '${id}' wurde entfernt.`));
+                    await refreshAll();
+                  } else {
+                    await pushHttpError("network", "Proxy-Route löschen", res);
+                  }
+                }}
               />
             )}
 
             {networkSub === "dns" && (
               <>
                 <div className="card" style={{ marginBottom: 16 }}>
-                  <div className="card-title">DNS A-Record hinzufügen</div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div className="card-title">DNS-Eintrag hinzufügen</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <select
+                      aria-label="DNS Record Typ"
+                      className="ca-select"
+                      value={dnsNewType}
+                      onChange={(e) => setDnsNewType(e.target.value as "A" | "AAAA" | "CNAME" | "TXT" | "SRV")}
+                    >
+                      <option value="A">A</option>
+                      <option value="AAAA">AAAA</option>
+                      <option value="CNAME">CNAME</option>
+                      <option value="TXT">TXT</option>
+                      <option value="SRV">SRV</option>
+                    </select>
                     <input className="input" placeholder="app.corp.eu" value={dnsNewDomain} onChange={(e) => setDnsNewDomain(e.target.value)} />
-                    <input className="input" placeholder="10.42.0.50" value={dnsNewIp} onChange={(e) => setDnsNewIp(e.target.value)} />
+                    <input
+                      className="input"
+                      placeholder={dnsNewType === "A" ? "10.42.0.50" : dnsNewType === "AAAA" ? "fd00::1" : "Zielwert"}
+                      value={dnsNewIp}
+                      onChange={(e) => setDnsNewIp(e.target.value)}
+                    />
                     <button
                       className="btn btn-primary"
                       onClick={async () => {
                         const res = await fetch("/v1/dns/records", {
                           method: "POST",
                           headers: { "Content-Type": "application/json", ...authHeaders() },
-                          body: JSON.stringify({ domain: dnsNewDomain, ip: dnsNewIp }),
+                          body: JSON.stringify({ type: dnsNewType, domain: dnsNewDomain, value: dnsNewIp }),
                         });
                         if (res.ok) {
                           setDnsNewDomain("");
                           setDnsNewIp("");
-                          pushNotice("network", buildNotice("success", "DNS A-Record gespeichert", `${dnsNewDomain} wurde registriert.`));
+                          pushNotice("network", buildNotice("success", `DNS ${dnsNewType}-Record gespeichert`, `${dnsNewDomain} wurde registriert.`));
                           await refreshAll();
                         } else {
                           await pushHttpError("network", "DNS-Eintrag speichern", res);
                         }
                       }}
                     >
-                      A-Record speichern
+                      Eintrag speichern
                     </button>
                   </div>
                 </div>
-                <DnsIpamPanel dnsRecords={dnsRecords} ipamData={ipamData} />
+                <DnsIpamPanel
+                  dnsRecords={dnsRecords}
+                  ipamData={ipamData}
+                  onDeleteRecord={async (type, domain) => {
+                    const res = await fetch("/v1/dns/records", {
+                      method: "DELETE",
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
+                      body: JSON.stringify({ type, domain }),
+                    });
+                    if (res.ok) {
+                      pushNotice("network", buildNotice("success", "DNS-Eintrag gelöscht", `${type} ${domain} wurde entfernt.`));
+                      await refreshAll();
+                    } else {
+                      await pushHttpError("network", "DNS-Eintrag löschen", res);
+                    }
+                  }}
+                />
               </>
             )}
           </>

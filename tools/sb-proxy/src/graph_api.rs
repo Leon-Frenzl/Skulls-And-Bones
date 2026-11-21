@@ -143,32 +143,9 @@ async fn handle_graph_request(
     }
 
     if method == Method::POST && uri_path == "/v1/dns/records" {
-        let Some(ref ver) = verifier else {
-            return Ok(json_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                r#"{"error":"sb-auth verifier not configured"}"#,
-            ));
-        };
-        let Some(token) = auth_header
-            .as_deref()
-            .and_then(|h| {
-                h.strip_prefix("Bearer ")
-                    .or_else(|| h.strip_prefix("bearer "))
-            })
-            .map(str::trim)
-        else {
-            return Ok(json_response(
-                StatusCode::UNAUTHORIZED,
-                r#"{"error":"missing bearer token"}"#,
-            ));
-        };
-        let claims = match ver.verify_token(token) {
+        let claims = match require_auth_claims(verifier.as_deref(), auth_header.as_deref()) {
             Ok(c) => c,
-            Err(e) => {
-                let msg = serde_json::json!({ "error": format!("authentication failed: {e}") })
-                    .to_string();
-                return Ok(json_response(StatusCode::UNAUTHORIZED, &msg));
-            }
+            Err(resp) => return Ok(resp),
         };
         if !claims
             .capabilities
@@ -185,27 +162,87 @@ async fn handle_graph_request(
             Err(resp) => return Ok(resp),
         };
         let payload: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or_default();
+        let rec_type = payload["type"]
+            .as_str()
+            .unwrap_or("A")
+            .trim()
+            .to_ascii_uppercase();
         let domain = payload["domain"].as_str().unwrap_or("");
-        let ip_str = payload["ip"].as_str().unwrap_or("");
+        let value_raw = payload["value"]
+            .as_str()
+            .or_else(|| payload["ip"].as_str())
+            .unwrap_or("")
+            .trim();
         let Ok(clean_domain) = sb_core::domain::validate_domain_name(domain) else {
             return Ok(json_response(
                 StatusCode::BAD_REQUEST,
                 r#"{"error":"invalid domain name"}"#,
             ));
         };
-        let Ok(ip) = ip_str.parse::<std::net::Ipv4Addr>() else {
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                r#"{"error":"invalid IPv4 address"}"#,
-            ));
+
+        // [SECURITY-HYPOTHESIS] CWE-20: Malformed DNS record values or unsupported record types could corrupt records.json.
+        // [SECURITY-VERIFIED] Restricts record type to allowlist (A, AAAA, CNAME, TXT, SRV) and validates IPv4/IPv6/domain/length.
+        let (section_key, stored_val) = match rec_type.as_str() {
+            "A" => {
+                let Ok(ip) = value_raw.parse::<std::net::Ipv4Addr>() else {
+                    return Ok(json_response(
+                        StatusCode::BAD_REQUEST,
+                        r#"{"error":"invalid IPv4 address"}"#,
+                    ));
+                };
+                ("a", serde_json::Value::String(ip.to_string()))
+            }
+            "AAAA" => {
+                let Ok(ip) = value_raw.parse::<std::net::Ipv6Addr>() else {
+                    return Ok(json_response(
+                        StatusCode::BAD_REQUEST,
+                        r#"{"error":"invalid IPv6 address"}"#,
+                    ));
+                };
+                ("aaaa", serde_json::Value::String(ip.to_string()))
+            }
+            "CNAME" => {
+                let Ok(target) = sb_core::domain::validate_domain_name(value_raw) else {
+                    return Ok(json_response(
+                        StatusCode::BAD_REQUEST,
+                        r#"{"error":"invalid CNAME target domain"}"#,
+                    ));
+                };
+                ("cname", serde_json::Value::String(target))
+            }
+            "TXT" => {
+                if value_raw.is_empty() || value_raw.len() > 512 || value_raw.chars().any(|c| c.is_control()) {
+                    return Ok(json_response(
+                        StatusCode::BAD_REQUEST,
+                        r#"{"error":"invalid TXT value"}"#,
+                    ));
+                }
+                ("txt", serde_json::Value::String(value_raw.to_string()))
+            }
+            "SRV" => {
+                if value_raw.is_empty() || value_raw.len() > 512 || value_raw.chars().any(|c| c.is_control()) {
+                    return Ok(json_response(
+                        StatusCode::BAD_REQUEST,
+                        r#"{"error":"invalid SRV value"}"#,
+                    ));
+                }
+                ("srv", serde_json::Value::String(value_raw.to_string()))
+            }
+            _ => {
+                return Ok(json_response(
+                    StatusCode::BAD_REQUEST,
+                    r#"{"error":"unsupported DNS record type (allowed: A, AAAA, CNAME, TXT, SRV)"}"#,
+                ));
+            }
         };
+
         let dns_path = sb_core::paths::sb_home().join("dns").join("records.json");
         let mut rec = read_dns_records_json();
-        if let Some(a_map) = rec["a"].as_object_mut() {
-            a_map.insert(
-                clean_domain.clone(),
-                serde_json::Value::String(ip.to_string()),
-            );
+        if !rec[section_key].is_object() {
+            rec[section_key] = serde_json::json!({});
+        }
+        if let Some(map) = rec[section_key].as_object_mut() {
+            map.insert(clean_domain.clone(), stored_val.clone());
         }
         if let Some(parent) = dns_path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -214,7 +251,75 @@ async fn handle_graph_request(
             &dns_path,
             serde_json::to_string_pretty(&rec).unwrap_or_default(),
         );
-        let out = serde_json::json!({ "added": { "domain": clean_domain, "type": "A", "ip": ip.to_string() } }).to_string();
+        let out = serde_json::json!({
+            "added": { "domain": clean_domain, "type": rec_type, "value": stored_val }
+        })
+        .to_string();
+        return Ok(json_response(StatusCode::OK, &out));
+    }
+
+    if method == Method::DELETE && uri_path == "/v1/dns/records" {
+        let claims = match require_auth_claims(verifier.as_deref(), auth_header.as_deref()) {
+            Ok(c) => c,
+            Err(resp) => return Ok(resp),
+        };
+        if !claims
+            .capabilities
+            .iter()
+            .any(|c| c == "dns:write" || c == "domain:admin")
+        {
+            return Ok(json_response(
+                StatusCode::FORBIDDEN,
+                r#"{"error":"token lacks dns:write or domain:admin"}"#,
+            ));
+        }
+        let body_bytes = match collect_bounded_body(req.into_body()).await {
+            Ok(b) => b,
+            Err(resp) => return Ok(resp),
+        };
+        let payload: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or_default();
+        let rec_type = payload["type"]
+            .as_str()
+            .unwrap_or("A")
+            .trim()
+            .to_ascii_uppercase();
+        let domain = payload["domain"].as_str().unwrap_or("");
+        let Ok(clean_domain) = sb_core::domain::validate_domain_name(domain) else {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                r#"{"error":"invalid domain name"}"#,
+            ));
+        };
+        let section_key = match rec_type.as_str() {
+            "A" => "a",
+            "AAAA" => "aaaa",
+            "CNAME" => "cname",
+            "TXT" => "txt",
+            "SRV" => "srv",
+            _ => {
+                return Ok(json_response(
+                    StatusCode::BAD_REQUEST,
+                    r#"{"error":"unsupported DNS record type"}"#,
+                ));
+            }
+        };
+        let dns_path = sb_core::paths::sb_home().join("dns").join("records.json");
+        let mut rec = read_dns_records_json();
+        let removed = rec[section_key]
+            .as_object_mut()
+            .and_then(|map| map.remove(&clean_domain))
+            .is_some();
+        if !removed {
+            return Ok(json_response(
+                StatusCode::NOT_FOUND,
+                r#"{"error":"DNS record not found"}"#,
+            ));
+        }
+        let _ = std::fs::write(
+            &dns_path,
+            serde_json::to_string_pretty(&rec).unwrap_or_default(),
+        );
+        let out = serde_json::json!({ "deleted": { "domain": clean_domain, "type": rec_type } }).to_string();
         return Ok(json_response(StatusCode::OK, &out));
     }
 
@@ -233,6 +338,161 @@ async fn handle_graph_request(
         let routes = ProxyConfig::load_spaces();
         let body = serde_json::json!({ "routes": routes }).to_string();
         return Ok(json_response(StatusCode::OK, &body));
+    }
+
+    if method == Method::POST && uri_path == "/v1/proxy/routes" {
+        let claims = match require_auth_claims(verifier.as_deref(), auth_header.as_deref()) {
+            Ok(c) => c,
+            Err(resp) => return Ok(resp),
+        };
+        if !claims
+            .capabilities
+            .iter()
+            .any(|c| c == "proxy:write" || c == "domain:admin")
+        {
+            return Ok(json_response(
+                StatusCode::FORBIDDEN,
+                r#"{"error":"token lacks proxy:write or domain:admin"}"#,
+            ));
+        }
+        let body_bytes = match collect_bounded_body(req.into_body()).await {
+            Ok(b) => b,
+            Err(resp) => return Ok(resp),
+        };
+        let payload: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or_default();
+        let domain = payload["domain"].as_str().unwrap_or("").trim();
+        let node_callsign = payload["node_callsign"]
+            .as_str()
+            .unwrap_or("local-dc")
+            .trim();
+        let is_tunnel = payload["is_tunnel"].as_bool().unwrap_or(false);
+        let target_port = payload["target_port"].as_u64().unwrap_or(0) as u16;
+        let res = if is_tunnel {
+            ProxyConfig::add_tunnel_route(domain, node_callsign)
+        } else {
+            ProxyConfig::add_route(domain, target_port, node_callsign)
+        };
+        return match res {
+            Ok(space) => Ok(json_response(
+                StatusCode::OK,
+                &serde_json::json!({ "route": space }).to_string(),
+            )),
+            Err(e) => Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({ "error": e }).to_string(),
+            )),
+        };
+    }
+
+    if method == Method::PATCH && uri_path.starts_with("/v1/proxy/routes/") {
+        let claims = match require_auth_claims(verifier.as_deref(), auth_header.as_deref()) {
+            Ok(c) => c,
+            Err(resp) => return Ok(resp),
+        };
+        if !claims
+            .capabilities
+            .iter()
+            .any(|c| c == "proxy:write" || c == "domain:admin")
+        {
+            return Ok(json_response(
+                StatusCode::FORBIDDEN,
+                r#"{"error":"token lacks proxy:write or domain:admin"}"#,
+            ));
+        }
+        let route_id = uri_path.trim_start_matches("/v1/proxy/routes/").trim();
+        let body_bytes = match collect_bounded_body(req.into_body()).await {
+            Ok(b) => b,
+            Err(resp) => return Ok(resp),
+        };
+        let payload: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or_default();
+        let active = payload["active"].as_bool().unwrap_or(true);
+        return match ProxyConfig::set_status(route_id, active) {
+            Ok(status) => Ok(json_response(
+                StatusCode::OK,
+                &serde_json::json!({ "id": route_id, "status": status }).to_string(),
+            )),
+            Err(e) => Ok(json_response(
+                StatusCode::NOT_FOUND,
+                &serde_json::json!({ "error": e }).to_string(),
+            )),
+        };
+    }
+
+    if method == Method::DELETE && uri_path.starts_with("/v1/proxy/routes/") {
+        let claims = match require_auth_claims(verifier.as_deref(), auth_header.as_deref()) {
+            Ok(c) => c,
+            Err(resp) => return Ok(resp),
+        };
+        if !claims
+            .capabilities
+            .iter()
+            .any(|c| c == "proxy:write" || c == "domain:admin")
+        {
+            return Ok(json_response(
+                StatusCode::FORBIDDEN,
+                r#"{"error":"token lacks proxy:write or domain:admin"}"#,
+            ));
+        }
+        let route_id = uri_path.trim_start_matches("/v1/proxy/routes/").trim();
+        return match ProxyConfig::remove_route(route_id) {
+            Ok(_) => Ok(json_response(
+                StatusCode::OK,
+                &serde_json::json!({ "deleted": route_id }).to_string(),
+            )),
+            Err(e) => Ok(json_response(
+                StatusCode::NOT_FOUND,
+                &serde_json::json!({ "error": e }).to_string(),
+            )),
+        };
+    }
+
+    if method == Method::GET && uri_path == "/v1/dc/backup-status" {
+        if let Err(resp) = require_auth_claims(verifier.as_deref(), auth_header.as_deref()) {
+            return Ok(resp);
+        }
+        let body = read_backup_status_json().to_string();
+        return Ok(json_response(StatusCode::OK, &body));
+    }
+
+    // [SECURITY-HYPOTHESIS] CWE-22: Path traversal via `/v1/releases/../../etc/passwd`.
+    // [SECURITY-VERIFIED] Rejects slashes, `..`, and non-alphanumeric filenames; serves only files inside `sb_home()/releases`.
+    if method == Method::GET && uri_path.starts_with("/v1/releases/") {
+        let fname = uri_path.trim_start_matches("/v1/releases/");
+        let valid_name = !fname.is_empty()
+            && fname.len() <= 128
+            && !fname.contains("..")
+            && !fname.contains('/')
+            && !fname.contains('\\')
+            && fname
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'));
+        if !valid_name {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                r#"{"error":"invalid release filename"}"#,
+            ));
+        }
+        let path = sb_core::paths::sb_home().join("releases").join(fname);
+        let Ok(bytes) = std::fs::read(&path) else {
+            return Ok(json_response(
+                StatusCode::NOT_FOUND,
+                r#"{"error":"release artifact not found"}"#,
+            ));
+        };
+        let ctype = if fname.ends_with(".json") {
+            "application/json"
+        } else if fname.ends_with(".txt") || fname.ends_with(".ed25519") {
+            "text/plain; charset=utf-8"
+        } else {
+            "application/octet-stream"
+        };
+        let resp = Response::builder()
+            .status(StatusCode::OK)
+            .header(hyper::header::CONTENT_TYPE, ctype)
+            .header("X-Content-Type-Options", "nosniff")
+            .body(Full::new(Bytes::from(bytes)))
+            .unwrap();
+        return Ok(resp);
     }
 
     if method == Method::GET && uri_path == "/v1/ipam/subnets" {
@@ -696,6 +956,61 @@ fn read_ca_status_json() -> serde_json::Value {
     })
 }
 
+fn read_backup_status_json() -> serde_json::Value {
+    let dirs = [
+        std::path::PathBuf::from("/var/backups/sb-dc"),
+        sb_core::paths::sb_home().join("backups"),
+    ];
+    let mut latest: Option<(std::time::SystemTime, String, u64, bool)> = None;
+    let mut count = 0usize;
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !(name.ends_with(".tar.gz") || name.ends_with(".sbbk")) {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            count += 1;
+            let modified = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            let encrypted = name.ends_with(".sbbk");
+            if latest
+                .as_ref()
+                .map(|(t, _, _, _)| modified > *t)
+                .unwrap_or(true)
+            {
+                latest = Some((modified, path.display().to_string(), meta.len(), encrypted));
+            }
+        }
+    }
+    if let Some((modified, path, size_bytes, encrypted)) = latest {
+        let dt: chrono::DateTime<chrono::Utc> = modified.into();
+        serde_json::json!({
+            "backup_count": count,
+            "last_backup_at": dt.to_rfc3339(),
+            "latest_path": path,
+            "size_bytes": size_bytes,
+            "encrypted": encrypted,
+        })
+    } else {
+        serde_json::json!({
+            "backup_count": 0,
+            "last_backup_at": null,
+            "latest_path": null,
+            "size_bytes": 0,
+            "encrypted": false,
+        })
+    }
+}
+
 /// Builds the live OpenAPI 3.1.0 JSON specification for the Skulls & Bones Open Graph API.
 pub fn build_openapi_spec() -> serde_json::Value {
     let mut paths = serde_json::Map::new();
@@ -882,7 +1197,29 @@ pub fn build_openapi_spec() -> serde_json::Value {
         ),
         (
             "/v1/proxy/routes",
-            serde_json::json!({ "get": { "summary": "List active reverse-proxy routes" } }),
+            serde_json::json!({
+                "get": { "summary": "List active reverse-proxy routes" },
+                "post": { "summary": "Create a reverse-proxy or tunnel route" }
+            }),
+        ),
+        (
+            "/v1/proxy/routes/{id}",
+            serde_json::json!({
+                "patch": { "summary": "Pause or resume a reverse-proxy route" },
+                "delete": { "summary": "Remove a reverse-proxy route" }
+            }),
+        ),
+        (
+            "/v1/dc/backup-status",
+            serde_json::json!({ "get": { "summary": "Inspect latest DC backup status" } }),
+        ),
+        (
+            "/v1/auth/passkey/{id}",
+            serde_json::json!({ "delete": { "summary": "Remove a registered Passkey credential" } }),
+        ),
+        (
+            "/v1/releases/{filename}",
+            serde_json::json!({ "get": { "summary": "Download signed release artifact from DC mirror" } }),
         ),
         (
             "/v1/enrollments",

@@ -783,25 +783,37 @@ pub enum ServerAction {
         dry_run: bool,
     },
 
-    /// Sichert DC-Zustand (domain, ca, auth) lokal oder von einem Remote-Server in ein .tar.gz Archiv
+    /// Sichert DC-Zustand (domain, ca, auth) lokal oder von einem Remote-Server in ein Archiv (.tar.gz oder verschlüsselt .sbbk)
     Backup {
         /// Optionaler Zielserver via SSH (z. B. 'srv490042'; ohne Angabe lokal)
         #[arg(long)]
         target: Option<String>,
 
-        /// Ausgabedatei (Standard: sb-dc-backup-<timestamp>.tar.gz)
+        /// Ausgabedatei (Standard: sb-dc-backup-<timestamp>.tar.gz bzw. .sbbk)
         #[arg(short, long)]
         out: Option<PathBuf>,
+
+        /// Verschlüsselt das Backup mit Argon2id + AES-256-GCM (.sbbk)
+        #[arg(long)]
+        encrypt: bool,
+
+        /// Passwort für die Backup-Verschlüsselung (alternativ Env: SB_BACKUP_PASSWORD)
+        #[arg(long)]
+        password: Option<String>,
     },
 
-    /// Stellt einen DC-Zustand aus einem Backup-Archiv lokal oder auf einem Server wieder her
+    /// Stellt einen DC-Zustand aus einem Backup-Archiv (.tar.gz oder verschlüsselt .sbbk) lokal oder auf einem Server wieder her
     Restore {
-        /// Pfad zum Backup-Archiv (.tar.gz)
+        /// Pfad zum Backup-Archiv (.tar.gz oder .sbbk)
         #[arg(short, long)]
         input: PathBuf,
 
         /// Optionaler Zielserver via SSH (z. B. 'srv490042'; ohne Angabe lokal)
         #[arg(long)]
         target: Option<String>,
+
+        /// Passwort für verschlüsselte .sbbk Backups (alternativ Env: SB_BACKUP_PASSWORD)
+        #[arg(long)]
+        password: Option<String>,
     },
 }

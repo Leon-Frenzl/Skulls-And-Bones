@@ -60,6 +60,44 @@ export function PasskeyPanel({ authHeaders, onStatus }: PasskeyPanelProps) {
     }
   };
 
+  const handleDelete = async (cred: PasskeyCredentialSummary) => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/v1/auth/passkey/${encodeURIComponent(cred.credential_id_b64)}`, {
+        method: "DELETE",
+        headers: { ...authHeaders() },
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => "");
+        onStatus(false, "Passkey löschen fehlgeschlagen", msg || `HTTP ${res.status}`);
+        return;
+      }
+      const pkc = PublicKeyCredential as unknown as {
+        signalUnknownCredential?: (opts: { rpId: string; credentialId: string }) => Promise<void>;
+      };
+      if (typeof pkc?.signalUnknownCredential === "function" && cred.rp_id) {
+        try {
+          await pkc.signalUnknownCredential({
+            rpId: cred.rp_id,
+            credentialId: cred.credential_id_b64,
+          });
+        } catch {
+          // Best-effort browser credential signal
+        }
+      }
+      onStatus(true, "Passkey entfernt", `Passkey '${cred.label}' wurde gelöscht.`);
+      await loadPasskeys();
+    } catch (err) {
+      onStatus(
+        false,
+        "Passkey löschen",
+        err instanceof Error ? err.message : "Unbekannter Fehler"
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="card" style={{ marginBottom: 16 }}>
       <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -104,8 +142,18 @@ export function PasskeyPanel({ authHeaders, onStatus }: PasskeyPanelProps) {
               <span>
                 <strong>{pk.label}</strong> ({pk.rp_id})
               </span>
-              <span style={{ color: "var(--muted)" }}>
-                Zähler: {pk.sign_count} · Erstellt: {pk.created_at.slice(0, 10)}
+              <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ color: "var(--muted)" }}>
+                  Zähler: {pk.sign_count} · Erstellt: {pk.created_at.slice(0, 10)}
+                </span>
+                <button
+                  type="button"
+                  className="btn-secondary btn-compact"
+                  disabled={busy}
+                  onClick={() => void handleDelete(pk)}
+                >
+                  Löschen
+                </button>
               </span>
             </div>
           ))}

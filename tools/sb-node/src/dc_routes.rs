@@ -304,6 +304,46 @@ pub async fn handle_dc_extended_routes(
         return Ok(true);
     }
 
+    // [SECURITY-HYPOTHESIS] CWE-639 / CWE-284: Arbitrary user could delete another user's passkey credential ID.
+    // [SECURITY-VERIFIED] PasskeyStore::remove_for_user enforces ownership unless caller holds domain:admin.
+    if method == "DELETE" && path.starts_with("/v1/auth/passkey/") {
+        let claims = match verify_bearer(header_lines) {
+            Ok(c) => c,
+            Err((code, reason, body)) => {
+                write_http_json(stream, code, reason, &body).await?;
+                return Ok(true);
+            }
+        };
+        let cred_id = path.trim_start_matches("/v1/auth/passkey/").trim();
+        if cred_id.is_empty() || cred_id.len() > 512 {
+            write_http_json(stream, 400, "Bad Request", r#"{"error":"invalid credential_id"}"#).await?;
+            return Ok(true);
+        }
+        let is_admin = claims.capabilities.iter().any(|c| c == "domain:admin");
+        let pk_path = base_dir.join("passkeys.json");
+        let mut store = PasskeyStore::load(&pk_path).unwrap_or_default();
+        match store.remove_credential(cred_id, &claims.subject, is_admin) {
+            Ok(()) => {
+                let _ = store.save(&pk_path);
+                let _ = crate::audit_log::append_audit_event(
+                    &base_dir.join("audit.jsonl"),
+                    &claims.subject,
+                    "auth.passkey.delete",
+                    cred_id,
+                    "ok",
+                    serde_json::json!({}),
+                );
+                write_http_json(stream, 200, "OK", &serde_json::json!({ "deleted": cred_id }).to_string()).await?;
+            }
+            Err(e) => {
+                let status = if e.contains("not found") { 404 } else { 403 };
+                let reason = if status == 404 { "Not Found" } else { "Forbidden" };
+                write_http_json(stream, status, reason, &serde_json::json!({ "error": e }).to_string()).await?;
+            }
+        }
+        return Ok(true);
+    }
+
     // 2. Full OIDC IdP (/oauth2/clients, /oauth2/authorize, /oauth2/token)
     if path == "/oauth2/clients" && (method == "GET" || method == "POST") {
         let claims = match verify_bearer(header_lines) {

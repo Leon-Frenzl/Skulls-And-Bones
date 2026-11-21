@@ -831,7 +831,7 @@ async fn send_node_cross_mesh_envelope(
     envelope: sb_mesh::bridge::CrossMeshEnvelope,
 ) -> Result<(), String> {
     let packet_counter = counter
-        .fetch_update(
+        .try_update(
             std::sync::atomic::Ordering::SeqCst,
             std::sync::atomic::Ordering::SeqCst,
             |value| value.checked_add(1),

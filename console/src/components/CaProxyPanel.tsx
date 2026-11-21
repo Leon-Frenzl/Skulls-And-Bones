@@ -35,6 +35,14 @@ interface CaProxyPanelProps {
   routes: ProxyRouteItem[];
   knownDnsDomains?: Set<string>;
   onOpenDns?: () => void;
+  onCreateRoute?: (payload: {
+    domain: string;
+    target_port: number;
+    node_callsign: string;
+    is_tunnel: boolean;
+  }) => Promise<void>;
+  onToggleRouteStatus?: (id: string, active: boolean) => Promise<void>;
+  onDeleteRoute?: (id: string) => Promise<void>;
 }
 
 type StatusFilter = "all" | "active" | "paused" | "tunnel";
@@ -59,12 +67,25 @@ function statusBadgeClass(status?: string | null): string {
   return "badge badge-err";
 }
 
-export function CaProxyPanel({ caStatus, routes, knownDnsDomains, onOpenDns }: CaProxyPanelProps) {
+export function CaProxyPanel({
+  caStatus,
+  routes,
+  knownDnsDomains,
+  onOpenDns,
+  onCreateRoute,
+  onToggleRouteStatus,
+  onDeleteRoute,
+}: CaProxyPanelProps) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [copiedKey, setCopiedKey] = useState(false);
   const [showRawJson, setShowRawJson] = useState(false);
   const [liveMessage, setLiveMessage] = useState("");
+  const [newDomain, setNewDomain] = useState("");
+  const [newPort, setNewPort] = useState("8080");
+  const [newNode, setNewNode] = useState("srv490042");
+  const [newIsTunnel, setNewIsTunnel] = useState(false);
+  const [busyRoute, setBusyRoute] = useState(false);
 
   const normalizedRoutes = useMemo(
     () => (Array.isArray(routes) ? routes : []),
@@ -183,6 +204,77 @@ export function CaProxyPanel({ caStatus, routes, knownDnsDomains, onOpenDns }: C
 
       {/* Reverse-Proxy Routen Tabelle */}
       <section className="card" aria-labelledby="proxy-routes-heading">
+        {onCreateRoute && (
+          <div style={{ marginBottom: 16, paddingBottom: 14, borderBottom: "1px solid var(--border)" }}>
+            <div className="card-title" style={{ marginBottom: 8 }}>Neue Reverse-Proxy Route</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <div className="ca-field">
+                <label htmlFor="new-route-domain" className="ca-field-label">Domain</label>
+                <input
+                  id="new-route-domain"
+                  className="ca-input"
+                  placeholder="app.skulls-and-bones.org"
+                  value={newDomain}
+                  onChange={(e) => setNewDomain(e.target.value)}
+                />
+              </div>
+              {!newIsTunnel && (
+                <div className="ca-field">
+                  <label htmlFor="new-route-port" className="ca-field-label">Ziel-Port</label>
+                  <input
+                    id="new-route-port"
+                    type="number"
+                    min={1}
+                    max={65535}
+                    className="ca-input"
+                    style={{ width: 96 }}
+                    value={newPort}
+                    onChange={(e) => setNewPort(e.target.value)}
+                  />
+                </div>
+              )}
+              <div className="ca-field">
+                <label htmlFor="new-route-node" className="ca-field-label">Node-Callsign</label>
+                <input
+                  id="new-route-node"
+                  className="ca-input"
+                  value={newNode}
+                  onChange={(e) => setNewNode(e.target.value)}
+                />
+              </div>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, minBlockSize: 32 }}>
+                <input
+                  type="checkbox"
+                  checked={newIsTunnel}
+                  onChange={(e) => setNewIsTunnel(e.target.checked)}
+                />
+                Mesh-Tunnel
+              </label>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busyRoute || !newDomain.trim()}
+                onClick={async () => {
+                  setBusyRoute(true);
+                  try {
+                    await onCreateRoute({
+                      domain: newDomain.trim(),
+                      target_port: Number(newPort) || 8080,
+                      node_callsign: newNode.trim() || "local-dc",
+                      is_tunnel: newIsTunnel,
+                    });
+                    setNewDomain("");
+                  } finally {
+                    setBusyRoute(false);
+                  }
+                }}
+              >
+                Route anlegen
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="ca-toolbar">
           <div>
             <h2 id="proxy-routes-heading" className="card-title" style={{ marginBottom: 4 }}>
@@ -343,6 +435,35 @@ export function CaProxyPanel({ caStatus, routes, knownDnsDomains, onOpenDns }: C
                         {route.maintenance_msg && (
                           <div className="ca-muted" style={{ marginTop: 4 }}>
                             {route.maintenance_msg}
+                          </div>
+                        )}
+                        {(onToggleRouteStatus || onDeleteRoute) && (
+                          <div className="ca-badge-group" style={{ marginTop: 8 }}>
+                            {onToggleRouteStatus && (
+                              <button
+                                type="button"
+                                className="btn-secondary btn-compact"
+                                onClick={() =>
+                                  void onToggleRouteStatus(
+                                    route.id,
+                                    (route.status ?? "").toLowerCase() !== "active",
+                                  )
+                                }
+                              >
+                                {(route.status ?? "").toLowerCase() === "active"
+                                  ? "Pausieren"
+                                  : "Aktivieren"}
+                              </button>
+                            )}
+                            {onDeleteRoute && (
+                              <button
+                                type="button"
+                                className="btn-secondary btn-compact"
+                                onClick={() => void onDeleteRoute(route.id)}
+                              >
+                                Löschen
+                              </button>
+                            )}
                           </div>
                         )}
                       </td>

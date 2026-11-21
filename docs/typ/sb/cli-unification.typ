@@ -17,3 +17,7 @@ Alle Benutzer- und Operator-Aktionen laufen über die zentrale Master-CLI `sb`. 
 == Verifikation
 - Prüfe bei jedem neuen Feature im Review, ob `tools/sb/src/main.rs` bereits einen passenden Subcommand besitzt.
 - Dokumentiere neue Subcommands im zentralen Hilfetext von `sb` und in `docs/CLI_UNIFICATION_STANDARD.md`.
+
+== Backup & Artefaktverteilung
+- *Verschlüsselte DC-Backups:* `sb server backup --encrypt` (Argon2id + AES-256-GCM, Format `SBBK1`) und `sb server restore` sichern und rekonstruieren `domain`, `ca` und `auth` mit CWE-22-Pfadprüfung.
+- *Zwei Release-Kanäle:* Öffentliche Nutzer beziehen signierte und SHA-256-geprüfte Bundles (`sb`, `sb-node`, `sb-dns`, `sb-proxy`, `console/dist`, OS-Logon-Module) über GitHub Releases. Organisationen mit eigenem DC nutzen optional `SB_RELEASE_BASE_URL` gegen `/v1/releases/<artifact>` auf dem eigenen Domain Controller.

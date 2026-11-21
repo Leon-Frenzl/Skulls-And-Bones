@@ -3,7 +3,9 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::sync::atomic::AtomicBool;
+#[cfg(windows)]
 use std::sync::Arc;
 
 /// Name of the managed system service.

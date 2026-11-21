@@ -21,17 +21,19 @@ jobs:
           node-version: "22"
       - run: npm --prefix console ci && npm --prefix console run build
       - name: Build release binaries (Linux x86_64)
-        run: cargo build --release -p sb-cli -p sb-node -p sb-proxy -p sb-linux-auth
-      - name: Package Linux tarball
+        run: cargo build --release -p sb-cli -p sb-node -p sb-proxy -p sb-dns -p sb-linux-auth
+      - name: Package Linux tarball & console dist
         run: |
           mkdir -p dist
           cp target/release/libpam_sb.so dist/libpam_sb.so
-          tar -czf "dist/sb-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" -C target/release sb sb-node sb-proxy libpam_sb.so
+          tar -czf "dist/sb-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" -C target/release sb sb-node sb-proxy sb-dns libpam_sb.so
+          tar -czf "dist/sb-${GITHUB_REF_NAME}-console-dist.tar.gz" -C console dist
       - uses: actions/upload-artifact@v4
         with:
           name: linux-bundle
           path: |
             dist/sb-*-linux-x86_64.tar.gz
+            dist/sb-*-console-dist.tar.gz
             dist/libpam_sb.so
 
   build-windows:
@@ -41,13 +43,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build release binaries (Windows x86_64)
-        run: cargo build --release -p sb-cli -p sb-node -p sb-cred-provider
+        run: cargo build --release -p sb-cli -p sb-node -p sb-dns -p sb-cred-provider
       - name: Package Windows zip
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item target/release/sb_cred_provider.dll dist/sb_cred_provider.dll
-          Compress-Archive -Path target/release/sb.exe, target/release/sb-node.exe, target/release/sb_cred_provider.dll -DestinationPath "dist/sb-$env:GITHUB_REF_NAME-windows-x86_64.zip" -Force
+          Compress-Archive -Path target/release/sb.exe, target/release/sb-node.exe, target/release/sb-dns.exe, target/release/sb_cred_provider.dll -DestinationPath "dist/sb-$env:GITHUB_REF_NAME-windows-x86_64.zip" -Force
       - uses: actions/upload-artifact@v4
         with:
           name: windows-bundle
@@ -62,11 +64,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build release binaries (macOS ARM64)
-        run: cargo build --release -p sb-cli -p sb-node
+        run: cargo build --release -p sb-cli -p sb-node -p sb-dns
       - name: Package macOS tarball
         run: |
           mkdir -p dist
-          tar -czf "dist/sb-${GITHUB_REF_NAME}-macos-arm64.tar.gz" -C target/release sb sb-node
+          tar -czf "dist/sb-${GITHUB_REF_NAME}-macos-arm64.tar.gz" -C target/release sb sb-node sb-dns
       - uses: actions/upload-artifact@v4
         with:
           name: macos-bundle

@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 interface DnsIpamPanelProps {
   dnsRecords: Record<string, unknown> | null;
   ipamData: Record<string, unknown> | null;
+  onDeleteRecord?: (type: string, domain: string) => Promise<void>;
 }
 
 type RecordTypeFilter = "ALL" | "A" | "AAAA" | "CNAME" | "TXT" | "SRV";
@@ -44,7 +45,7 @@ function extractDnsRows(dnsRecords: Record<string, unknown> | null): FlatDnsReco
   return rows.sort((a, b) => a.name.localeCompare(b.name) || a.type.localeCompare(b.type));
 }
 
-export function DnsIpamPanel({ dnsRecords, ipamData }: DnsIpamPanelProps) {
+export function DnsIpamPanel({ dnsRecords, ipamData, onDeleteRecord }: DnsIpamPanelProps) {
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<RecordTypeFilter>("ALL");
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -233,13 +234,24 @@ export function DnsIpamPanel({ dnsRecords, ipamData }: DnsIpamPanelProps) {
                         </code>
                       </td>
                       <td>
-                        <button
-                          type="button"
-                          className="btn-secondary btn-compact"
-                          onClick={() => void copyValue(rowKey, rec.value)}
-                        >
-                          {copiedId === rowKey ? "Kopiert" : "Kopieren"}
-                        </button>
+                        <div className="ca-badge-group" style={{ marginTop: 0 }}>
+                          <button
+                            type="button"
+                            className="btn-secondary btn-compact"
+                            onClick={() => void copyValue(rowKey, rec.value)}
+                          >
+                            {copiedId === rowKey ? "Kopiert" : "Kopieren"}
+                          </button>
+                          {onDeleteRecord && (
+                            <button
+                              type="button"
+                              className="btn-secondary btn-compact"
+                              onClick={() => void onDeleteRecord(rec.type, rec.name)}
+                            >
+                              Löschen
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

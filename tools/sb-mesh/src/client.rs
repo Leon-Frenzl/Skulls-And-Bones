@@ -1644,7 +1644,7 @@ impl MeshClient {
         // while receive processing checks both the anchor address and public key before decryption.
         // Hardening: Authenticate every envelope with AEAD and refuse counter wrap before nonce reuse.
         let counter = send_counter
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
                 value.checked_add(1)
             })
             .map_err(|_| {

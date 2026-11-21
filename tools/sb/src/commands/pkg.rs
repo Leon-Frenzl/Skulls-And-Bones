@@ -171,6 +171,30 @@ fn replace_binary_atomically(src: &std::path::Path, dst: &std::path::Path) -> Re
 ///   and performs atomic/rollback-safe binary replacement.
 pub fn self_update_from_github(tag_override: Option<&str>) -> Result<(), String> {
     print_banner();
+
+    // Option 1: Self-hosted DC / Enterprise mirror via SB_RELEASE_BASE_URL (e.g. https://console.corp.example/v1/releases)
+    if let Ok(mirror_base) = std::env::var("SB_RELEASE_BASE_URL") {
+        let base = mirror_base.trim().trim_end_matches('/');
+        if !base.is_empty() {
+            if !base.starts_with("https://") {
+                return Err("SB_RELEASE_BASE_URL muss mit https:// beginnen.".into());
+            }
+            let tag = tag_override.unwrap_or(env!("CARGO_PKG_VERSION"));
+            let clean_tag = validate_release_tag(&format!("v{}", tag.trim_start_matches('v')))?;
+            let asset_name = expected_github_asset_name(&clean_tag)?;
+            let dl_url = format!("{base}/{asset_name}");
+            println!("  {} Lade {asset_name} vom DC-Mirror ({dl_url})...", "►".cyan());
+            let dl_resp = ureq::get(&dl_url)
+                .set("User-Agent", "sb-cli-updater")
+                .call()
+                .map_err(|e| format!("Mirror-Download fehlgeschlagen: {e}"))?;
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut dl_resp.into_reader(), &mut bytes)
+                .map_err(|e| format!("Archiv-Lesefehler: {e}"))?;
+            return extract_and_install_update_bytes(&bytes, &asset_name, &clean_tag);
+        }
+    }
+
     let api_url = match tag_override {
         Some(t) => {
             let clean = validate_release_tag(t)?;
@@ -217,6 +241,42 @@ pub fn self_update_from_github(tag_override: Option<&str>) -> Result<(), String>
     std::io::Read::read_to_end(&mut dl_resp.into_reader(), &mut bytes)
         .map_err(|e| format!("Archiv-Lesefehler: {e}"))?;
 
+    // Verify SHA-256 against SHA256SUMS.txt if published alongside the release
+    if let Some(sums_url) = meta
+        .get("assets")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.iter().find(|a| a.get("name").and_then(|n| n.as_str()) == Some("SHA256SUMS.txt")))
+        .and_then(|a| a.get("browser_download_url").and_then(|u| u.as_str()))
+        .filter(|u| u.starts_with("https://"))
+    {
+        if let Ok(sums_resp) = ureq::get(sums_url).set("User-Agent", "sb-cli-updater").call() {
+            if let Ok(sums_text) = sums_resp.into_string() {
+                if let Some(expected_hex) = sums_text
+                    .lines()
+                    .find_map(|line| {
+                        let mut parts = line.split_whitespace();
+                        let hash = parts.next()?;
+                        let file = parts.next()?;
+                        (file == asset_name).then(|| hash.to_ascii_lowercase())
+                    })
+                {
+                    use sha2::{Digest, Sha256};
+                    let actual_hex = hex::encode(Sha256::digest(&bytes));
+                    if actual_hex != expected_hex {
+                        return Err(format!(
+                            "SHA-256 Prüfsumme für {asset_name} stimmt nicht überein (erwartet {expected_hex}, erhalten {actual_hex})."
+                        ));
+                    }
+                    println!("  {} SHA-256 verifiziert ({})", "✓".bright_green(), &actual_hex[..16]);
+                }
+            }
+        }
+    }
+
+    extract_and_install_update_bytes(&bytes, &asset_name, &clean_tag)
+}
+
+fn extract_and_install_update_bytes(bytes: &[u8], asset_name: &str, clean_tag: &str) -> Result<(), String> {
     let temp_dir = std::env::temp_dir().join(format!(
         "sb_self_update_{}_{}",
         std::process::id(),

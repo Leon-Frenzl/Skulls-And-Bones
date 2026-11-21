@@ -39,10 +39,11 @@ zip = { version = "9.2", default-features = false, features = ["deflate"] }
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
 sb-core = { version = "0.2.0", path = "../sb-core" }
 sb-mesh = { version = "0.3.0", path = "../sb-mesh" }
-sb-proxy = { version = "0.1.0", path = "../sb-proxy" }
 sb-key = { version = "0.1.0", path = "../sb-key" }
 sb-ca = { version = "0.1.0", path = "../sb-ca" }
 zeroize = "1.8"
+aes-gcm = "0.10"
+argon2 = "0.5"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
